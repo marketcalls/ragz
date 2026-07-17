@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import raghub.core.app_settings  # noqa: F401
 import raghub.modules.auth.models  # noqa: F401  (registered as tasks add them)
 import raghub.modules.tenancy.models  # noqa: F401
 from raghub.core.config import get_settings
