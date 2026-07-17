@@ -1,0 +1,16 @@
+# Visual brainstorming mockups (superpowers companion)
+.superpowers/
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+
+# Env (bootstrap only per foundation spec — never secrets)
+.env
