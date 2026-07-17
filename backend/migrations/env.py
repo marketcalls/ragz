@@ -1,11 +1,16 @@
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from alembic import context
+from raghub.core.config import get_settings
+from raghub.core.db import Base
+
+# import raghub.modules.auth.models  # noqa: F401  (registered as tasks add them)
+# import raghub.modules.tenancy.models  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -15,12 +20,6 @@ config = context.config
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-
-from raghub.core.config import get_settings
-from raghub.core.db import Base
-
-# import raghub.modules.auth.models  # noqa: F401  (registered as tasks add them)
-# import raghub.modules.tenancy.models  # noqa: F401
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
