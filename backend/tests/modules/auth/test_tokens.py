@@ -1,5 +1,7 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import jwt
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,5 +37,13 @@ def test_expired_rejected() -> None:
     tok = issue_access_token(
         user_id=uuid4(), org_id=uuid4(), role="user", signing_key="k" * 43, ttl_seconds=-1
     )
+    with pytest.raises(AuthenticationError):
+        decode_access_token(tok, "k" * 43)
+
+
+def test_missing_claim_rejected() -> None:
+    now = datetime.now(UTC)
+    payload = {"sub": str(uuid4()), "iat": now, "exp": now + timedelta(seconds=900)}
+    tok = jwt.encode(payload, "k" * 43, algorithm="HS256")
     with pytest.raises(AuthenticationError):
         decode_access_token(tok, "k" * 43)

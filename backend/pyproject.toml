@@ -13,6 +13,7 @@ dependencies = [
     "argon2-cffi>=23.1",
     "pyjwt>=2.8",
     "structlog>=24.1",
+    "email-validator>=2.1",
 ]
 
 [dependency-groups]

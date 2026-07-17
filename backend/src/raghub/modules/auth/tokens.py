@@ -33,8 +33,8 @@ def issue_access_token(
 def decode_access_token(token: str, signing_key: str) -> AccessClaims:
     try:
         payload = jwt.decode(token, signing_key, algorithms=[_ALG])
-    except jwt.InvalidTokenError as exc:
+        return AccessClaims(
+            user_id=UUID(payload["sub"]), org_id=UUID(payload["org"]), role=payload["role"]
+        )
+    except (jwt.InvalidTokenError, KeyError, ValueError) as exc:
         raise AuthenticationError("invalid or expired token") from exc
-    return AccessClaims(
-        user_id=UUID(payload["sub"]), org_id=UUID(payload["org"]), role=payload["role"]
-    )
