@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: raghub
       POSTGRES_PASSWORD: raghub
       POSTGRES_DB: raghub
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:55432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U raghub"]
@@ -16,7 +16,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:56379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
