@@ -19,7 +19,7 @@ class UUIDPk:
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(UTC)
+        default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
 
 
