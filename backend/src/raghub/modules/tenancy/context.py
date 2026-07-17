@@ -8,8 +8,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.api.deps import get_session
 from raghub.core.app_settings import get_or_create_signing_key
+from raghub.core.db import get_session
 from raghub.core.errors import AuthenticationError, AuthorizationError
 from raghub.modules.auth.models import User
 from raghub.modules.auth.tokens import decode_access_token
