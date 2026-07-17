@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,7 +69,8 @@ async def rotate_refresh(
         )
     ).scalar_one_or_none()
     if row is None:
-        raise AuthenticationError("unknown refresh token")
+        structlog.get_logger().info("refresh_rejected", reason="unknown")
+        raise AuthenticationError("invalid refresh token")
     now = datetime.now(UTC)
     now_naive = now.replace(tzinfo=None)
     if row.revoked_at is not None:
@@ -79,14 +81,17 @@ async def rotate_refresh(
             .values(revoked_at=now_naive)
         )
         await session.commit()
-        raise AuthenticationError("refresh token reuse detected")
+        structlog.get_logger().info("refresh_rejected", reason="reuse_detected")
+        raise AuthenticationError("invalid refresh token")
     if row.expires_at.replace(tzinfo=UTC) < now:
-        raise AuthenticationError("refresh token expired")
+        structlog.get_logger().info("refresh_rejected", reason="expired")
+        raise AuthenticationError("invalid refresh token")
     user = (await session.execute(select(User).where(User.id == row.user_id))).scalar_one()
     if not user.active:
         # Token stays untouched: an inactive user can't rotate anyway, and if
         # reactivated the token resumes working within its original expiry.
-        raise AuthenticationError("user inactive")
+        structlog.get_logger().info("refresh_rejected", reason="user_inactive")
+        raise AuthenticationError("invalid refresh token")
     row.revoked_at = now_naive
     return await _issue_pair(session, user, row.family_id, settings)
 
