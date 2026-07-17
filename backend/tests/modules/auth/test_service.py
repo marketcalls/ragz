@@ -1,9 +1,10 @@
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import Settings
 from raghub.core.errors import AuthenticationError
-from raghub.modules.auth.models import User
+from raghub.modules.auth.models import RefreshToken, User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.auth.service import login, logout, rotate_refresh
 from raghub.modules.tenancy.models import Organization
@@ -47,6 +48,23 @@ async def test_rotation_and_reuse_revokes_family(session: AsyncSession) -> None:
         await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
     with pytest.raises(AuthenticationError):
         await rotate_refresh(session, raw_refresh=pair2.refresh_token, settings=SETTINGS)
+
+
+async def test_rotate_refresh_inactive_user_leaves_token_untouched(
+    session: AsyncSession,
+) -> None:
+    user = await make_user(session)
+    pair = await login(
+        session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
+    )
+    user.active = False
+    await session.commit()
+    with pytest.raises(AuthenticationError):
+        await rotate_refresh(session, raw_refresh=pair.refresh_token, settings=SETTINGS)
+    row = (
+        await session.execute(select(RefreshToken).where(RefreshToken.user_id == user.id))
+    ).scalar_one()
+    assert row.revoked_at is None
 
 
 async def test_logout_revokes(session: AsyncSession) -> None:

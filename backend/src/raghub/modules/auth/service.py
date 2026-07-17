@@ -62,7 +62,9 @@ async def rotate_refresh(
 ) -> TokenPair:
     row = (
         await session.execute(
-            select(RefreshToken).where(RefreshToken.token_hash == _hash(raw_refresh))
+            select(RefreshToken)
+            .where(RefreshToken.token_hash == _hash(raw_refresh))
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if row is None:
@@ -80,10 +82,12 @@ async def rotate_refresh(
         raise AuthenticationError("refresh token reuse detected")
     if row.expires_at.replace(tzinfo=UTC) < now:
         raise AuthenticationError("refresh token expired")
-    row.revoked_at = now_naive
     user = (await session.execute(select(User).where(User.id == row.user_id))).scalar_one()
     if not user.active:
+        # Token stays untouched: an inactive user can't rotate anyway, and if
+        # reactivated the token resumes working within its original expiry.
         raise AuthenticationError("user inactive")
+    row.revoked_at = now_naive
     return await _issue_pair(session, user, row.family_id, settings)
 
 
