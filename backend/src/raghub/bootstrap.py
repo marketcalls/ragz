@@ -7,7 +7,9 @@ import asyncio
 import os
 import sys
 
+from pydantic import EmailStr, TypeAdapter
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from raghub.core.config import get_settings
@@ -28,7 +30,11 @@ async def bootstrap_superadmin(
             return False
         org = Organization(name="Platform")
         session.add(org)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            return False
         session.add(
             User(
                 org_id=org.id,
@@ -37,7 +43,11 @@ async def bootstrap_superadmin(
                 role="superadmin",
             )
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return False
         return True
 
 
@@ -47,6 +57,11 @@ def main() -> None:
     if not email or not password:
         print("Set RAGHUB_BOOTSTRAP_EMAIL and RAGHUB_BOOTSTRAP_PASSWORD", file=sys.stderr)
         raise SystemExit(2)
+    try:
+        TypeAdapter(EmailStr).validate_python(email)
+    except Exception as exc:
+        print(f"Invalid bootstrap email: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
     factory = build_session_factory(build_engine(get_settings().database_url))
     created = asyncio.run(bootstrap_superadmin(factory, email=email, password=password))
     print("superadmin created" if created else "superadmin already exists")
