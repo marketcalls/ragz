@@ -8,7 +8,7 @@ from raghub.api.deps import get_session
 from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
 from raghub.modules.documents import service
-from raghub.modules.documents.schemas import DocumentOut
+from raghub.modules.documents.schemas import DocumentOut, DocumentPatch
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context
 from raghub.worker.tasks import enqueue_delete, enqueue_ingest
 
@@ -72,3 +72,11 @@ async def delete_document(
     await session.commit()
     enqueue_delete(doc.id, ctx.user_id)
     return {"status": "deletion scheduled"}
+
+
+@router.patch("/documents/{document_id}", response_model=DocumentOut)
+async def patch_document(
+    document_id: UUID, body: DocumentPatch, session: SessionDep, ctx: CtxDep
+) -> DocumentOut:
+    doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    return DocumentOut.model_validate(doc)

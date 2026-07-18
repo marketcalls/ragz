@@ -25,6 +25,7 @@ class Document(UUIDPk, Base):
     page_count: Mapped[int | None] = mapped_column(default=None)
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
+    pinned: Mapped[bool] = mapped_column(default=False, index=True)
 
 
 class IngestJob(UUIDPk, Base):

@@ -13,5 +13,10 @@ class DocumentOut(BaseModel):
     page_count: int | None
     error: str | None
     created_at: datetime
+    pinned: bool
 
     model_config = {"from_attributes": True}
+
+
+class DocumentPatch(BaseModel):
+    pinned: bool

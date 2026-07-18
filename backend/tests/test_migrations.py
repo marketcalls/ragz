@@ -2,7 +2,7 @@
 
 Unlike the rest of the test suite (which builds schema via
 ``Base.metadata.create_all`` for speed), this test exercises the actual
-12-revision alembic chain against a fresh Postgres instance so that a broken
+13-revision alembic chain against a fresh Postgres instance so that a broken
 migration (bad SQL, wrong down_revision, etc.) is caught before merge.
 """
 

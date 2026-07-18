@@ -76,3 +76,30 @@ async def get_document_checked(
     if ctx.role == "user" and doc.workspace_id not in ctx.workspace_ids:
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     return doc
+
+
+async def set_pinned(
+    session: AsyncSession, ctx: TenantContext, document_id: UUID, pinned: bool
+) -> Document:
+    doc = await get_document_checked(session, ctx, document_id)
+    doc.pinned = pinned
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="document.pinned" if pinned else "document.unpinned",
+                       target_type="document", target_id=str(doc.id))
+    await session.commit()
+    return doc
+
+
+async def list_pinned_documents(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+) -> list[Document]:
+    """Pinned docs that are actually retrievable (indexed). Ordered oldest-first
+    so pinned-source markers are stable across turns."""
+    ws = await get_workspace_checked(session, ctx, workspace_id)
+    stmt = (
+        select(Document)
+        .where(Document.workspace_id == ws.id, Document.pinned.is_(True),
+               Document.status == "indexed")
+        .order_by(Document.created_at)
+    )
+    return list((await session.execute(stmt)).scalars())
