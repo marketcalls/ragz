@@ -13,6 +13,30 @@ export function useWorkspaces() {
   });
 }
 
+export function usePatchWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...body
+    }: {
+      id: string;
+      top_k?: number;
+      min_score?: number;
+      rerank_enabled?: boolean;
+      system_prompt_override?: string | null;
+    }) => {
+      const { data, error } = await api.PATCH('/api/v1/workspaces/{workspace_id}', {
+        params: { path: { workspace_id: id } },
+        body,
+      });
+      if (error) throw new Error('failed to update workspace settings');
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['workspaces'] }),
+  });
+}
+
 export function useCreateWorkspace() {
   const queryClient = useQueryClient();
   return useMutation({

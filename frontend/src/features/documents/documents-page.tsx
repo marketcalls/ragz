@@ -1,11 +1,17 @@
+import { SlidersHorizontal } from 'lucide-react';
 import { useState } from 'react';
 
 import { TopBar } from '@/components/layout/top-bar';
+import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Table, TBody, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
 import { useWorkspace } from '@/features/workspaces/workspace-context';
+import { useWorkspaces } from '@/features/workspaces/queries';
+import { WorkspaceSettingsDialog } from '@/features/workspaces/workspace-settings-dialog';
+
+import { useClaims } from '@/lib/use-claims';
 
 import { DocumentRow } from './document-row';
 import { Dropzone } from './dropzone';
@@ -24,6 +30,11 @@ export function DocumentsPage() {
   const deleteDocument = useDeleteDocument(workspaceId);
   const pinDocument = usePinDocument(workspaceId);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const claims = useClaims();
+  const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
+  const { data: workspaces } = useWorkspaces();
+  const workspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const onFiles = (files: File[]): void => {
     if (!workspaceId) return;
@@ -43,7 +54,24 @@ export function DocumentsPage() {
 
   return (
     <>
-      <TopBar title="Documents" />
+      <TopBar
+        title="Documents"
+        actions={
+          isAdmin && workspace ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Workspace retrieval settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <SlidersHorizontal className="h-4 w-4" aria-hidden />
+            </Button>
+          ) : undefined
+        }
+      />
+      {workspace && settingsOpen ? (
+        <WorkspaceSettingsDialog workspace={workspace} open onOpenChange={setSettingsOpen} />
+      ) : null}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-4xl space-y-4">
           <Dropzone onFiles={onFiles} disabled={!workspaceId} />
