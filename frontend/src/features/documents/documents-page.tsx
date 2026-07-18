@@ -9,7 +9,7 @@ import { useWorkspace } from '@/features/workspaces/workspace-context';
 
 import { DocumentRow } from './document-row';
 import { Dropzone } from './dropzone';
-import { useDeleteDocument, useDocuments } from './queries';
+import { useDeleteDocument, useDocuments, usePinDocument } from './queries';
 import { uploadDocuments } from './upload';
 
 interface UploadItem {
@@ -22,6 +22,7 @@ export function DocumentsPage() {
   const { workspaceId } = useWorkspace();
   const documents = useDocuments(workspaceId);
   const deleteDocument = useDeleteDocument(workspaceId);
+  const pinDocument = usePinDocument(workspaceId);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
 
   const onFiles = (files: File[]): void => {
@@ -78,6 +79,13 @@ export function DocumentsPage() {
                     deleting={deleteDocument.isPending}
                     onDelete={() =>
                       deleteDocument.mutate(doc.id, { onError: (err) => toast.error(err.message) })
+                    }
+                    pinning={pinDocument.isPending}
+                    onTogglePin={() =>
+                      pinDocument.mutate(
+                        { documentId: doc.id, pinned: !doc.pinned },
+                        { onError: (err) => toast.error(err.message) },
+                      )
                     }
                   />
                 ))}

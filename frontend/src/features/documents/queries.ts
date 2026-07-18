@@ -34,3 +34,18 @@ export function useDeleteDocument(workspaceId: string | null) {
       void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
   });
 }
+
+export function usePinDocument(workspaceId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ documentId, pinned }: { documentId: string; pinned: boolean }) => {
+      const { data, error } = await api.PATCH('/api/v1/documents/{document_id}', {
+        params: { path: { document_id: documentId } },
+        body: { pinned },
+      });
+      if (error) throw new Error('failed to update pin');
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
+  });
+}

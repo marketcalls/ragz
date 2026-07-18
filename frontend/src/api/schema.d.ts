@@ -241,7 +241,8 @@ export interface paths {
         delete: operations["delete_document_api_v1_documents__document_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Patch Document */
+        patch: operations["patch_document_api_v1_documents__document_id__patch"];
         trace?: never;
     };
     "/api/v1/workspaces/{workspace_id}/search": {
@@ -551,6 +552,13 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Pinned */
+            pinned: boolean;
+        };
+        /** DocumentPatch */
+        DocumentPatch: {
+            /** Pinned */
+            pinned: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -742,11 +750,8 @@ export interface components {
         SearchRequest: {
             /** Query */
             query: string;
-            /**
-             * Top K
-             * @default 8
-             */
-            top_k: number;
+            /** Top K */
+            top_k?: number | null;
         };
         /** SearchResponse */
         SearchResponse: {
@@ -832,11 +837,25 @@ export interface components {
             min_score: number;
             /** Default Model Id */
             default_model_id: string | null;
+            /** Top K */
+            top_k: number;
+            /** Rerank Enabled */
+            rerank_enabled: boolean;
+            /** System Prompt Override */
+            system_prompt_override: string | null;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
             /** Default Model Id */
             default_model_id?: string | null;
+            /** Top K */
+            top_k?: number | null;
+            /** Min Score */
+            min_score?: number | null;
+            /** Rerank Enabled */
+            rerank_enabled?: boolean | null;
+            /** System Prompt Override */
+            system_prompt_override?: string | null;
         };
     };
     responses: never;
@@ -1312,6 +1331,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_document_api_v1_documents__document_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentOut"];
                 };
             };
             /** @description Validation Error */

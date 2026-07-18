@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react';
+import { Pin, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DocumentOut } from '@/api/types';
@@ -14,10 +14,14 @@ export function DocumentRow({
   doc,
   onDelete,
   deleting,
+  onTogglePin,
+  pinning,
 }: {
   doc: DocumentOut;
   onDelete: () => void;
   deleting: boolean;
+  onTogglePin: () => void;
+  pinning: boolean;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { tone, label } = statusPresentation(doc);
@@ -45,6 +49,19 @@ export function DocumentRow({
       </TD>
       <TD className="text-muted">{new Date(doc.created_at).toLocaleDateString()}</TD>
       <TD className="text-right">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={doc.pinned ? `Unpin ${doc.filename}` : `Pin ${doc.filename}`}
+          title="Pinned documents are always included as sources in chat"
+          disabled={pinning || doc.status !== 'indexed'}
+          onClick={onTogglePin}
+        >
+          <Pin
+            className={doc.pinned ? 'h-4 w-4 fill-current text-accent' : 'h-4 w-4'}
+            aria-hidden
+          />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
