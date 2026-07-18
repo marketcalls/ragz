@@ -363,6 +363,26 @@ def path_to_root(messages: list[Message], leaf: Message) -> list[Message]:
     return path
 
 
+async def _previous_citation_refs(
+    session: AsyncSession, messages: list[Message], user_message: Message
+) -> list[str]:
+    """chunk_refs cited by the NEAREST assistant ancestor of this turn (walks
+    the active branch only — an edit's new branch backfills from its own
+    lineage). Empty when this is the first exchange or the previous answer had
+    no citations (e.g. a small-talk or refused turn)."""
+    for ancestor in reversed(path_to_root(messages, user_message)):
+        if ancestor.role == ROLE_ASSISTANT:
+            rows = (
+                await session.execute(
+                    select(Citation)
+                    .where(Citation.message_id == ancestor.id)
+                    .order_by(Citation.marker)
+                )
+            ).scalars()
+            return [c.chunk_ref for c in rows]
+    return []
+
+
 async def _source_refs(
     session: AsyncSession, ctx: TenantContext, chunks: Sequence[RetrievedChunk]
 ) -> list[SourceRef]:
@@ -511,6 +531,8 @@ async def stream_reply(
         # docs eat the entire rendered budget and starve retrieval.
         sources_budget = max(split.sources - query_cost, 0)
 
+        all_messages = await list_messages(session, chat.id)
+
         pinned_chunks: list[RetrievedChunk] = []
         for doc in await documents_service.list_pinned_documents(
             session, ctx, chat.workspace_id
@@ -524,20 +546,29 @@ async def stream_reply(
         pinned_keys = {(str(c.document_id), c.page, c.chunk_index) for c in pinned_chunks}
 
         result = await retriever(session, ctx, chat.workspace_id, user_message.content)
-        merged = merge_chunks(pinned_chunks, result.chunks)
+        backfilled: list[RetrievedChunk] = []
+        if len(result.chunks) < workspace.top_k:
+            prev_refs = await _previous_citation_refs(session, all_messages, user_message)
+            if prev_refs:
+                backfilled = await chunk_reader.get_chunks_by_refs(
+                    ctx, chat.workspace_id, prev_refs
+                )
+        backfilled_keys = {(str(c.document_id), c.page, c.chunk_index) for c in backfilled}
+        merged = merge_chunks(pinned_chunks, result.chunks, backfilled)
 
         sources, kept_sources = await _prepare_sources(
             session, ctx, merged, max_tokens=sources_budget, model_hint=model_hint,
         )
         yield sources_event(sources)
 
-        # no_answer is decided AFTER the final fit: pinned material only
-        # counts as grounding if it actually survived into kept_sources (the
-        # rendered prompt). If the fit dropped every pinned chunk (e.g. an
-        # exhausted budget), the original retrieval verdict stands rather
-        # than streaming an answer over an effectively empty sources frame.
+        # no_answer is decided AFTER the final fit: pinned/backfilled material
+        # only counts as grounding if it actually survived into kept_sources
+        # (the rendered prompt). If the fit dropped every pinned/backfilled
+        # chunk (e.g. an exhausted budget), the original retrieval verdict
+        # stands rather than streaming an answer over an effectively empty
+        # sources frame.
         kept_keys = {(s.document_id, s.page, s.chunk_index) for s in sources}
-        no_answer = result.no_answer and not (pinned_keys & kept_keys)
+        no_answer = result.no_answer and not ((pinned_keys | backfilled_keys) & kept_keys)
 
         if no_answer:
             yield token_event(NO_ANSWER_TEXT)
@@ -550,7 +581,6 @@ async def stream_reply(
                              completion_tokens=0, no_answer=True)
             return
 
-        all_messages = await list_messages(session, chat.id)
         history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
         prompt = build_messages(
             sources=kept_sources,
