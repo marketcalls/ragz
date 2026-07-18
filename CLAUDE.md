@@ -56,3 +56,13 @@ Typed exceptions per module → one global `application/problem+json` handler; n
 ## Depth Pointers (Foundation sections)
 
 Architecture & layout §2 · Security model §3 · Coding standards §4 · Testing strategy §5 · Observability/ops §6 · Phase scoping §8.
+
+## Product Requirements Pointers (owner addendum 2026-07-19)
+
+Binding product requirements beyond the PRD live in
+`docs/superpowers/specs/2026-07-19-customer-requirements-addendum.md`. Non-negotiables:
+formats incl. PPTX + OCR for scanned PDFs; version-aware retrieval (latest approved
+wins, superseded ignored); citations carry document name, version, section, page;
+never answer without sufficient indexed grounding (no-answer mode stays on);
+superadmin-composable custom roles; per-workspace metadata schema (name, version,
+revision date, department, doc type). Implementation home: Plan H (after Plan G).
