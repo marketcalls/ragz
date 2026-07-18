@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     max_upload_mb: int = 100
     interactive_upload_mb: int = 10  # uploads below this jump to the interactive queue
 
+    # Plan C: LiteLLM proxy gateway
+    litellm_url: str = "http://localhost:54000"
+    # Dev-only default; override in any real deployment. This is the proxy's own
+    # admin credential (bootstrap-class config), NOT a provider key (iron rule 3).
+    litellm_master_key: str = "sk-raghub-dev-master"  # noqa: S105
+    chat_context_token_budget: int = 8000
+
 
 @lru_cache
 def get_settings() -> Settings:

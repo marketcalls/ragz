@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: raghub
       POSTGRES_DB: raghub
     ports: ["127.0.0.1:55432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-litellm.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U raghub"]
       interval: 5s
@@ -63,6 +65,23 @@ services:
       timeout: 5s
       retries: 30
       start_period: 180s
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-v1.72.6-stable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-raghub-dev-master}
+      DATABASE_URL: postgresql://raghub:raghub@postgres:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+    ports: ["127.0.0.1:54000:4000"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
   pgdata:
