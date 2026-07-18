@@ -23,6 +23,7 @@ from raghub.modules.chat.schemas import (
 )
 from raghub.modules.models import service as models_service
 from raghub.modules.models.models import Model
+from raghub.modules.quotas import service as quota_service
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context, rate_limit_user
 from raghub.modules.tenancy.models import Workspace
@@ -116,6 +117,9 @@ async def send_message(
     workspace, model = await _resolve_workspace_and_model(
         session, ctx, chat, body.model_id
     )  # fail fast
+    await quota_service.check_quota(
+        session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
+    )
     messages = await service.list_messages(session, chat.id)
     parent = service.resolve_parent(
         messages, body.parent_message_id,
@@ -143,6 +147,9 @@ async def regenerate(
         raise ConflictError("only assistant messages can be regenerated")
     workspace, model = await _resolve_workspace_and_model(
         session, ctx, chat, body.model_id if body is not None else None
+    )
+    await quota_service.check_quota(
+        session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
     )
     messages = await service.list_messages(session, chat.id)
     user_msg = next(m for m in messages if m.id == msg.parent_message_id)

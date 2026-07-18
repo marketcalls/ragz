@@ -27,6 +27,7 @@ from raghub.modules.documents.pipeline import (
     parse_bytes,
     upsert_points,
 )
+from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import (
     delete_document_points,
@@ -184,6 +185,14 @@ async def run_embed_upsert(document_id: UUID) -> None:
         # reflects the latest PG state before the document is marked indexed
         # and becomes retrievable.
         await update_document_acl(org_id, document_id, still_exists.acl_group_ids)
+
+        # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
+        # token usage, so chars//4 is the documented estimate, flagged by feature.
+        await quota_service.record_usage(
+            session, org_id=doc.org_id, user_id=doc.created_by, model_id=None,
+            feature="ingestion",
+            prompt_tokens=sum(len(c.text) for c in chunks) // 4, completion_tokens=0,
+        )
 
         doc.status = "indexed"
         await _finish_stage(session, embed_job)
