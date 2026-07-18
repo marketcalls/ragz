@@ -42,7 +42,7 @@ async def redis_client(redis_url: str) -> AsyncIterator[Redis]:
 
 @pytest.fixture(scope="session")
 def qdrant_url() -> Iterator[str]:
-    with QdrantContainer("qdrant/qdrant:v1.10.1") as q:
+    with QdrantContainer("qdrant/qdrant:v1.18.0") as q:
         yield f"http://{q.get_container_host_ip()}:{q.get_exposed_port(6333)}"
 
 

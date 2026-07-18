@@ -24,7 +24,7 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:v1.10.1
+    image: qdrant/qdrant:v1.18.0
     ports: ["127.0.0.1:56333:6333"]
     volumes: [qdrantdata:/qdrant/storage]
     healthcheck:
