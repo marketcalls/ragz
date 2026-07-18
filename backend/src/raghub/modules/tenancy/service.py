@@ -84,13 +84,17 @@ async def get_workspace(
 
 
 async def set_default_model(
-    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, model_id: UUID | None
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, model_id: UUID | None,
+    *, commit: bool = True
 ) -> Workspace:
     ws = await get_workspace(session, ctx, workspace_id)
     if model_id is not None:
         await models_service.get_model(session, model_id)  # NotFoundError if unknown
     ws.default_model_id = model_id
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return ws
 
 
@@ -99,7 +103,7 @@ _RETRIEVAL_SETTINGS_FIELDS = {"top_k", "min_score", "rerank_enabled", "system_pr
 
 async def update_retrieval_settings(
     session: AsyncSession, ctx: TenantContext, workspace_id: UUID,
-    updates: Mapping[str, object],
+    updates: Mapping[str, object], *, commit: bool = True
 ) -> Workspace:
     """ADM-3 tuning knobs. `system_prompt_override` is the only nullable field —
     explicit null clears it; null for any other field is a 409."""
@@ -113,5 +117,8 @@ async def update_retrieval_settings(
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="workspace.retrieval_settings_changed",
                        target_type="workspace", target_id=str(ws.id))
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return ws

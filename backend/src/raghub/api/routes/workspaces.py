@@ -46,13 +46,22 @@ async def patch_workspace(
     workspace_id: UUID, body: WorkspacePatch, session: SessionDep, ctx: AdminDep
 ) -> WorkspaceOut:
     ws = None
+    has_changes = False
     if "default_model_id" in body.model_fields_set:
-        ws = await service.set_default_model(session, ctx, workspace_id, body.default_model_id)
+        ws = await service.set_default_model(
+            session, ctx, workspace_id, body.default_model_id, commit=False
+        )
+        has_changes = True
     updates = {
         f: getattr(body, f) for f in _SETTINGS_FIELDS if f in body.model_fields_set
     }
     if updates:
-        ws = await service.update_retrieval_settings(session, ctx, workspace_id, updates)
+        ws = await service.update_retrieval_settings(
+            session, ctx, workspace_id, updates, commit=False
+        )
+        has_changes = True
+    if has_changes:
+        await session.commit()
     if ws is None:
         ws = await service.get_workspace(session, ctx, workspace_id)
     return WorkspaceOut.model_validate(ws)

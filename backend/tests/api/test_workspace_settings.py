@@ -2,6 +2,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.auth.models import User
+from raghub.modules.models.models import Model
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -81,3 +82,48 @@ async def test_non_admin_cannot_patch(
     h_user = await auth(client, "p@acme.com")
     r = await client.patch(f"/api/v1/workspaces/{ws_id}", json={"top_k": 5}, headers=h_user)
     assert r.status_code == 403
+
+
+async def test_patch_atomicity_with_mixed_valid_invalid_fields(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """Verify that PATCH is atomic: if one field is invalid, no changes persist."""
+    # Create a model for testing
+    model = Model(
+        litellm_model_name="gpt-4-test",
+        display_name="GPT-4 Test",
+        provider_kind="openai",
+    )
+    session.add(model)
+    await session.commit()
+
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+
+    # Verify initial state by listing workspaces
+    ws_before = next(
+        w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+        if w["id"] == ws_id
+    )
+    assert ws_before["default_model_id"] is None
+    assert ws_before["top_k"] == 8
+
+    # Try PATCH with valid default_model_id + invalid top_k (null not allowed)
+    # This should fail with 409 and not persist the default_model_id change
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}",
+        json={"default_model_id": str(model.id), "top_k": None},
+        headers=h,
+    )
+    assert r.status_code == 409
+    assert "top_k cannot be null" in r.text or "cannot be null" in r.text
+
+    # Verify that default_model_id was NOT persisted
+    ws_after = next(
+        w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+        if w["id"] == ws_id
+    )
+    assert (
+        ws_after["default_model_id"] is None
+    ), "default_model_id should not change on validation failure"
+    assert ws_after["top_k"] == 8, "top_k should remain unchanged"
