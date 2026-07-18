@@ -2,7 +2,7 @@ from raghub.modules.chat.prompting import (
     SYSTEM_PROMPT,
     PromptSource,
     build_messages,
-    estimate_tokens,
+    count_tokens,
     parse_citation_markers,
     render_data_blocks,
 )
@@ -50,11 +50,11 @@ def test_truncation_drops_oldest_and_notes_count() -> None:
     history = [("user", "x" * 400), ("assistant", "y" * 400), ("user", "z" * 40),
                ("assistant", "w" * 40)]
     budget = (
-        estimate_tokens(SYSTEM_PROMPT)
-        + estimate_tokens(render_data_blocks(SOURCES))
-        + estimate_tokens("q")
-        + estimate_tokens("z" * 40)
-        + estimate_tokens("w" * 40)
+        count_tokens(SYSTEM_PROMPT)
+        + count_tokens(render_data_blocks(SOURCES))
+        + count_tokens("q")
+        + count_tokens("z" * 40)
+        + count_tokens("w" * 40)
     )
     msgs = build_messages(sources=SOURCES, history=history, user_query="q", budget=budget)
     contents = [m["content"] for m in msgs]
