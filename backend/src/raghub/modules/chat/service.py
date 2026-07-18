@@ -5,14 +5,37 @@ alternate parent->child, sibling_index is dense per (chat, parent).
 """
 
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from raghub.core.config import Settings
 from raghub.core.db import naive_utc
-from raghub.core.errors import ConflictError, NotFoundError
+from raghub.core.errors import ConflictError, NotFoundError, UpstreamError
+from raghub.modules.chat.events import (
+    CitationRef,
+    SourceRef,
+    SSEEvent,
+    citations_event,
+    done_event,
+    error_event,
+    retrieval_started_event,
+    sources_event,
+    token_event,
+)
+from raghub.modules.chat.llm import LLMDelta, LLMStreamer, LLMUsage
 from raghub.modules.chat.models import Chat, Citation, Message
+from raghub.modules.chat.prompting import (
+    PromptSource,
+    build_messages,
+    parse_citation_markers,
+)
+from raghub.modules.documents import service as documents_service
+from raghub.modules.models.models import Model  # type only; resolution stays in models service
+from raghub.modules.retrieval.service import RetrievalResult
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
 
@@ -185,3 +208,176 @@ async def add_message(
     chat.updated_at = naive_utc()  # explicit: onupdate only fires when a column changes
     await session.commit()
     return msg
+
+
+NO_ANSWER_TEXT = (
+    "I couldn't find anything in this workspace's documents that answers that. "
+    "The closest sources are shown, but none scored above the workspace's "
+    "confidence threshold. Try rephrasing, or check that the relevant documents "
+    "are uploaded and indexed."
+)
+
+_SNIPPET_CHARS = 300
+
+
+class Retriever(Protocol):
+    """Plan B's single retrieval code path, as an injectable seam for tests."""
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        ctx: TenantContext,
+        workspace_id: UUID,
+        query: str,
+        top_k: int = 8,
+    ) -> RetrievalResult: ...
+
+
+def path_to_root(messages: list[Message], leaf: Message) -> list[Message]:
+    """Ancestors of `leaf` (exclusive), ordered oldest -> newest."""
+    by_id = {m.id: m for m in messages}
+    path: list[Message] = []
+    parent_id = leaf.parent_message_id
+    while parent_id is not None:
+        node = by_id[parent_id]
+        path.append(node)
+        parent_id = node.parent_message_id
+    path.reverse()
+    return path
+
+
+async def _source_refs(
+    session: AsyncSession, ctx: TenantContext, result: RetrievalResult
+) -> list[SourceRef]:
+    filenames: dict[UUID, str] = {}
+    refs: list[SourceRef] = []
+    for marker, chunk in enumerate(result.chunks, start=1):
+        if chunk.document_id not in filenames:
+            doc = await documents_service.get_document_checked(session, ctx, chunk.document_id)
+            filenames[chunk.document_id] = doc.filename
+        refs.append(
+            SourceRef(
+                marker=marker,
+                document_id=str(chunk.document_id),
+                filename=filenames[chunk.document_id],
+                page=chunk.page,
+                chunk_index=chunk.chunk_index,
+                score=chunk.score,
+                snippet=chunk.text[:_SNIPPET_CHARS],
+            )
+        )
+    return refs
+
+
+async def _persist_assistant(
+    session: AsyncSession,
+    ctx: TenantContext,
+    chat: Chat,
+    *,
+    parent: Message,
+    content: str,
+    model_id: UUID | None,
+    usage: LLMUsage | None,
+    citations: list[CitationRef],
+) -> Message:
+    msg = await add_message(
+        session, ctx, chat, role=ROLE_ASSISTANT, content=content, parent=parent,
+        model_id=model_id,
+        prompt_tokens=usage.prompt_tokens if usage else None,
+        completion_tokens=usage.completion_tokens if usage else None,
+    )
+    for c in citations:
+        session.add(
+            Citation(
+                message_id=msg.id, document_id=UUID(c.document_id),
+                chunk_ref=c.chunk_ref, page=c.page, score=c.score, marker=c.marker,
+            )
+        )
+    await session.commit()
+    return msg
+
+
+async def stream_reply(
+    session: AsyncSession,
+    ctx: TenantContext,
+    *,
+    chat: Chat,
+    user_message: Message,
+    model: Model,
+    streamer: LLMStreamer,
+    retriever: Retriever,
+    settings: Settings,
+) -> AsyncIterator[SSEEvent]:
+    """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
+    citations -> done. Used by both send and regenerate. `model` is resolved by
+    the route (models_service.resolve_model) before any bytes are streamed."""
+    yield retrieval_started_event()
+    result = await retriever(session, ctx, chat.workspace_id, user_message.content)
+    sources = await _source_refs(session, ctx, result)
+    yield sources_event(sources)
+
+    if result.no_answer:
+        yield token_event(NO_ANSWER_TEXT)
+        msg = await _persist_assistant(
+            session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
+            model_id=None, usage=None, citations=[],
+        )
+        yield citations_event([])
+        yield done_event(message_id=str(msg.id), prompt_tokens=0,
+                         completion_tokens=0, no_answer=True)
+        return
+
+    all_messages = await list_messages(session, chat.id)
+    history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
+    prompt = build_messages(
+        sources=[
+            PromptSource(marker=s.marker, filename=s.filename, page=s.page,
+                         text=result.chunks[s.marker - 1].text)
+            for s in sources
+        ],
+        history=history,
+        user_query=user_message.content,
+        budget=settings.chat_context_token_budget,
+    )
+
+    parts: list[str] = []
+    usage: LLMUsage | None = None
+    try:
+        async for item in streamer.stream(
+            model=model.litellm_model_name, messages=prompt
+        ):
+            if isinstance(item, LLMDelta):
+                parts.append(item.text)
+                yield token_event(item.text)
+            else:
+                usage = item
+    except UpstreamError as exc:
+        # User message stays persisted; the client may retry (-> sibling).
+        yield error_event(exc.detail or "LLM gateway error")
+        return
+
+    answer = "".join(parts)
+    markers = parse_citation_markers(answer, len(sources))
+    by_marker = {s.marker: s for s in sources}
+    citation_refs = [
+        CitationRef(
+            marker=n,
+            document_id=by_marker[n].document_id,
+            chunk_ref=f"{by_marker[n].document_id}:{by_marker[n].page}:"
+                      f"{by_marker[n].chunk_index}",
+            page=by_marker[n].page,
+            score=by_marker[n].score,
+        )
+        for n in markers
+    ]
+    msg = await _persist_assistant(
+        session, ctx, chat, parent=user_message, content=answer, model_id=model.id,
+        usage=usage, citations=citation_refs,
+    )
+    yield citations_event(citation_refs)
+    yield done_event(
+        message_id=str(msg.id),
+        prompt_tokens=usage.prompt_tokens if usage else 0,
+        completion_tokens=usage.completion_tokens if usage else 0,
+        no_answer=False,
+    )

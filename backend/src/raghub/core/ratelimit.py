@@ -1,3 +1,4 @@
+import time
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request
@@ -33,3 +34,37 @@ def rate_limit(
         await check_rate_limit(redis, f"rl:{scope}:{client_ip}", limit, window_seconds)
 
     return guard
+
+
+class FixedWindowLimiter:
+    """In-process fixed-window limiter (single-worker fallback / no shared Redis)."""
+
+    def __init__(self, limit: int, window_seconds: int) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._buckets: dict[str, tuple[int, int]] = {}
+
+    def check(self, key: str) -> None:
+        bucket = int(time.time() // self.window_seconds)
+        stored_bucket, count = self._buckets.get(key, (bucket, 0))
+        count = count + 1 if stored_bucket == bucket else 1
+        self._buckets[key] = (bucket, count)
+        if count > self.limit:
+            raise RateLimitExceeded("rate limit exceeded, retry later")
+
+
+class RedisFixedWindowLimiter:
+    """Fixed-window limiter over a shared Redis (multi-worker safe)."""
+
+    def __init__(self, limit: int, window_seconds: int) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+
+    async def check(self, redis: Redis, key: str) -> None:
+        bucket = int(time.time() // self.window_seconds)
+        redis_key = f"ratelimit:{key}:{bucket}"
+        count = await redis.incr(redis_key)
+        if count == 1:
+            await redis.expire(redis_key, self.window_seconds)
+        if count > self.limit:
+            raise RateLimitExceeded("rate limit exceeded, retry later")

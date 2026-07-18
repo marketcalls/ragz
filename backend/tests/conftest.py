@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator, Iterator
+from uuid import UUID
 
 import httpx
 import pytest
@@ -15,10 +16,13 @@ from raghub.core.db import Base, build_engine, build_session_factory
 from raghub.core.storage import ObjectStorage
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
+from raghub.modules.chat.llm import LLMDelta, LLMUsage
+from raghub.modules.documents.models import Document
 from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
+from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.tenancy.models import Organization
+from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
 
 
 @pytest.fixture(scope="session")
@@ -188,3 +192,50 @@ async def seeded_superadmin(session: AsyncSession) -> User:
     session.add(user)
     await session.commit()
     return user
+
+
+class FakeStreamer:
+    def __init__(self, deltas: list[str] | None = None) -> None:
+        self.deltas = deltas if deltas is not None else ["Revenue was 12M ", "[1]."]
+        self.calls: list[dict[str, object]] = []
+
+    async def stream(self, *, model: str, messages: list[dict[str, str]]):  # type: ignore[no-untyped-def]
+        self.calls.append({"model": model, "messages": messages})
+        for d in self.deltas:
+            yield LLMDelta(d)
+        yield LLMUsage(prompt_tokens=42, completion_tokens=7)
+
+
+class FakeRetriever:
+    def __init__(self, document_id: UUID, no_answer: bool = False) -> None:
+        self.document_id = document_id
+        self.no_answer = no_answer
+
+    async def __call__(
+        self, session, ctx, workspace_id, query, top_k=8  # type: ignore[no-untyped-def]
+    ) -> RetrievalResult:
+        chunks = [
+            RetrievedChunk(document_id=self.document_id, page=3, chunk_index=0,
+                           text="Revenue was 12M.", score=0.91),
+            RetrievedChunk(document_id=self.document_id, page=5, chunk_index=2,
+                           text="Costs were 4M.", score=0.55),
+        ]
+        return RetrievalResult(no_answer=self.no_answer, chunks=chunks)
+
+
+@pytest.fixture
+async def chat_env(
+    session: AsyncSession, seeded_user: User
+) -> dict[str, object]:
+    """Workspace + membership + one indexed document for chat tests."""
+    ws = Workspace(org_id=seeded_user.org_id, name="ChatWS")
+    session.add(ws)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=seeded_user.id))
+    doc = Document(org_id=seeded_user.org_id, workspace_id=ws.id,
+                   filename="report.pdf", mime="application/pdf", size_bytes=10,
+                   content_hash="h", status="indexed", storage_key="k",
+                   created_by=seeded_user.id)
+    session.add(doc)
+    await session.commit()
+    return {"workspace": ws, "document": doc}

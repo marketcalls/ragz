@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from raghub.api.routes.admin_secrets import router as admin_secrets_router
 from raghub.api.routes.auth import router as auth_router
+from raghub.api.routes.chats import router as chats_router
 from raghub.api.routes.documents import router as documents_router
 from raghub.api.routes.health import router as health_router
 from raghub.api.routes.models import router as models_router
@@ -21,7 +22,10 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
+from raghub.modules.chat.llm import LLMStreamer
+from raghub.modules.chat.service import Retriever
 from raghub.modules.models.sync import sync_models_to_litellm
+from raghub.modules.retrieval.service import retrieve
 
 
 @asynccontextmanager
@@ -43,6 +47,8 @@ def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     redis_client: Redis | None = None,
     litellm_transport: httpx.AsyncBaseTransport | None = None,
+    retriever: Retriever | None = None,
+    llm_streamer: LLMStreamer | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -55,6 +61,8 @@ def create_app(
         redis_client = Redis.from_url(get_settings().redis_url)
     app.state.redis = redis_client
     app.state.litellm_transport = litellm_transport
+    app.state.retriever = retriever if retriever is not None else retrieve
+    app.state.llm_streamer = llm_streamer
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:
@@ -102,4 +110,5 @@ def create_app(
     app.include_router(search_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
     app.include_router(models_router, prefix="/api/v1")
+    app.include_router(chats_router, prefix="/api/v1")
     return app
