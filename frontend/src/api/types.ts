@@ -12,6 +12,10 @@ export type ChatTreeOut = components['schemas']['ChatTreeOut'];
 export type MessageNode = components['schemas']['MessageNode'];
 export type CitationOut = components['schemas']['CitationOut'];
 export type ModelOut = components['schemas']['ModelOut'];
+// GET /api/v1/models (non-admin, "any authenticated user") returns this
+// slimmer shape — id + display_name only, already filtered to enabled models
+// server-side. ModelOut (id/display_name/enabled/…) is the admin-page shape.
+export type ModelPublic = components['schemas']['ModelPublic'];
 
 export type DocumentStatus = DocumentOut['status'];
 
