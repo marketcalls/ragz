@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
 import { api } from '@/api/client';
@@ -38,6 +38,18 @@ export function useLogout() {
       queryClient.clear();
       navigate('/login', { replace: true });
     },
+  });
+}
+
+export function useSsoStatus() {
+  return useQuery({
+    queryKey: ['sso-status'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/auth/oidc/status');
+      if (error) return { enabled: false };
+      return data;
+    },
+    staleTime: 5 * 60 * 1000,
   });
 }
 
