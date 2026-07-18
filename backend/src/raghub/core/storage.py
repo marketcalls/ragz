@@ -29,8 +29,12 @@ class ObjectStorage:
         async with self._client() as s3:
             try:
                 await s3.head_bucket(Bucket=self.bucket)
-            except ClientError:
-                await s3.create_bucket(Bucket=self.bucket)
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code in {"404", "NoSuchBucket"}:
+                    await s3.create_bucket(Bucket=self.bucket)
+                else:
+                    raise
 
     async def put(
         self, key: str, data: bytes, content_type: str = "application/octet-stream"
@@ -43,7 +47,11 @@ class ObjectStorage:
             try:
                 obj = await s3.get_object(Bucket=self.bucket, Key=key)
             except ClientError as exc:
-                raise NotFoundError(f"object not found: {key}") from exc
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code in {"NoSuchKey", "404"}:
+                    raise NotFoundError(f"object not found: {key}") from exc
+                else:
+                    raise
             body: bytes = await obj["Body"].read()
             return body
 

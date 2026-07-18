@@ -1,4 +1,5 @@
 import pytest
+from botocore.exceptions import ClientError
 
 from raghub.core.errors import NotFoundError
 from raghub.core.storage import ObjectStorage
@@ -19,3 +20,18 @@ async def test_delete_missing_is_idempotent(storage: ObjectStorage) -> None:
 async def test_ensure_bucket_idempotent(storage: ObjectStorage) -> None:
     await storage.ensure_bucket()
     await storage.ensure_bucket()
+
+
+async def test_get_with_wrong_credentials_raises_client_error(
+    minio_config: dict[str, str],
+) -> None:
+    """Verify that authentication errors raise ClientError, not NotFoundError."""
+    bad_storage = ObjectStorage(
+        endpoint_url=minio_config["endpoint"],
+        access_key="wrong-access-key",
+        secret_key="wrong-secret-key",  # noqa: S106
+        bucket="raghub-test",
+    )
+    # Try to get with bad credentials - should raise ClientError, not NotFoundError
+    with pytest.raises(ClientError):
+        await bad_storage.get("any-key")
