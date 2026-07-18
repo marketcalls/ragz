@@ -11,7 +11,7 @@ test.skip(process.env.E2E !== '1', 'set E2E=1 with a running compose stack to ru
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const EMAIL = process.env.E2E_EMAIL ?? 'root@raghub.internal';
-const PASSWORD = process.env.E2E_PASSWORD ?? 'changeme123';
+const PASSWORD = process.env.E2E_PASSWORD ?? 'changeme12345';
 const FIXTURE = path.join(__dirname, 'fixtures', 'sample.pdf');
 const QUESTION = 'What is the internal launch codename for the RagHub payroll project?';
 

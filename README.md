@@ -13,10 +13,13 @@ docker compose -f deploy/compose.yaml up -d
 # 2. Backend (from backend/)
 cd backend && uv sync
 uv run alembic upgrade head
-RAGHUB_BOOTSTRAP_EMAIL=root@raghub.internal RAGHUB_BOOTSTRAP_PASSWORD=changeme123 \
+RAGHUB_BOOTSTRAP_EMAIL=root@raghub.internal RAGHUB_BOOTSTRAP_PASSWORD=changeme12345 \
   uv run python -m raghub.bootstrap
 uv run uvicorn --factory raghub.api.app:create_app --port 8000
-# worker (second terminal, from backend/): see Plan B section of the worker README
+# worker (second terminal, from backend/):
+uv run celery -A raghub.worker.celery_app:celery_app worker -Q interactive,default -l info
+# macOS note: add --pool=solo — Docling's native libraries crash under the default
+# prefork pool (fork-safety); Linux deployments can keep prefork.
 
 # 3. Frontend (from frontend/)
 cd frontend && pnpm install
