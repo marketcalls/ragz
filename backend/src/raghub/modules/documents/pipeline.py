@@ -170,6 +170,7 @@ async def upsert_points(
     document_id: UUID,
     mime: str,
     created_at: datetime,
+    acl_group_ids: list[str],
     chunks: list[Chunk],
     dense: list[list[float]],
     sparse: list[models.SparseVector],
@@ -189,7 +190,7 @@ async def upsert_points(
                 "text": c.text,
                 "doc_type": mime,
                 "date": created_at.isoformat(),
-                "acl_groups": [],  # reserved: Phase 2 ACLs need no schema migration
+                "acl_groups": sorted(acl_group_ids),
             },
         )
         for c, d, s in zip(chunks, dense, sparse, strict=True)

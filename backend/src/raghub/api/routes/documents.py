@@ -8,13 +8,14 @@ from raghub.api.deps import get_session
 from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
 from raghub.modules.documents import service
-from raghub.modules.documents.schemas import DocumentOut, DocumentPatch
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context
+from raghub.modules.documents.schemas import AclUpdate, DocumentOut, DocumentPatch
+from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
 from raghub.worker.tasks import enqueue_delete, enqueue_ingest
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
+AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 
 
 @router.post("/workspaces/{workspace_id}/documents", status_code=201,
@@ -79,4 +80,12 @@ async def patch_document(
     document_id: UUID, body: DocumentPatch, session: SessionDep, ctx: CtxDep
 ) -> DocumentOut:
     doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    return DocumentOut.model_validate(doc)
+
+
+@router.put("/documents/{document_id}/acl", response_model=DocumentOut)
+async def set_document_acl(
+    document_id: UUID, body: AclUpdate, session: SessionDep, ctx: AdminDep
+) -> DocumentOut:
+    doc = await service.set_document_acl(session, ctx, document_id, body.acl_group_ids)
     return DocumentOut.model_validate(doc)

@@ -9,7 +9,9 @@ from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDeni
 from raghub.core.storage import build_storage
 from raghub.modules.audit.service import record_audit
 from raghub.modules.documents.models import Document
+from raghub.modules.retrieval import service as retrieval_service
 from raghub.modules.tenancy.context import TenantContext
+from raghub.modules.tenancy.models import Group
 from raghub.modules.tenancy.service import get_workspace_checked
 
 
@@ -75,6 +77,14 @@ async def get_document_checked(
         raise NotFoundError("document not found")
     if ctx.role == "user" and doc.workspace_id not in ctx.workspace_ids:
         raise WorkspaceAccessDenied("workspace not found or not accessible")
+    if (
+        ctx.role == "user"
+        and doc.acl_group_ids is not None
+        and not set(doc.acl_group_ids) & ctx.group_ids
+    ):
+        # Same non-leaking error as the workspace gate: restricted existence
+        # must be indistinguishable from absence (RBAC-5).
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
     return doc
 
 
@@ -103,3 +113,34 @@ async def list_pinned_documents(
         .order_by(Document.created_at)
     )
     return list((await session.execute(stmt)).scalars())
+
+
+async def set_document_acl(
+    session: AsyncSession,
+    ctx: TenantContext,
+    document_id: UUID,
+    acl_group_ids: list[UUID] | None,
+) -> Document:
+    doc = await get_document_checked(session, ctx, document_id)
+    if acl_group_ids is not None:
+        owned = set(
+            (
+                await session.execute(
+                    select(Group.id).where(
+                        Group.id.in_(acl_group_ids), Group.org_id == ctx.org_id
+                    )
+                )
+            ).scalars()
+        )
+        if owned != set(acl_group_ids):
+            raise NotFoundError("one or more groups not found")
+    doc.acl_group_ids = list(acl_group_ids) if acl_group_ids is not None else None
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="document.acl_changed", target_type="document",
+                       target_id=str(doc.id))
+    await session.commit()
+    # After commit so a failed Qdrant call never strands a half-applied ACL in
+    # PG; on Qdrant failure the route 502s and the admin retries (set_payload
+    # is idempotent).
+    await retrieval_service.update_document_acl(ctx.org_id, doc.id, doc.acl_group_ids)
+    return doc

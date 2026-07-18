@@ -144,6 +144,7 @@ async def run_embed_upsert(document_id: UUID) -> None:
             await upsert_points(
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
                 mime=doc.mime, created_at=doc.created_at,
+                acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse,
             )
             done += len(batch)

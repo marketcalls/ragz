@@ -14,9 +14,14 @@ class DocumentOut(BaseModel):
     error: str | None
     created_at: datetime
     pinned: bool
+    acl_group_ids: list[UUID] | None = None
 
     model_config = {"from_attributes": True}
 
 
 class DocumentPatch(BaseModel):
     pinned: bool
+
+
+class AclUpdate(BaseModel):
+    acl_group_ids: list[UUID] | None

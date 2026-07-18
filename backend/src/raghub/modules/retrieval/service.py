@@ -2,8 +2,9 @@
 
 `_tenant_filter` below is the only function in the codebase allowed to construct
 a Qdrant filter. Its only callers are `retrieve()`, `delete_document_points()`,
-`list_document_chunks()`, and `get_chunks_by_refs()` — all in this module. The
-adversarial suite in tests/isolation/ exists to catch any regression here.
+`list_document_chunks()`, `get_chunks_by_refs()`, and `update_document_acl()` —
+all in this module. The adversarial suite in tests/isolation/ exists to catch
+any regression here.
 """
 
 import asyncio
@@ -80,10 +81,16 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
                 "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)
             },
         )
-        for field in ("tenant_id", "workspace_id", "document_id"):
+        for field in ("tenant_id", "workspace_id", "document_id", "acl_groups"):
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
             )
+    else:
+        # Heal collections created before Phase 2: acl_groups gains its keyword
+        # index on first touch (create_payload_index is idempotent in Qdrant).
+        await client.create_payload_index(
+            COLLECTION, field_name="acl_groups", field_schema=models.PayloadSchemaType.KEYWORD
+        )
     return COLLECTION
 
 
@@ -310,6 +317,25 @@ async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
     await get_qdrant().delete(
         COLLECTION,
         points_selector=models.FilterSelector(
+            filter=_tenant_filter(org_id=org_id, document_id=document_id)
+        ),
+        wait=True,
+    )
+
+
+async def update_document_acl(
+    org_id: UUID, document_id: UUID, acl_group_ids: list[UUID] | None
+) -> None:
+    """ACL re-index for already-indexed points (RBAC-5): rewrites the acl_groups
+    payload in place via set_payload — no re-embed. Lives here so payload/filter
+    knowledge never leaves this module (iron rule 1). A missing collection means
+    nothing indexed yet; the ingestion pipeline will stamp the ACL at upsert."""
+    if not await get_qdrant().collection_exists(COLLECTION):
+        return
+    await get_qdrant().set_payload(
+        COLLECTION,
+        payload={"acl_groups": sorted(str(g) for g in (acl_group_ids or []))},
+        points=models.FilterSelector(
             filter=_tenant_filter(org_id=org_id, document_id=document_id)
         ),
         wait=True,
