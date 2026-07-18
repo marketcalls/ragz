@@ -29,6 +29,9 @@ EXPECTED_TABLES = {
     "citations",
     "groups",
     "user_groups",
+    "org_quotas",
+    "user_quotas",
+    "usage_records",
     "alembic_version",
 }
 

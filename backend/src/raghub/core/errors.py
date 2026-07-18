@@ -51,3 +51,8 @@ class SecretsError(RagHubError):
 class UpstreamError(RagHubError):
     status_code = 502
     title = "Upstream service error"
+
+
+class QuotaExceeded(RagHubError):
+    status_code = 429
+    title = "Token quota exhausted"
