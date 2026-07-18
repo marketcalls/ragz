@@ -25,3 +25,14 @@ class RefreshToken(UUIDPk, Base):
     token_hash: Mapped[str] = mapped_column(unique=True)
     expires_at: Mapped[datetime]
     revoked_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class Invitation(UUIDPk, Base):
+    __tablename__ = "invitations"
+
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"))
+    email: Mapped[str] = mapped_column(index=True)
+    role: Mapped[str] = mapped_column(default="user")
+    token_hash: Mapped[str] = mapped_column(unique=True)
+    expires_at: Mapped[datetime]
+    accepted_at: Mapped[datetime | None] = mapped_column(default=None)

@@ -10,10 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.app_settings import get_or_create_signing_key
 from raghub.core.config import Settings
-from raghub.core.errors import AuthenticationError
-from raghub.modules.auth.models import RefreshToken, User
-from raghub.modules.auth.passwords import verify_password
+from raghub.core.errors import AuthenticationError, ConflictError
+from raghub.modules.auth.models import Invitation, RefreshToken, User
+from raghub.modules.auth.passwords import hash_password, verify_password
 from raghub.modules.auth.tokens import issue_access_token
+from raghub.modules.tenancy.context import TenantContext
 
 
 @dataclass(frozen=True)
@@ -103,3 +104,36 @@ async def logout(session: AsyncSession, *, raw_refresh: str) -> None:
         .values(revoked_at=datetime.now(UTC).replace(tzinfo=None))
     )
     await session.commit()
+
+
+async def create_invitation(
+    session: AsyncSession, ctx: TenantContext, *, email: str, role: str, ttl_hours: int = 72
+) -> str:
+    existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if existing is not None:
+        raise ConflictError("email already registered")
+    raw = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(tzinfo=None)
+    session.add(
+        Invitation(
+            org_id=ctx.org_id, email=email, role=role, token_hash=_hash(raw),
+            expires_at=expires_at,
+        )
+    )
+    await session.commit()
+    return raw
+
+
+async def accept_invitation(session: AsyncSession, *, raw_token: str, password: str) -> User:
+    inv = (
+        await session.execute(select(Invitation).where(Invitation.token_hash == _hash(raw_token)))
+    ).scalar_one_or_none()
+    now = datetime.now(UTC)
+    if inv is None or inv.accepted_at is not None or inv.expires_at.replace(tzinfo=UTC) < now:
+        raise AuthenticationError("invalid or expired invitation")
+    inv.accepted_at = now.replace(tzinfo=None)
+    user = User(org_id=inv.org_id, email=inv.email,
+                password_hash=hash_password(password), role=inv.role)
+    session.add(user)
+    await session.commit()
+    return user

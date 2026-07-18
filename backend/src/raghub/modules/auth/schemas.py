@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr
 
 
@@ -9,3 +11,17 @@ class LoginRequest(BaseModel):
 class AccessTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 (not a secret, just the auth scheme name)
+
+
+class InvitationCreate(BaseModel):
+    email: EmailStr
+    role: Literal["admin", "user"] = "user"
+
+
+class InvitationOut(BaseModel):
+    invite_token: str
+
+
+class InvitationAccept(BaseModel):
+    token: str
+    password: str
