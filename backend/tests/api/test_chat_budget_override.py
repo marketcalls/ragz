@@ -12,7 +12,7 @@ from raghub.modules.auth.models import User
 from raghub.modules.chat.prompting import CANNONBALL_MARKER, SYSTEM_PROMPT
 from raghub.modules.retrieval.service import RetrievedChunk
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
-from tests.conftest import FakeRetriever, FakeStreamer, _stub_litellm_handler
+from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_litellm_handler
 
 
 @pytest.fixture
@@ -23,6 +23,7 @@ def fake_streamer() -> FakeStreamer:
 def make_client(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings,
     retriever: FakeRetriever, fake_streamer: FakeStreamer,
+    chunk_reader: FakeChunkReader | None = None,
 ) -> httpx.AsyncClient:
     app = create_app(
         session_factory=build_session_factory(engine),
@@ -30,6 +31,7 @@ def make_client(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=retriever,
         llm_streamer=fake_streamer,
+        chunk_reader=chunk_reader if chunk_reader is not None else FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     return httpx.AsyncClient(

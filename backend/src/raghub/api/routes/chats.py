@@ -127,7 +127,8 @@ async def send_message(
     return _sse(service.stream_reply(
         session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
         streamer=_streamer(request, settings),
-        retriever=request.app.state.retriever, settings=settings,
+        retriever=request.app.state.retriever,
+        chunk_reader=request.app.state.chunk_reader, settings=settings,
     ))
 
 
@@ -148,5 +149,6 @@ async def regenerate(
     return _sse(service.stream_reply(
         session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
         streamer=_streamer(request, settings),
-        retriever=request.app.state.retriever, settings=settings,
+        retriever=request.app.state.retriever,
+        chunk_reader=request.app.state.chunk_reader, settings=settings,
     ))

@@ -23,9 +23,9 @@ from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
 from raghub.modules.chat.llm import LLMStreamer
-from raghub.modules.chat.service import Retriever
+from raghub.modules.chat.service import ChunkReader, Retriever
 from raghub.modules.models.sync import sync_models_to_litellm
-from raghub.modules.retrieval.service import retrieve
+from raghub.modules.retrieval.service import RetrievalChunkReader, retrieve
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ def create_app(
     litellm_transport: httpx.AsyncBaseTransport | None = None,
     retriever: Retriever | None = None,
     llm_streamer: LLMStreamer | None = None,
+    chunk_reader: ChunkReader | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -63,6 +64,7 @@ def create_app(
     app.state.litellm_transport = litellm_transport
     app.state.retriever = retriever if retriever is not None else retrieve
     app.state.llm_streamer = llm_streamer
+    app.state.chunk_reader = chunk_reader if chunk_reader is not None else RetrievalChunkReader()
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:

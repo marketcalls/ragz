@@ -304,6 +304,52 @@ class Retriever(Protocol):
     ) -> RetrievalResult: ...
 
 
+class ChunkReader(Protocol):
+    """Plan E seam: tenant-filtered chunk reads (pinned docs + citation
+    backfill). Implemented by modules/retrieval.RetrievalChunkReader; faked in
+    tests. Mirrors the Retriever/LLMStreamer injection pattern."""
+
+    async def list_document_chunks(
+        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID
+    ) -> list[RetrievedChunk]: ...
+
+    async def get_chunks_by_refs(
+        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+    ) -> list[RetrievedChunk]: ...
+
+
+def merge_chunks(*groups: Sequence[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Concatenate priority-ordered chunk groups (pinned, retrieved, backfilled),
+    deduping on (document_id, page, chunk_index) — first occurrence wins, so a
+    retrieved duplicate of a pinned chunk collapses into the pinned entry
+    (AnythingLLM's pinned-vs-search dedupe)."""
+    seen: set[tuple[UUID, int, int]] = set()
+    out: list[RetrievedChunk] = []
+    for group in groups:
+        for c in group:
+            key = (c.document_id, c.page, c.chunk_index)
+            if key not in seen:
+                seen.add(key)
+                out.append(c)
+    return out
+
+
+def cap_chunks_by_tokens(
+    chunks: Sequence[RetrievedChunk], max_tokens: int, model_hint: str | None
+) -> list[RetrievedChunk]:
+    """Prefix of `chunks` whose raw texts fit max_tokens — the pinned-docs cap
+    (half the sources share) so pinned material can never starve retrieval."""
+    kept: list[RetrievedChunk] = []
+    used = 0
+    for c in chunks:
+        cost = count_tokens(c.text, model_hint)
+        if used + cost > max_tokens:
+            break
+        kept.append(c)
+        used += cost
+    return kept
+
+
 def path_to_root(messages: list[Message], leaf: Message) -> list[Message]:
     """Ancestors of `leaf` (exclusive), ordered oldest -> newest."""
     by_id = {m.id: m for m in messages}
@@ -399,6 +445,7 @@ async def stream_reply(
     model: Model,
     streamer: LLMStreamer,
     retriever: Retriever,
+    chunk_reader: ChunkReader,
     settings: Settings,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
@@ -459,14 +506,28 @@ async def stream_reply(
         split = split_budget(settings.chat_context_token_budget)
         query_cost = count_tokens(user_message.content, model_hint)
 
+        pinned_chunks: list[RetrievedChunk] = []
+        for doc in await documents_service.list_pinned_documents(
+            session, ctx, chat.workspace_id
+        ):
+            pinned_chunks.extend(
+                await chunk_reader.list_document_chunks(ctx, chat.workspace_id, doc.id)
+            )
+        pinned_chunks = cap_chunks_by_tokens(
+            pinned_chunks, split.sources // 2, model_hint
+        )
+
         result = await retriever(session, ctx, chat.workspace_id, user_message.content)
+        merged = merge_chunks(pinned_chunks, result.chunks)
+        no_answer = result.no_answer and not pinned_chunks
+
         sources, kept_sources = await _prepare_sources(
-            session, ctx, result.chunks,
+            session, ctx, merged,
             max_tokens=max(split.sources - query_cost, 0), model_hint=model_hint,
         )
         yield sources_event(sources)
 
-        if result.no_answer:
+        if no_answer:
             yield token_event(NO_ANSWER_TEXT)
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,

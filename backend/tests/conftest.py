@@ -209,6 +209,23 @@ class FakeStreamer:
         yield LLMUsage(prompt_tokens=42, completion_tokens=7)
 
 
+class FakeChunkReader:
+    """Scriptable ChunkReader: document_id -> chunks (pinned path) and
+    chunk_ref string -> chunk (backfill path). Records backfill calls."""
+
+    def __init__(self) -> None:
+        self.document_chunks: dict[UUID, list[RetrievedChunk]] = {}
+        self.chunks_by_ref: dict[str, RetrievedChunk] = {}
+        self.ref_calls: list[list[str]] = []
+
+    async def list_document_chunks(self, ctx, workspace_id, document_id):  # type: ignore[no-untyped-def]
+        return list(self.document_chunks.get(document_id, []))
+
+    async def get_chunks_by_refs(self, ctx, workspace_id, refs):  # type: ignore[no-untyped-def]
+        self.ref_calls.append(list(refs))
+        return [self.chunks_by_ref[r] for r in refs if r in self.chunks_by_ref]
+
+
 class FakeRetriever:
     def __init__(self, document_id: UUID, no_answer: bool = False) -> None:
         self.document_id = document_id

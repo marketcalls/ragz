@@ -15,7 +15,7 @@ from raghub.core.errors import UpstreamError
 from raghub.modules.auth.models import User
 from raghub.modules.chat.models import Citation, Message
 from raghub.modules.chat.service import NO_ANSWER_TEXT
-from tests.conftest import FakeRetriever, FakeStreamer, _stub_litellm_handler
+from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_litellm_handler
 
 
 def parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
@@ -42,6 +42,7 @@ async def chat_client(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FakeRetriever(chat_env["document"].id),
         llm_streamer=fake_streamer,
+        chunk_reader=FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     async with httpx.AsyncClient(
@@ -133,6 +134,7 @@ async def test_no_answer_path_is_honest(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FakeRetriever(chat_env["document"].id, no_answer=True),
         llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     async with httpx.AsyncClient(
@@ -252,6 +254,7 @@ async def test_upstream_error_yields_generic_message(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FakeRetriever(chat_env["document"].id),
         llm_streamer=FailingStreamer(),
+        chunk_reader=FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     async with httpx.AsyncClient(
@@ -286,6 +289,7 @@ async def test_retrieval_failure_yields_generic_message_and_persists_user_messag
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FailingRetriever(),
         llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     async with httpx.AsyncClient(
@@ -325,6 +329,7 @@ async def test_small_talk_skips_retrieval(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FailingRetriever(),
         llm_streamer=fake_streamer,
+        chunk_reader=FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     async with httpx.AsyncClient(
@@ -383,6 +388,7 @@ async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FakeRetriever(chat_env["document"].id),
         llm_streamer=MidStreamFailingStreamer(),
+        chunk_reader=FakeChunkReader(),
     )
     app.dependency_overrides[get_settings] = lambda: test_settings
     async with httpx.AsyncClient(
