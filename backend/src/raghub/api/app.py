@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from raghub.api.routes.admin_secrets import router as admin_secrets_router
+from raghub.api.routes.admin_sso import router as admin_sso_router
 from raghub.api.routes.auth import router as auth_router
 from raghub.api.routes.chats import router as chats_router
 from raghub.api.routes.documents import router as documents_router
@@ -120,6 +121,7 @@ def create_app(
     app.include_router(groups_router, prefix="/api/v1")
     app.include_router(search_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
+    app.include_router(admin_sso_router, prefix="/api/v1")
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(chats_router, prefix="/api/v1")
     return app

@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from raghub.core.db import Base, UUIDPk
@@ -10,6 +11,8 @@ class Organization(UUIDPk, Base):
     __tablename__ = "organizations"
 
     name: Mapped[str] = mapped_column(unique=True)
+    # AUTH-6: lowercase email domains whose users may JIT-provision via SSO.
+    sso_domains: Mapped[list[str] | None] = mapped_column(ARRAY(String), default=None)
 
 
 class Workspace(UUIDPk, Base):
