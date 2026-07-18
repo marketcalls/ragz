@@ -119,9 +119,18 @@ async def run_chunk(document_id: UUID) -> None:
 
 async def run_embed_upsert(document_id: UUID) -> None:
     """Stages 3+4 in one runner: embedding a batch and upserting it immediately
-    avoids persisting vectors between tasks; ingest_jobs still shows both stages."""
+    avoids persisting vectors between tasks; ingest_jobs still shows both stages.
+
+    run_delete is idempotent and doesn't coordinate with in-flight ingest, so it
+    can win the race either before this runner starts or partway through it.
+    Both must be handled without raising and without leaving retrievable points."""
     async with _session() as session:
-        doc = await _get_document(session, document_id)
+        doc = (
+            await session.execute(select(Document).where(Document.id == document_id))
+        ).scalar_one_or_none()
+        if doc is None:
+            return  # deleted before we started: nothing was written, nothing to clean up
+        org_id = doc.org_id  # captured now: doc may be gone by the time we re-check below
         embed_job = await _start_stage(session, document_id, "embed")
         upsert_job = await _start_stage(session, document_id, "upsert")
         raw = await _storage().get(doc.storage_key + ".chunks.json")
@@ -140,6 +149,19 @@ async def run_embed_upsert(document_id: UUID) -> None:
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)
             await session.commit()
+
+        # A concurrent run_delete may have removed the row while we were
+        # embedding/upserting (e.g. delete raced ahead and completed before
+        # this task reached here). If so, the points we just wrote are
+        # orphaned and retrievable despite the document no longer existing —
+        # clean them up and skip marking indexed.
+        still_exists = (
+            await session.execute(select(Document).where(Document.id == document_id))
+        ).scalar_one_or_none()
+        if still_exists is None:
+            await delete_document_points(org_id, document_id)
+            return
+
         doc.status = "indexed"
         await _finish_stage(session, embed_job)
         await _finish_stage(session, upsert_job)

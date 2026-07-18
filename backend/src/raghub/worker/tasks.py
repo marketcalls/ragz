@@ -25,6 +25,16 @@ class IngestTask(Task):
         asyncio.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
 
 
+class DeleteTask(Task):
+    """Without this, an exhausted delete retry fails silently: the document
+    sits forever in the "deleting" status set by the route with no error and
+    no way for the UI to tell the user anything went wrong."""
+
+    def on_failure(self, exc: Exception, task_id: str, args: tuple[Any, ...],
+                   kwargs: dict[str, Any], einfo: Any) -> None:
+        asyncio.run(ingest.mark_failed(UUID(str(args[0])), f"delete failed: {exc}"))
+
+
 def _run(self: Task, coro_factory: Any) -> None:
     try:
         asyncio.run(coro_factory())
@@ -53,7 +63,7 @@ def embed_upsert_task(self: Task, document_id: str) -> str:
     return document_id
 
 
-@celery_app.task(bind=True, max_retries=_MAX_RETRIES, name="documents.delete")
+@celery_app.task(base=DeleteTask, bind=True, max_retries=_MAX_RETRIES, name="documents.delete")
 def delete_task(self: Task, document_id: str, actor_id: str | None = None) -> None:
     try:
         asyncio.run(ingest.run_delete(UUID(document_id),

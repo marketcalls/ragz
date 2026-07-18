@@ -10,11 +10,16 @@ async def check_rate_limit(redis: Redis, key: str, limit: int, window_seconds: i
     """Fixed-window limiter: INCR the key, arm EXPIRE on the first hit in a window.
 
     Shared across processes/workers via Redis (replaces the Plan A in-process
-    limiter behind the same `rate_limit()` public interface).
+    limiter behind the same `rate_limit()` public interface). INCR and EXPIRE run
+    in one pipeline (a single round trip, not a transaction) so a TTL is always
+    (re)armed alongside the increment — self-healing against a key that was
+    INCR'd but never got its EXPIRE (e.g. a previous call crashing between the
+    two calls, which used to leave the key without a TTL forever).
     """
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, window_seconds)
+    pipe = redis.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, window_seconds, nx=True)  # nx: never reset the window on a repeat hit
+    count, _ = await pipe.execute()
     if count > limit:
         raise RateLimitExceeded("rate limit exceeded, retry later")
 

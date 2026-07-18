@@ -64,5 +64,11 @@ async def delete_document(
     document_id: UUID, session: SessionDep, ctx: CtxDep
 ) -> dict[str, str]:
     doc = await service.get_document_checked(session, ctx, document_id)
+    # Flip status before enqueueing so a delete failure is visible: if the
+    # worker never picks up the task (or the on_failure hook fires), the
+    # document is left in a clearly-broken state rather than silently
+    # looking untouched forever.
+    doc.status = "deleting"
+    await session.commit()
     enqueue_delete(doc.id, ctx.user_id)
     return {"status": "deletion scheduled"}

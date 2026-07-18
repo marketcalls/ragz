@@ -2,7 +2,7 @@
 
 Unlike the rest of the test suite (which builds schema via
 ``Base.metadata.create_all`` for speed), this test exercises the actual
-7-revision alembic chain against a fresh Postgres instance so that a broken
+8-revision alembic chain against a fresh Postgres instance so that a broken
 migration (bad SQL, wrong down_revision, etc.) is caught before merge.
 """
 
@@ -20,6 +20,8 @@ EXPECTED_TABLES = {
     "refresh_tokens",
     "app_settings",
     "audit_events",
+    "documents",
+    "ingest_jobs",
     "alembic_version",
 }
 

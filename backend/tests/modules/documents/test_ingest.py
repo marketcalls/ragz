@@ -1,6 +1,8 @@
 import json
 
 import pytest
+from qdrant_client import models
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ from raghub.modules.documents.ingest import (
 from raghub.modules.documents.models import Document, IngestJob
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.documents.service import create_from_upload
+from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.service import retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
@@ -87,3 +90,35 @@ async def test_delete_propagates_everywhere(
     actions = [e.action for e in (await session.execute(select(AuditEvent))).scalars()]
     assert "document.deleted" in actions
     await run_delete(doc.id, ctx.user_id)  # idempotent
+
+
+async def test_embed_upsert_after_delete_leaves_no_orphaned_points(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Regression for the delete/ingest race: if run_delete wins and removes
+    the document row before (or during) run_embed_upsert, the runner must not
+    raise, must not mark the document indexed, and must not leave retrievable
+    points behind in Qdrant."""
+    ctx, ws, doc = await _upload(session, "ing5")
+    await run_parse(doc.id)
+    await run_chunk(doc.id)
+
+    # Simulate run_delete having already completed the DB-row removal while
+    # this ingest was in flight (delete is idempotent and races independently).
+    await session.execute(sa_delete(Document).where(Document.id == doc.id))
+    await session.commit()
+
+    await run_embed_upsert(doc.id)  # must not raise
+
+    count = await get_qdrant().count(
+        COLLECTION,
+        count_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id", match=models.MatchValue(value=str(doc.id))
+                )
+            ]
+        ),
+        exact=True,
+    )
+    assert count.count == 0

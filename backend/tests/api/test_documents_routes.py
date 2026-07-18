@@ -55,6 +55,13 @@ async def test_upload_list_delete_flow(
     assert r3.status_code == 202
     assert len(captured_enqueues["delete"]) == 1
 
+    # Status flips to "deleting" before the (mocked, never-run) worker task
+    # even gets a chance to run — a crashed/lost delete task must never leave
+    # the document looking untouched.
+    listing_after_delete = await client.get(f"/api/v1/workspaces/{ws_id}/documents", headers=h)
+    deleted_doc = next(d for d in listing_after_delete.json() if d["id"] == body["id"])
+    assert deleted_doc["status"] == "deleting"
+
 
 async def test_non_member_user_gets_403(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession, stack_env: None,
