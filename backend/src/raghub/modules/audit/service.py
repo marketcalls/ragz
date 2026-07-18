@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select, tuple_
@@ -25,6 +25,16 @@ async def record_audit(
     )
 
 
+def _to_naive_utc(value: datetime | None) -> datetime | None:
+    """Normalize an optionally tz-aware datetime to naive UTC, matching the
+    naive-UTC storage discipline of `created_at` (see `core.db.naive_utc`).
+    A plain `.replace(tzinfo=None)` would mis-time non-UTC offsets; convert
+    to UTC first."""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
 async def list_audit_events(
     session: AsyncSession,
     *,
@@ -39,9 +49,11 @@ async def list_audit_events(
     """Keyset-paginated read path for SUP-5. Cursor is "{created_at}|{id}" of
     the last row seen; malformed cursors raise NotFoundError (a stale bookmark,
     not a server fault)."""
+    date_from = _to_naive_utc(date_from)
+    date_to = _to_naive_utc(date_to)
     stmt = select(AuditEvent).order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
     if action:
-        stmt = stmt.where(AuditEvent.action.startswith(action))
+        stmt = stmt.where(AuditEvent.action.startswith(action, autoescape=True))
     if actor_id is not None:
         stmt = stmt.where(AuditEvent.actor_id == actor_id)
     if org_id is not None:
