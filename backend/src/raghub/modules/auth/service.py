@@ -213,17 +213,24 @@ async def login_oidc(session: AsyncSession, *, email: str, settings: Settings) -
     user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if user is None:
         domain = email.rsplit("@", 1)[-1]
-        org = (
+        orgs = (
             await session.execute(
                 select(Organization).where(Organization.sso_domains.contains([domain]))
             )
-        ).scalars().first()
-        if org is None:
+        ).scalars().all()
+        if len(orgs) != 1:
+            # Zero matches: no org claims the domain. More than one: the unique-
+            # claim invariant enforced at write time (tenancy.set_org_sso_domains)
+            # was somehow violated anyway (legacy rows, direct DB edits) -- fail
+            # loudly rather than silently picking one. Same generic message and
+            # denial audit action either way: the detail must never reveal
+            # whether zero or multiple orgs matched (no org enumeration).
             await record_audit(session, org_id=None, actor_id=None,
                                action="login.oidc_denied", target_type="user",
                                target_id=email)
             await session.commit()
             raise AuthenticationError("no organization accepts this email domain")
+        org = orgs[0]
         user = User(
             org_id=org.id, email=email,
             # unusable password: SSO users authenticate only via the IdP

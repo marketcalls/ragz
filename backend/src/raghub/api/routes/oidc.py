@@ -8,6 +8,7 @@ from raghub.api.deps import get_session
 from raghub.api.routes.auth import _set_refresh
 from raghub.core.config import Settings, get_settings
 from raghub.core.errors import NotFoundError
+from raghub.core.ratelimit import rate_limit
 from raghub.modules.auth import oidc
 from raghub.modules.auth import service as auth_service
 
@@ -20,7 +21,10 @@ def _redirect_uri(settings: Settings) -> str:
     return f"{settings.public_api_base_url}/api/v1/auth/oidc/callback"
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    dependencies=[Depends(rate_limit("oidc_status", limit=60, window_seconds=60))],
+)
 async def status(session: SessionDep) -> dict[str, bool]:
     from raghub.core.app_settings import get_app_setting
 
@@ -29,7 +33,10 @@ async def status(session: SessionDep) -> dict[str, bool]:
     return {"enabled": bool(issuer and client_id)}
 
 
-@router.get("/login")
+@router.get(
+    "/login",
+    dependencies=[Depends(rate_limit("oidc_login", limit=10, window_seconds=60))],
+)
 async def login(request: Request, session: SessionDep, settings: SettingsDep) -> RedirectResponse:
     provider = await oidc.load_provider(session, transport=request.app.state.oidc_transport)
     if provider is None:
@@ -40,7 +47,10 @@ async def login(request: Request, session: SessionDep, settings: SettingsDep) ->
     return RedirectResponse(url, status_code=302)
 
 
-@router.get("/callback")
+@router.get(
+    "/callback",
+    dependencies=[Depends(rate_limit("oidc_callback", limit=10, window_seconds=60))],
+)
 async def callback(
     code: str, state: str, request: Request, session: SessionDep, settings: SettingsDep
 ) -> RedirectResponse:

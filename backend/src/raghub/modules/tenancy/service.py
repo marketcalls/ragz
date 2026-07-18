@@ -218,13 +218,32 @@ async def list_organizations(session: AsyncSession) -> list[Organization]:
 async def set_org_sso_domains(
     session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, domains: list[str]
 ) -> Organization:
-    """AUTH-6: normalize to lowercase, de-duplicate, empty collapses to None."""
+    """AUTH-6: normalize to lowercase, de-duplicate, empty collapses to None.
+
+    Review finding: a domain must be claimed by at most one org, otherwise a
+    JIT-provisioned SSO user gets routed into whichever org happens to sort
+    first (see modules/auth/service.py:login_oidc). Reject the write (409) if
+    any of the requested domains is already claimed by a DIFFERENT org; the
+    same org re-claiming (or extending) its own list is fine.
+    """
     org = (
         await session.execute(select(Organization).where(Organization.id == org_id))
     ).scalar_one_or_none()
     if org is None:
         raise NotFoundError("organization not found")
-    org.sso_domains = sorted({d.strip().lower() for d in domains if d.strip()}) or None
+    normalized = sorted({d.strip().lower() for d in domains if d.strip()})
+    if normalized:
+        conflict = (
+            await session.execute(
+                select(Organization.id).where(
+                    Organization.id != org_id,
+                    Organization.sso_domains.overlap(normalized),
+                )
+            )
+        ).first()
+        if conflict is not None:
+            raise ConflictError("one or more domains are already claimed by another organization")
+    org.sso_domains = normalized or None
     await record_audit(session, org_id=org.id, actor_id=actor_id,
                        action="org.sso_domains_changed", target_type="organization",
                        target_id=str(org.id))
