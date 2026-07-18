@@ -1,4 +1,4 @@
-import { Pin, Trash2 } from 'lucide-react';
+import { Lock, Pin, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DocumentOut } from '@/api/types';
@@ -8,6 +8,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { StatusPill } from '@/components/ui/status-pill';
 import { TD, TR } from '@/components/ui/table';
 
+import { useClaims } from '@/lib/use-claims';
+
+import { AclDialog } from './acl-dialog';
 import { formatBytes, statusPresentation } from './status';
 
 export function DocumentRow({
@@ -24,28 +27,35 @@ export function DocumentRow({
   pinning: boolean;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [aclOpen, setAclOpen] = useState(false);
+  const claims = useClaims();
+  const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
   const { tone, label } = statusPresentation(doc);
+  const restricted = Boolean(doc.acl_group_ids && doc.acl_group_ids.length > 0);
   return (
     <TR>
       <TD className="max-w-[320px] truncate font-medium">{doc.filename}</TD>
       <TD className="text-secondary">{formatBytes(doc.size_bytes)}</TD>
       <TD className="text-secondary">{doc.page_count ?? '—'}</TD>
       <TD>
-        {doc.status === 'failed' ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button type="button" aria-label="Show failure reason">
-                <StatusPill tone={tone}>{label}</StatusPill>
-              </button>
-            </PopoverTrigger>
-            <PopoverContent>
-              <p className="font-medium text-danger">Ingestion failed</p>
-              <p className="mt-1 text-secondary">{doc.error ?? 'Unknown error'}</p>
-            </PopoverContent>
-          </Popover>
-        ) : (
-          <StatusPill tone={tone}>{label}</StatusPill>
-        )}
+        <div className="flex items-center gap-1.5">
+          {doc.status === 'failed' ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button type="button" aria-label="Show failure reason">
+                  <StatusPill tone={tone}>{label}</StatusPill>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent>
+                <p className="font-medium text-danger">Ingestion failed</p>
+                <p className="mt-1 text-secondary">{doc.error ?? 'Unknown error'}</p>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            <StatusPill tone={tone}>{label}</StatusPill>
+          )}
+          {restricted ? <StatusPill tone="warning">restricted</StatusPill> : null}
+        </div>
       </TD>
       <TD className="text-muted">{new Date(doc.created_at).toLocaleDateString()}</TD>
       <TD className="text-right">
@@ -62,6 +72,17 @@ export function DocumentRow({
             aria-hidden
           />
         </Button>
+        {isAdmin ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Manage access for ${doc.filename}`}
+            title="Manage document access"
+            onClick={() => setAclOpen(true)}
+          >
+            <Lock className={restricted ? 'h-4 w-4 text-accent' : 'h-4 w-4'} aria-hidden />
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"
@@ -70,6 +91,7 @@ export function DocumentRow({
         >
           <Trash2 className="h-4 w-4" aria-hidden />
         </Button>
+        {isAdmin ? <AclDialog document={doc} open={aclOpen} onOpenChange={setAclOpen} /> : null}
         <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
           <DialogContent
             title="Delete document"

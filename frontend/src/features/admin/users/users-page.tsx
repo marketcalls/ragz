@@ -1,4 +1,4 @@
-import { UserPlus } from 'lucide-react';
+import { UserPlus, Users as UsersIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import type { UserOut } from '@/api/types';
@@ -11,13 +11,17 @@ import { StatusPill } from '@/components/ui/status-pill';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
+import { GroupsDialog } from '../groups/groups-dialog';
+
 import { InviteDialog } from './invite-dialog';
 import { usePatchUser, useUsers } from './queries';
+import { UserGroupsCell } from './user-groups-cell';
 
 export function UsersPage() {
   const users = useUsers();
   const patchUser = usePatchUser();
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [confirmUser, setConfirmUser] = useState<UserOut | null>(null);
 
   return (
@@ -25,9 +29,14 @@ export function UsersPage() {
       <TopBar
         title="Users"
         actions={
-          <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
-            <UserPlus className="h-3.5 w-3.5" aria-hidden /> Invite
-          </Button>
+          <>
+            <Button size="sm" onClick={() => setGroupsOpen(true)}>
+              <UsersIcon className="h-3.5 w-3.5" aria-hidden /> Manage groups
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
+              <UserPlus className="h-3.5 w-3.5" aria-hidden /> Invite
+            </Button>
+          </>
         }
       />
       <div className="flex-1 overflow-y-auto p-4">
@@ -40,6 +49,7 @@ export function UsersPage() {
                   <TH>Email</TH>
                   <TH>Role</TH>
                   <TH>Status</TH>
+                  <TH>Groups</TH>
                   <TH />
                 </TR>
               </THead>
@@ -76,6 +86,9 @@ export function UsersPage() {
                         {user.active ? 'Active' : 'Deactivated'}
                       </StatusPill>
                     </TD>
+                    <TD>
+                      {user.role !== 'superadmin' ? <UserGroupsCell userId={user.id} /> : null}
+                    </TD>
                     <TD className="text-right">
                       {user.role !== 'superadmin' ? (
                         <Button size="sm" onClick={() => setConfirmUser(user)}>
@@ -91,6 +104,7 @@ export function UsersPage() {
         </div>
       </div>
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      <GroupsDialog open={groupsOpen} onOpenChange={setGroupsOpen} />
       <Dialog open={confirmUser !== null} onOpenChange={(o) => !o && setConfirmUser(null)}>
         <DialogContent
           title={confirmUser?.active ? 'Deactivate user' : 'Reactivate user'}
