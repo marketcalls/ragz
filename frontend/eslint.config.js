@@ -18,4 +18,24 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: ['src/features/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'Literal[value=/\\b(?:bg|text|border|ring|outline|fill|stroke|decoration|divide|from|via|to)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\\b/]',
+          message:
+            'Raw Tailwind palette class — use theme tokens (bg-subtle, text-muted, text-accent, …) per the theme spec.',
+        },
+        {
+          selector:
+            'TemplateElement[value.raw=/\\b(?:bg|text|border|ring|outline|fill|stroke|decoration|divide|from|via|to)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\\b/]',
+          message:
+            'Raw Tailwind palette class — use theme tokens (bg-subtle, text-muted, text-accent, …) per the theme spec.',
+        },
+      ],
+    },
+  },
 );

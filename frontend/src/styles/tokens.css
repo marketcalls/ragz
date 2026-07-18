@@ -1,0 +1,55 @@
+/* Design tokens — the single source of truth (theme spec §2).
+   White-label rule (§4): org branding may rewrite --accent/--accent-soft (+ dark
+   variants) only. Components never reference raw accent hexes. */
+
+:root {
+  --bg: #ffffff;
+  --bg-sidebar: #f9f9f9;
+  --bg-subtle: #f4f4f5;
+  --bg-raised: #fafafa;
+  --border: #ececec;
+  --border-strong: #e0e0e0; /* derived: one step past --border; dark value is spec'd */
+  --border-faint: #f1f1f1;
+  --text: #171717;
+  --text-secondary: #555555;
+  --text-muted: #8a8a8a; /* meta/decorative only — below AA for body copy */
+  --accent: #4f46e5;
+  --accent-soft: #eef2ff;
+  --accent-on-soft: #4f46e5; /* text on accent-soft; dark mode overrides */
+  --success: #059669;
+  --success-soft: #ecfdf5;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --warning: #b45309;
+  --warning-soft: #fffbeb;
+
+  /* shape & elevation (theme spec §2.4) */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 16px;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.dark {
+  --bg: #181818;
+  --bg-sidebar: #111113;
+  --bg-subtle: #26262a;
+  --bg-raised: #1d1d20;
+  --border: #26262a;
+  --border-strong: #313136;
+  --border-faint: #1f1f22;
+  --text: #ececec;
+  --text-secondary: #a7a7ad;
+  --text-muted: #7a7a80;
+  --accent: #818cf8;
+  --accent-soft: rgba(129, 140, 248, 0.18);
+  --accent-on-soft: #a5b4fc;
+  /* status: same hues one step lighter; soft = ~15% alpha overlays (spec §2.2) */
+  --success: #10b981;
+  --success-soft: rgba(16, 185, 129, 0.15);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.15);
+  --warning: #d97706;
+  --warning-soft: rgba(217, 119, 6, 0.15);
+}

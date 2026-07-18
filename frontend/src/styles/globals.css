@@ -1,0 +1,19 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-bg font-sans text-[14px] text-ink antialiased;
+  }
+  /* Accessibility (theme spec §5): visible accent focus ring, 2px offset, everywhere */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
