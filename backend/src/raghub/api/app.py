@@ -1,6 +1,7 @@
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,12 +17,16 @@ from raghub.core.logging import configure_logging
 
 def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    redis_client: Redis | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(title="RagHub", docs_url="/api/docs", openapi_url="/api/openapi.json")
     if session_factory is None:
         session_factory = build_session_factory(build_engine(get_settings().database_url))
     app.state.session_factory = session_factory
+    if redis_client is None:
+        redis_client = Redis.from_url(get_settings().redis_url)
+    app.state.redis = redis_client
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:

@@ -2,8 +2,10 @@ from collections.abc import AsyncIterator, Iterator
 
 import httpx
 import pytest
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 from raghub.api.app import create_app
 from raghub.core.db import Base, build_engine, build_session_factory
@@ -16,6 +18,20 @@ from raghub.modules.tenancy.models import Organization
 def pg_url() -> Iterator[str]:
     with PostgresContainer("postgres:16-alpine") as pg:
         yield pg.get_connection_url().replace("psycopg2", "asyncpg")
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    with RedisContainer("redis:7-alpine") as r:
+        yield f"redis://{r.get_container_host_ip()}:{r.get_exposed_port(6379)}/0"
+
+
+@pytest.fixture
+async def redis_client(redis_url: str) -> AsyncIterator[Redis]:
+    r = Redis.from_url(redis_url)
+    await r.flushdb()  # rate-limit counters must not leak across tests
+    yield r
+    await r.aclose()
 
 
 @pytest.fixture
@@ -37,8 +53,8 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(engine: AsyncEngine) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(session_factory=build_session_factory(engine))
+async def client(engine: AsyncEngine, redis_client: Redis) -> AsyncIterator[httpx.AsyncClient]:
+    app = create_app(session_factory=build_session_factory(engine), redis_client=redis_client)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

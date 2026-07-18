@@ -46,7 +46,11 @@ async def login(
     return AccessTokenResponse(access_token=pair.access_token)
 
 
-@router.post("/refresh", response_model=AccessTokenResponse)
+@router.post(
+    "/refresh",
+    response_model=AccessTokenResponse,
+    dependencies=[Depends(rate_limit("refresh", limit=30, window_seconds=60))],
+)
 async def refresh(
     response: Response, session: SessionDep, settings: SettingsDep,
     refresh_token: RefreshCookie = None,
@@ -75,7 +79,11 @@ async def create_invitation(
     return InvitationOut(invite_token=raw)
 
 
-@router.post("/invitations/accept", status_code=201)
+@router.post(
+    "/invitations/accept",
+    status_code=201,
+    dependencies=[Depends(rate_limit("invitation_accept", limit=10, window_seconds=60))],
+)
 async def accept_invitation(body: InvitationAccept, session: SessionDep) -> dict[str, str]:
     user = await service.accept_invitation(session, raw_token=body.token, password=body.password)
     return {"email": user.email}

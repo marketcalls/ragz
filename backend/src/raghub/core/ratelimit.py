@@ -1,42 +1,30 @@
-import time
-from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request
+from redis.asyncio import Redis
 
 from raghub.core.errors import RateLimitExceeded
 
 
-class FixedWindowLimiter:
-    def __init__(self, limit: int, window_seconds: int) -> None:
-        self.limit = limit
-        self.window_seconds = window_seconds
-        self._hits: dict[str, list[float]] = defaultdict(list)
+async def check_rate_limit(redis: Redis, key: str, limit: int, window_seconds: int) -> None:
+    """Fixed-window limiter: INCR the key, arm EXPIRE on the first hit in a window.
 
-    def check(self, key: str) -> None:
-        now = time.monotonic()
-        window = [t for t in self._hits[key] if now - t < self.window_seconds]
-        if len(window) >= self.limit:
-            self._hits[key] = window
-            raise RateLimitExceeded("rate limit exceeded, retry later")
-        window.append(now)
-        self._hits[key] = window
+    Shared across processes/workers via Redis (replaces the Plan A in-process
+    limiter behind the same `rate_limit()` public interface).
+    """
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, window_seconds)
+    if count > limit:
+        raise RateLimitExceeded("rate limit exceeded, retry later")
 
 
 def rate_limit(
     scope: str, limit: int = 10, window_seconds: int = 60
 ) -> Callable[[Request], Awaitable[None]]:
-    limiter = FixedWindowLimiter(limit, window_seconds)
-
     async def guard(request: Request) -> None:
         client_ip = request.client.host if request.client else "unknown"
-        # Keyed on the app instance too: the route decorator (and thus this
-        # closure's `limiter`) is created once at module-import time, so it is
-        # shared across every FastAPI app built afterwards. Production only ever
-        # builds one app per process, so this has no effect there; in tests each
-        # `client` fixture builds a fresh app, and including `id(request.app)` in
-        # the key keeps those apps' counters isolated instead of leaking across
-        # tests within the same process.
-        limiter.check(f"{scope}:{id(request.app)}:{client_ip}")
+        redis: Redis = request.app.state.redis
+        await check_rate_limit(redis, f"rl:{scope}:{client_ip}", limit, window_seconds)
 
     return guard

@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from raghub.api.app import create_app
@@ -10,8 +11,10 @@ from raghub.modules.auth.models import User
 
 
 @pytest.fixture
-async def crashy_client(engine: AsyncEngine) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(session_factory=build_session_factory(engine))
+async def crashy_client(
+    engine: AsyncEngine, redis_client: Redis
+) -> AsyncIterator[httpx.AsyncClient]:
+    app = create_app(session_factory=build_session_factory(engine), redis_client=redis_client)
 
     @app.get("/probe/boom")
     async def boom() -> None:
