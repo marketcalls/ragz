@@ -13,7 +13,12 @@ from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.documents.ingest import run_delete
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
-from raghub.modules.retrieval.service import _tenant_filter, get_chunks_by_refs, retrieve
+from raghub.modules.retrieval.service import (
+    _tenant_filter,
+    get_chunks_by_refs,
+    list_document_chunks,
+    retrieve,
+)
 from tests.isolation.conftest import ingest_text, seed_same_org_two_workspaces
 
 
@@ -145,3 +150,32 @@ async def test_chunk_refs_cross_org_never_resolve(
     _, _, doc_b = two_orgs["b"]
     # Org A replays org B's chunk_ref against its own workspace: nothing.
     assert await get_chunks_by_refs(ctx_a, ws_a.id, [f"{doc_b.id}:1:0"]) == []
+
+
+async def test_document_chunks_cross_workspace_never_resolve(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Pinned-document leak test (Plan E, review round 1): a member of ws1
+    listing ws2's document chunks must get NOTHING — same org, different
+    workspace, the same product-leak scenario as the retrieval and
+    chunk-refs tests above. Also pins the in-reader membership guard added
+    in this round: a ws1-only ctx calling with workspace_id=ws2.id (not the
+    filtered document's workspace, but the workspace ARGUMENT itself) must
+    raise WorkspaceAccessDenied rather than silently scrolling to []."""
+    ctx1, ws1, ctx2, ws2 = await seed_same_org_two_workspaces(session)
+    doc2 = await ingest_text(session, ctx2, ws2, "ws2.txt",
+                             "workspace two secret: the launch code is 8834")
+    # ws1's own member, querying ws1, asking about a document that actually
+    # lives in ws2: the tenant filter blocks it -> [].
+    assert await list_document_chunks(ctx1, ws1.id, doc2.id) == []
+    # Not a vacuous pass: the same document DOES resolve for the rightful
+    # workspace/member.
+    resolved = await list_document_chunks(ctx2, ws2.id, doc2.id)
+    assert resolved
+    assert all(c.document_id == doc2.id for c in resolved)
+    assert "8834" in resolved[0].text
+    # The new in-reader membership guard: ctx1 is not a member of ws2 at all,
+    # so calling with workspace_id=ws2.id must raise before any filter runs
+    # -- regardless of which document_id is passed.
+    with pytest.raises(WorkspaceAccessDenied):
+        await list_document_chunks(ctx1, ws2.id, doc2.id)

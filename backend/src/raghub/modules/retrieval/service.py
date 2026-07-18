@@ -16,6 +16,7 @@ from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
+from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.rerank import RerankUnavailable, get_reranker
@@ -171,6 +172,7 @@ async def retrieve(
 
 
 _SCROLL_PAGE = 256
+_SCROLL_PAGE_CAP = 40  # defensive cap on pages scrolled per document in get_chunks_by_refs
 
 
 async def list_document_chunks(
@@ -180,7 +182,12 @@ async def list_document_chunks(
     document read path (gap G3). Runs under the SAME tenant filter as
     retrieve(); a document outside the caller's org/workspace scrolls to
     nothing. score=1.0 marks always-present (pinned) context. Callers must
-    already hold workspace access (documents.list_pinned_documents gates)."""
+    already hold workspace access (documents.list_pinned_documents gates);
+    this function ALSO enforces the same membership rule in-reader (defense
+    in depth, mirrors retrieve()'s gate) — a "user"-role ctx not a member of
+    workspace_id is rejected before the filter is even built."""
+    if ctx.role == "user" and workspace_id not in ctx.workspace_ids:
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
     client = get_qdrant()
     if not await client.collection_exists(COLLECTION):
         return []
@@ -230,7 +237,12 @@ async def get_chunks_by_refs(
     refs pointing at another org or workspace scroll to nothing and silently
     drop, as do malformed refs. Result is in ref order, deduped. score=0.0
     marks backfilled context. Callers must already hold workspace access (the
-    chat service gates via get_chat + the workspace load in the same turn)."""
+    chat service gates via get_chat + the workspace load in the same turn);
+    this function ALSO enforces the same membership rule in-reader (defense
+    in depth, mirrors retrieve()'s gate) — a "user"-role ctx not a member of
+    workspace_id is rejected before any scroll is issued."""
+    if ctx.role == "user" and workspace_id not in ctx.workspace_ids:
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
     client = get_qdrant()
     if not await client.collection_exists(COLLECTION):
         return []
@@ -242,23 +254,34 @@ async def get_chunks_by_refs(
             seen_keys.add(key)
             parsed.append(key)
     found: dict[tuple[UUID, int, int], RetrievedChunk] = {}
-    for doc_id in {key[0] for key in parsed}:
+    wanted_indices: dict[UUID, set[tuple[int, int]]] = {}
+    for doc_id, page, chunk_index in parsed:
+        wanted_indices.setdefault(doc_id, set()).add((page, chunk_index))
+    for doc_id, wanted in wanted_indices.items():
         flt = _tenant_filter(
             org_id=ctx.org_id, workspace_id=workspace_id, document_id=doc_id
         )
-        points, _ = await client.scroll(
-            COLLECTION, scroll_filter=flt, limit=_SCROLL_PAGE, with_payload=True,
-        )
-        for p in points:
-            payload = p.payload or {}
-            chunk = RetrievedChunk(
-                document_id=UUID(str(payload["document_id"])),
-                page=int(payload["page"]),
-                chunk_index=int(payload["chunk_index"]),
-                text=str(payload["text"]),
-                score=0.0,
+        offset: models.ExtendedPointId | None = None
+        for _ in range(_SCROLL_PAGE_CAP):
+            points, offset = await client.scroll(
+                COLLECTION, scroll_filter=flt, limit=_SCROLL_PAGE,
+                offset=offset, with_payload=True,
             )
-            found[(chunk.document_id, chunk.page, chunk.chunk_index)] = chunk
+            for p in points:
+                payload = p.payload or {}
+                chunk = RetrievedChunk(
+                    document_id=UUID(str(payload["document_id"])),
+                    page=int(payload["page"]),
+                    chunk_index=int(payload["chunk_index"]),
+                    text=str(payload["text"]),
+                    score=0.0,
+                )
+                found[(chunk.document_id, chunk.page, chunk.chunk_index)] = chunk
+            found_for_doc = {
+                (p, ci) for (d, p, ci) in found if d == doc_id
+            }
+            if offset is None or found_for_doc >= wanted:
+                break
     return [found[key] for key in parsed if key in found]
 
 
