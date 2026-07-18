@@ -68,6 +68,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "raghub.worker.tasks"
 disallow_untyped_decorators = false
+disallow_subclassing_any = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -79,4 +80,4 @@ root_package = "raghub"
 [[tool.importlinter.contracts]]
 name = "Layered architecture"
 type = "layers"
-layers = ["raghub.api", "raghub.modules", "raghub.core"]
+layers = ["raghub.api", "raghub.worker", "raghub.modules", "raghub.core"]
