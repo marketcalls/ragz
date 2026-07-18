@@ -10,7 +10,7 @@ from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
 from raghub.modules.models import service as models_service
 from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Group, UserGroup, Workspace, WorkspaceMember
+from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
 
 
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
@@ -206,3 +206,27 @@ async def remove_group_member(
                        action="group.member_removed", target_type="group",
                        target_id=f"{group_id}:{user_id}")
     await session.commit()
+
+
+async def list_organizations(session: AsyncSession) -> list[Organization]:
+    """Superadmin-only listing (admin/sso routes) — platform-wide, not org-scoped."""
+    return list(
+        (await session.execute(select(Organization).order_by(Organization.name))).scalars()
+    )
+
+
+async def set_org_sso_domains(
+    session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, domains: list[str]
+) -> Organization:
+    """AUTH-6: normalize to lowercase, de-duplicate, empty collapses to None."""
+    org = (
+        await session.execute(select(Organization).where(Organization.id == org_id))
+    ).scalar_one_or_none()
+    if org is None:
+        raise NotFoundError("organization not found")
+    org.sso_domains = sorted({d.strip().lower() for d in domains if d.strip()}) or None
+    await record_audit(session, org_id=org.id, actor_id=actor_id,
+                       action="org.sso_domains_changed", target_type="organization",
+                       target_id=str(org.id))
+    await session.commit()
+    return org

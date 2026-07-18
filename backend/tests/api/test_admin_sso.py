@@ -1,6 +1,12 @@
 import httpx
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from raghub.core.app_settings import get_app_setting
+from raghub.modules.audit.models import AuditEvent
 from raghub.modules.auth.models import User
+from raghub.modules.auth.oidc import OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -49,3 +55,40 @@ async def test_sso_admin_requires_superadmin(
 ) -> None:
     h = await auth(client, "a@acme.com")  # org admin, not superadmin
     assert (await client.get("/api/v1/admin/sso", headers=h)).status_code == 403
+
+
+async def test_put_sso_rolls_back_atomically_on_secret_failure(
+    client: httpx.AsyncClient,
+    seeded_superadmin: User,
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding: the old route committed the settings write, the secret write,
+    and the audit record as three independent transactions, so a failure between
+    them (e.g. the secret write raising) could leave issuer/client_id persisted with
+    no audit record. The route now composes one service call
+    (modules.auth.oidc.set_sso_config) that commits exactly once."""
+    h = await auth(client, "root@platform.example")
+
+    async def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("secrets backend unavailable")
+
+    monkeypatch.setattr("raghub.modules.auth.oidc.secrets_service.set_secret", boom)
+
+    # The default `client` fixture's ASGITransport re-raises app exceptions (see
+    # tests/api/test_error_handlers.py's crashy_client for the same caveat); a real
+    # deployment's global handler still turns this into a bare 500 for the caller.
+    with pytest.raises(RuntimeError, match="secrets backend unavailable"):
+        await client.put("/api/v1/admin/sso", headers=h, json={
+            "issuer": "https://idp.example.com", "client_id": "raghub",
+            "client_secret": "s3cret-value",
+        })
+
+    assert await get_app_setting(session, OIDC_ISSUER_KEY) is None
+    assert await get_app_setting(session, OIDC_CLIENT_ID_KEY) is None
+    actions = [e.action for e in (await session.execute(select(AuditEvent))).scalars()]
+    assert "sso.config_changed" not in actions
+
+    # Confirms the config really is unset end-to-end, not just at the DB layer.
+    after = (await client.get("/api/v1/admin/sso", headers=h)).json()
+    assert after == {"issuer": None, "client_id": None, "client_secret_set": False}

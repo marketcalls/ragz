@@ -34,7 +34,9 @@ async def get_app_setting(session: AsyncSession, key: str) -> str | None:
     return None if row is None else row.value
 
 
-async def set_app_setting(session: AsyncSession, key: str, value: str) -> None:
+async def set_app_setting(
+    session: AsyncSession, key: str, value: str, *, commit: bool = True
+) -> None:
     row = (
         await session.execute(select(AppSetting).where(AppSetting.key == key))
     ).scalar_one_or_none()
@@ -42,4 +44,7 @@ async def set_app_setting(session: AsyncSession, key: str, value: str) -> None:
         session.add(AppSetting(key=key, value=value))
     else:
         row.value = value
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
