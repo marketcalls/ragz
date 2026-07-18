@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.app_settings import get_or_create_signing_key
 from raghub.core.config import Settings
 from raghub.core.errors import AuthenticationError, ConflictError, NotFoundError
+from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import Invitation, RefreshToken, User
 from raghub.modules.auth.passwords import hash_password, verify_password
 from raghub.modules.auth.tokens import issue_access_token
@@ -55,7 +56,12 @@ async def login(
 ) -> TokenPair:
     user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if user is None or not user.active or not verify_password(user.password_hash, password):
+        await record_audit(session, org_id=None, actor_id=None, action="login.failure",
+                           target_type="user", target_id=email)
+        await session.commit()
         raise AuthenticationError("invalid credentials")
+    await record_audit(session, org_id=user.org_id, actor_id=user.id, action="login.success",
+                       target_type="user", target_id=str(user.id))
     return await _issue_pair(session, user, uuid4(), settings)
 
 
@@ -114,12 +120,15 @@ async def create_invitation(
         raise ConflictError("email already registered")
     raw = secrets.token_urlsafe(32)
     expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(tzinfo=None)
-    session.add(
-        Invitation(
-            org_id=ctx.org_id, email=email, role=role, token_hash=_hash(raw),
-            expires_at=expires_at,
-        )
+    invitation = Invitation(
+        org_id=ctx.org_id, email=email, role=role, token_hash=_hash(raw),
+        expires_at=expires_at,
     )
+    session.add(invitation)
+    await session.flush()
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="invitation.created", target_type="invitation",
+                       target_id=str(invitation.id))
     await session.commit()
     return raw
 
@@ -135,6 +144,10 @@ async def accept_invitation(session: AsyncSession, *, raw_token: str, password: 
     user = User(org_id=inv.org_id, email=inv.email,
                 password_hash=hash_password(password), role=inv.role)
     session.add(user)
+    await session.flush()
+    await record_audit(session, org_id=inv.org_id, actor_id=None,
+                       action="invitation.accepted", target_type="user",
+                       target_id=str(user.id))
     await session.commit()
     return user
 
@@ -171,6 +184,10 @@ async def set_user_active(
 ) -> User:
     user = await _org_user(session, ctx, user_id)
     user.active = active
+    if not active:
+        await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                           action="user.deactivated", target_type="user",
+                           target_id=str(user_id))
     await session.commit()
     return user
 
@@ -180,5 +197,8 @@ async def set_user_role(
 ) -> User:
     user = await _org_user(session, ctx, user_id)
     user.role = role
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="user.role_changed", target_type="user",
+                       target_id=str(user_id))
     await session.commit()
     return user

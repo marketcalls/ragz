@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import NotFoundError
+from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace, WorkspaceMember
@@ -12,6 +13,10 @@ from raghub.modules.tenancy.models import Workspace, WorkspaceMember
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
     ws = Workspace(org_id=ctx.org_id, name=name)
     session.add(ws)
+    await session.flush()
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="workspace.created", target_type="workspace",
+                       target_id=str(ws.id))
     await session.commit()
     return ws
 
@@ -39,4 +44,7 @@ async def add_member(
     if user is None:
         raise NotFoundError("user not found")
     session.add(WorkspaceMember(workspace_id=workspace_id, user_id=user_id, role=role))
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="workspace.member_added", target_type="workspace_member",
+                       target_id=f"{workspace_id}:{user_id}")
     await session.commit()
