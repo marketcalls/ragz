@@ -76,7 +76,9 @@ export function DocumentsPage() {
                     key={doc.id}
                     doc={doc}
                     deleting={deleteDocument.isPending}
-                    onDelete={() => deleteDocument.mutate(doc.id)}
+                    onDelete={() =>
+                      deleteDocument.mutate(doc.id, { onError: (err) => toast.error(err.message) })
+                    }
                   />
                 ))}
               </TBody>

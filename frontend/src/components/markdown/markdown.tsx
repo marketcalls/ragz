@@ -10,6 +10,9 @@ import { CodeBlock } from './code-block';
 // custom element names via a widened Components type.
 const components = {
   'citation-chip': CitationChip,
+  // model output must not auto-fetch remote URLs — classic RAG exfiltration
+  // channel (OWASP LLM Top 10)
+  img: () => null,
   pre: CodeBlock,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) =>
     className ? (

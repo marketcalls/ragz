@@ -12,7 +12,7 @@ export function ModelSelector({
   value: string | null;
   onChange: (id: string) => void;
 }) {
-  if (models.length === 0) return <span className="text-[12px] text-muted">No models</span>;
+  if (models.length === 0) return <span className="text-[12px] text-secondary">No models</span>;
   return (
     <NativeSelect
       aria-label="Model"

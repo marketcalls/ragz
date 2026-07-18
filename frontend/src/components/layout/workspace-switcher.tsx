@@ -1,5 +1,6 @@
 import { Check, ChevronsUpDown, Plus } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
@@ -22,11 +23,20 @@ export function WorkspaceSwitcher() {
   const { data: workspaces } = useWorkspaces();
   const { workspaceId, setWorkspaceId } = useWorkspace();
   const create = useCreateWorkspace();
+  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState('');
 
   const current = workspaces?.find((w) => w.id === workspaceId);
   const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
+
+  // Switching workspaces invalidates the open chat's context (it belongs to
+  // the old workspace), so send the user to a fresh /chat rather than
+  // stranding them on a page that no longer matches the active workspace.
+  const switchWorkspace = (id: string): void => {
+    setWorkspaceId(id);
+    navigate('/chat');
+  };
 
   const onCreate = (e: FormEvent) => {
     e.preventDefault();
@@ -34,7 +44,7 @@ export function WorkspaceSwitcher() {
       { name },
       {
         onSuccess: (ws) => {
-          setWorkspaceId(ws.id);
+          switchWorkspace(ws.id);
           setName('');
           setDialogOpen(false);
         },
@@ -56,7 +66,7 @@ export function WorkspaceSwitcher() {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
           {(workspaces ?? []).map((w) => (
-            <DropdownMenuItem key={w.id} onSelect={() => setWorkspaceId(w.id)}>
+            <DropdownMenuItem key={w.id} onSelect={() => switchWorkspace(w.id)}>
               <span className="flex-1 truncate">{w.name}</span>
               {w.id === workspaceId ? <Check className="h-3.5 w-3.5 text-accent" aria-hidden /> : null}
             </DropdownMenuItem>

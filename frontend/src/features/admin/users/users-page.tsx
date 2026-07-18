@@ -9,6 +9,7 @@ import { NativeSelect } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import { StatusPill } from '@/components/ui/status-pill';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { toast } from '@/components/ui/toaster';
 
 import { InviteDialog } from './invite-dialog';
 import { usePatchUser, useUsers } from './queries';
@@ -56,10 +57,13 @@ export function UsersPage() {
                           value={user.role}
                           disabled={patchUser.isPending}
                           onChange={(e) =>
-                            patchUser.mutate({
-                              userId: user.id,
-                              body: { role: e.target.value as 'admin' | 'user' },
-                            })
+                            patchUser.mutate(
+                              {
+                                userId: user.id,
+                                body: { role: e.target.value as 'admin' | 'user' },
+                              },
+                              { onError: (err) => toast.error(err.message) },
+                            )
                           }
                         >
                           <option value="user">User</option>
@@ -102,7 +106,10 @@ export function UsersPage() {
               variant={confirmUser?.active ? 'danger' : 'primary'}
               onClick={() => {
                 if (confirmUser) {
-                  patchUser.mutate({ userId: confirmUser.id, body: { active: !confirmUser.active } });
+                  patchUser.mutate(
+                    { userId: confirmUser.id, body: { active: !confirmUser.active } },
+                    { onError: (err) => toast.error(err.message) },
+                  );
                 }
                 setConfirmUser(null);
               }}

