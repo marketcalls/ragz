@@ -4,6 +4,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.auth.models import User
+from raghub.modules.tenancy.models import Workspace, WorkspaceMember
 from tests.api.test_chat_stream import auth, make_model_and_chat
 
 # chat_client/fake_streamer fixtures live in test_chat_stream; pytest only
@@ -46,6 +47,38 @@ async def test_history_crud_and_tree_shape(
     assert [c["title"] for c in listing.json()] == ["Renamed"]
     assert (await chat_client.delete(f"/api/v1/chats/{chat_id}", headers=h)).status_code == 204
     assert (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).status_code == 404
+
+
+async def test_list_chats_filtered_by_workspace(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """Plan D's sidebar filters chats by workspace: an optional workspace_id
+    query param on GET /api/v1/chats narrows the (still org+user scoped) list."""
+    ws2 = Workspace(org_id=seeded_user.org_id, name="OtherWS")
+    session.add(ws2)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws2.id, user_id=seeded_user.id))
+    await session.commit()
+
+    h = await auth(chat_client, "a@acme.com")
+    r1 = await chat_client.post(
+        "/api/v1/chats", json={"workspace_id": str(chat_env["workspace"].id)}, headers=h
+    )
+    r2 = await chat_client.post(
+        "/api/v1/chats", json={"workspace_id": str(ws2.id)}, headers=h
+    )
+    assert r1.status_code == r2.status_code == 201
+    chat1_id, chat2_id = r1.json()["id"], r2.json()["id"]
+
+    filtered = await chat_client.get(
+        "/api/v1/chats", params={"workspace_id": str(ws2.id)}, headers=h
+    )
+    assert filtered.status_code == 200
+    assert [c["id"] for c in filtered.json()] == [chat2_id]
+
+    unfiltered = await chat_client.get("/api/v1/chats", headers=h)
+    assert {c["id"] for c in unfiltered.json()} == {chat1_id, chat2_id}
 
 
 async def test_send_rate_limited_per_user(

@@ -78,8 +78,13 @@ async def create_chat(body: ChatCreate, session: SessionDep, ctx: CtxDep) -> Cha
 
 
 @router.get("/chats", response_model=list[ChatOut])
-async def list_chats(session: SessionDep, ctx: CtxDep) -> list[ChatOut]:
-    return [ChatOut.model_validate(c) for c in await service.list_chats(session, ctx)]
+async def list_chats(
+    session: SessionDep, ctx: CtxDep, workspace_id: UUID | None = None
+) -> list[ChatOut]:
+    return [
+        ChatOut.model_validate(c)
+        for c in await service.list_chats(session, ctx, workspace_id=workspace_id)
+    ]
 
 
 @router.get("/chats/{chat_id}", response_model=ChatTreeOut)

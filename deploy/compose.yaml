@@ -73,6 +73,8 @@ services:
         condition: service_healthy
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-raghub-dev-master}
+      # encrypts provider keys at rest in litellm's DB — CHANGE IN PROD along with LITELLM_MASTER_KEY
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-raghub-dev-salt}
       DATABASE_URL: postgresql://raghub:raghub@postgres:5432/litellm
       STORE_MODEL_IN_DB: "True"
     ports: ["127.0.0.1:54000:4000"]

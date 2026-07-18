@@ -268,6 +268,43 @@ async def test_upstream_error_yields_generic_message(
     assert events[-1][1]["detail"] == "the language model gateway failed"
 
 
+async def test_retrieval_failure_yields_generic_message_and_persists_user_message(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """A retriever failure (Qdrant/TEI/document-lookup) yields the generic error
+    frame instead of aborting the stream; the user message stays persisted."""
+    class FailingRetriever:
+        async def __call__(  # type: ignore[no-untyped-def]
+            self, session, ctx, workspace_id, query, top_k=8
+        ):
+            raise RuntimeError("qdrant unavailable")
+
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FailingRetriever(),
+        llm_streamer=FakeStreamer(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "test?"}, headers=h)
+    events = parse_sse(r.text)
+    names = [e for e, _ in events]
+    assert names[0] == "retrieval_started"
+    assert names[-1] == "error"
+    assert events[-1][1]["detail"] == "streaming failed unexpectedly"
+
+    msgs = list((await session.execute(select(Message))).scalars())
+    assert [m.role for m in msgs] == ["user"]  # persisted; no assistant reply
+
+
 async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     session: AsyncSession, seeded_user: User, seeded_superadmin: User,

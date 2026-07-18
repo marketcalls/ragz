@@ -57,12 +57,16 @@ async def create_chat(
     return chat
 
 
-async def list_chats(session: AsyncSession, ctx: TenantContext) -> list[Chat]:
+async def list_chats(
+    session: AsyncSession, ctx: TenantContext, *, workspace_id: UUID | None = None
+) -> list[Chat]:
     stmt = (
         select(Chat)
         .where(Chat.org_id == ctx.org_id, Chat.user_id == ctx.user_id)
         .order_by(Chat.updated_at.desc())
     )
+    if workspace_id is not None:
+        stmt = stmt.where(Chat.workspace_id == workspace_id)
     return list((await session.execute(stmt)).scalars())
 
 
@@ -348,11 +352,12 @@ async def stream_reply(
     citations -> done. Used by both send and regenerate. `model` is resolved by
     the route (models_service.resolve_model) before any bytes are streamed."""
     yield retrieval_started_event()
-    result = await retriever(session, ctx, chat.workspace_id, user_message.content)
-    sources = await _source_refs(session, ctx, result)
-    yield sources_event(sources)
 
     try:
+        result = await retriever(session, ctx, chat.workspace_id, user_message.content)
+        sources = await _source_refs(session, ctx, result)
+        yield sources_event(sources)
+
         if result.no_answer:
             yield token_event(NO_ANSWER_TEXT)
             msg = await _persist_assistant(
