@@ -159,6 +159,8 @@ async def add_message(
         raise ConflictError("message roles must alternate")
     elif parent.chat_id != chat.id:
         raise NotFoundError("parent message not found in this chat")
+    # serializes sibling_index computation per chat; NULL-parent roots have no unique backstop
+    await session.execute(select(Chat).where(Chat.id == chat.id).with_for_update())
     sibling_count = (
         await session.execute(
             select(func.count())

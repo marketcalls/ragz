@@ -56,6 +56,12 @@ async def test_crud_and_scoping(session: AsyncSession, seeded_user: User) -> Non
 async def test_alternation_and_dense_siblings(
     session: AsyncSession, seeded_user: User
 ) -> None:
+    """Verify message role alternation and dense sibling indices.
+
+    Note: sibling_index density is protected by a row-level lock on the chat row
+    (with_for_update()) in add_message, which serializes concurrent index computation.
+    This test exercises the sequential case; true concurrency is hard to test reliably.
+    """
     ctx, ws = await make_ctx(session, seeded_user)
     chat = await create_chat(session, ctx, workspace_id=ws.id)
     u1, a1 = await build_turn(session, ctx, chat, "q1", "a1", parent=None)
