@@ -296,7 +296,7 @@ class Retriever(Protocol):
         ctx: TenantContext,
         workspace_id: UUID,
         query: str,
-        top_k: int = 8,
+        top_k: int | None = None,
     ) -> RetrievalResult: ...
 
 

@@ -6,15 +6,17 @@ The adversarial suite in tests/isolation/ exists to catch any regression here.
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import UUID
 
+import structlog
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from raghub.modules.retrieval.rerank import RerankUnavailable, get_reranker
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.service import get_workspace_checked
 
@@ -82,53 +84,82 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
     return COLLECTION
 
 
+_RERANK_PREFETCH = 50  # CHAT-2: rerank the top-50 fused candidates
+
+
+def _chunk_from_point(point: models.ScoredPoint) -> RetrievedChunk:
+    payload = point.payload or {}
+    return RetrievedChunk(
+        document_id=UUID(str(payload["document_id"])),
+        page=int(payload["page"]),
+        chunk_index=int(payload["chunk_index"]),
+        text=str(payload["text"]),
+        score=float(point.score),
+    )
+
+
 async def retrieve(
     session: AsyncSession,
     ctx: TenantContext,
     workspace_id: UUID,
     query: str,
-    top_k: int = 8,
+    top_k: int | None = None,
 ) -> RetrievalResult:
-    """Hybrid retrieval — the one code path (spec §3.3).
+    """Hybrid retrieval — the one code path (spec §3.3), Plan E additions:
 
     1. Workspace access gate (typed WorkspaceAccessDenied).
-    2. Embed query dense (backend per settings) + sparse (BM25).
-    3. Qdrant prefetch dense + sparse under the tenant filter → RRF fusion.
-    4. no_answer when the best DENSE COSINE is below workspace.min_score (RRF
-       scores are rank-based/unitless, so the threshold is checked in cosine
-       space via a dense top-1 query); nearest chunks are still returned.
+    2. top_k=None resolves to workspace.top_k (ADM-3).
+    3. Qdrant prefetch dense + sparse under the tenant filter → RRF fusion
+       (top-50 candidates when workspace.rerank_enabled, else top_k).
+    4. rerank_enabled: cross-encoder scores the candidates; final top_k come
+       back in reranker order carrying RERANKER scores, and no_answer compares
+       the best reranker score against workspace.min_score. CALIBRATION: that
+       threshold now reads in sigmoid cross-encoder space, not dense-cosine
+       space — revisit min_score when flipping rerank_enabled.
+    5. Reranker down → structlog warning and EXACTLY the pre-rerank behavior:
+       fusion order, no_answer via best dense cosine (NFR graceful degradation).
     """
     ws = await get_workspace_checked(session, ctx, workspace_id)
+    k = top_k if top_k is not None else ws.top_k
     await ensure_collection(ws.embedding_model)
     dense_vec = (await get_dense_embedder().embed([query]))[0]
     sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
     flt = _tenant_filter(org_id=ctx.org_id, workspace_id=workspace_id)
     client = get_qdrant()
+    fetch_k = _RERANK_PREFETCH if ws.rerank_enabled else k
+    prefetch_limit = max(fetch_k, k * 4)
     fused = await client.query_points(
         COLLECTION,
         prefetch=[
-            models.Prefetch(query=dense_vec, using="dense", filter=flt, limit=top_k * 4),
-            models.Prefetch(query=sparse_vec, using="sparse", filter=flt, limit=top_k * 4),
+            models.Prefetch(query=dense_vec, using="dense", filter=flt, limit=prefetch_limit),
+            models.Prefetch(query=sparse_vec, using="sparse", filter=flt, limit=prefetch_limit),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         query_filter=flt,  # belt and braces on top of the filtered prefetches
-        limit=top_k,
+        limit=fetch_k,
         with_payload=True,
     )
-    chunks = []
-    for p in fused.points:
-        payload = p.payload or {}
-        chunks.append(
-            RetrievedChunk(
-                document_id=UUID(str(payload["document_id"])),
-                page=int(payload["page"]),
-                chunk_index=int(payload["chunk_index"]),
-                text=str(payload["text"]),
-                score=float(p.score),
-            )
-        )
-    if not chunks:
+    candidates = [_chunk_from_point(p) for p in fused.points]
+    if not candidates:
         return RetrievalResult(chunks=[], no_answer=True)
+
+    if ws.rerank_enabled:
+        try:
+            scores = await get_reranker().rerank(query, [c.text for c in candidates])
+        except RerankUnavailable as exc:
+            structlog.get_logger().warning(
+                "reranker_unavailable_falling_back",
+                workspace_id=str(workspace_id), error=str(exc),
+            )
+        else:
+            order = sorted(range(len(candidates)), key=lambda i: scores[i], reverse=True)
+            top = order[:k]
+            reranked = [replace(candidates[i], score=scores[i]) for i in top]
+            return RetrievalResult(
+                chunks=reranked, no_answer=scores[top[0]] < ws.min_score
+            )
+
+    chunks = candidates[:k]
     top_dense = await client.query_points(
         COLLECTION, query=dense_vec, using="dense", query_filter=flt,
         limit=1, with_payload=False,

@@ -215,7 +215,7 @@ class FakeRetriever:
         self.no_answer = no_answer
 
     async def __call__(
-        self, session, ctx, workspace_id, query, top_k=8  # type: ignore[no-untyped-def]
+        self, session, ctx, workspace_id, query, top_k=None  # type: ignore[no-untyped-def]
     ) -> RetrievalResult:
         chunks = [
             RetrievedChunk(document_id=self.document_id, page=3, chunk_index=0,

@@ -16,12 +16,13 @@ from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMemb
 
 async def seed_workspace(
     session: AsyncSession, org_name: str, *, role: str = "user", member: bool = True,
-    min_score: float = 0.0,
+    min_score: float = 0.0, top_k: int = 8, rerank_enabled: bool = False,
 ) -> tuple[TenantContext, Workspace]:
     org = Organization(name=org_name)
     session.add(org)
     await session.flush()
-    ws = Workspace(org_id=org.id, name="ws", min_score=min_score)
+    ws = Workspace(org_id=org.id, name="ws", min_score=min_score,
+                   top_k=top_k, rerank_enabled=rerank_enabled)
     user = User(org_id=org.id, email=f"u@{org_name}.com", password_hash="x", role=role)  # noqa: S106
     session.add_all([ws, user])
     await session.flush()
