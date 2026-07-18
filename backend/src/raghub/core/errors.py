@@ -41,3 +41,13 @@ class WorkspaceAccessDenied(AuthorizationError):
 class PayloadTooLarge(RagHubError):
     status_code = 413
     title = "Payload too large"
+
+
+class SecretsError(RagHubError):
+    status_code = 500
+    title = "Secrets subsystem error"
+
+
+class UpstreamError(RagHubError):
+    status_code = 502
+    title = "Upstream service error"

@@ -16,6 +16,7 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
+from raghub.modules.secrets.crypto import ensure_kek
 from raghub.modules.tenancy.models import Organization
 
 
@@ -65,7 +66,10 @@ def main() -> None:
     if len(password) < 12:
         print("RAGHUB_BOOTSTRAP_PASSWORD must be at least 12 characters", file=sys.stderr)
         raise SystemExit(2)
-    factory = build_session_factory(build_engine(get_settings().database_url))
+    settings = get_settings()
+    ensure_kek(settings.kek_file)
+    print(f"KEK ready at {settings.kek_file}")
+    factory = build_session_factory(build_engine(settings.database_url))
     created = asyncio.run(bootstrap_superadmin(factory, email=email, password=password))
     print("superadmin created" if created else "superadmin already exists")
 

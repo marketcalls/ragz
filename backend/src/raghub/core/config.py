@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://raghub:raghub@localhost:55432/raghub"
     redis_url: str = "redis://localhost:56379/0"
     environment: str = "dev"
+    kek_file: str = "./data/raghub_kek"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
 
