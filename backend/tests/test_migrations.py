@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "audit_events",
     "documents",
     "ingest_jobs",
+    "secrets",
     "alembic_version",
 }
 
