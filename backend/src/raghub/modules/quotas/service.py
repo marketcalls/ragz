@@ -149,6 +149,12 @@ async def check_quota(
         )
 
 
+async def get_org_quota(session: AsyncSession, org_id: UUID) -> OrgQuota | None:
+    return (
+        await session.execute(select(OrgQuota).where(OrgQuota.org_id == org_id))
+    ).scalar_one_or_none()
+
+
 async def set_org_quota(
     session: AsyncSession,
     ctx: TenantContext,

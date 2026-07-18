@@ -2,12 +2,10 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.modules.quotas import service
-from raghub.modules.quotas.models import OrgQuota
 from raghub.modules.quotas.schemas import OrgQuotaIn, OrgQuotaOut, UserQuotaIn
 from raghub.modules.tenancy.context import TenantContext, require_role
 
@@ -21,9 +19,7 @@ SuperDep = Annotated[TenantContext, Depends(require_role("superadmin"))]
 async def get_org_quota(
     org_id: UUID, session: SessionDep, ctx: SuperDep
 ) -> OrgQuotaOut | None:
-    row = (
-        await session.execute(select(OrgQuota).where(OrgQuota.org_id == org_id))
-    ).scalar_one_or_none()
+    row = await service.get_org_quota(session, org_id)
     return None if row is None else OrgQuotaOut.model_validate(row)
 
 
