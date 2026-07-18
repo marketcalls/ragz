@@ -2,7 +2,10 @@ import { render, screen } from '@testing-library/react';
 
 import { App } from './app';
 
-test('renders app shell placeholder', () => {
+test('unauthenticated app redirects to the login page', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 401 })));
+  window.history.pushState({}, '', '/');
   render(<App />);
-  expect(screen.getByRole('heading', { name: 'RagHub' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+  vi.unstubAllGlobals();
 });

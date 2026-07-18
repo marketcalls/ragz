@@ -52,8 +52,12 @@ export async function authFetch(input: Request): Promise<Response> {
   return res;
 }
 
+// Absolute origin, not a bare '/': Node's fetch/Request (used under jsdom in
+// tests, and by SSR-adjacent tooling) rejects relative URLs outright — only
+// real browsers resolve them against document.baseURI. Same-origin requests
+// behave identically either way, so this keeps the Vite dev proxy working.
 export const api = createClient<paths>({
-  baseUrl: '/',
+  baseUrl: window.location.origin,
   credentials: 'include',
   fetch: authFetch,
 });

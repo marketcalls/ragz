@@ -1,3 +1,16 @@
+import { QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider } from 'react-router-dom';
+
+import { Toaster } from '@/components/ui/toaster';
+import { queryClient } from '@/lib/query-client';
+
+import { router } from './app/router';
+
 export function App() {
-  return <h1>RagHub</h1>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+      <Toaster />
+    </QueryClientProvider>
+  );
 }
