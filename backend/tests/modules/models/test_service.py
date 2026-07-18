@@ -88,6 +88,28 @@ async def test_delete_removes_model_and_secret(
         await delete_model(session, ctx, uuid4(), settings=settings)
 
 
+async def test_create_model_rolls_back_atomically_on_secret_failure(
+    session: AsyncSession, seeded_user: User, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Model row + secret write must share one transaction: if the secret write fails
+    (e.g. a KEK problem), the model row must not be left committed either."""
+    ctx = super_ctx(seeded_user)
+
+    async def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("secrets backend unavailable")
+
+    monkeypatch.setattr("raghub.modules.models.service.secrets_service.set_secret", boom)
+
+    with pytest.raises(RuntimeError, match="secrets backend unavailable"):
+        await create_model(
+            session, ctx, litellm_model_name="gpt-4o-mini", display_name="GPT-4o mini",
+            provider_kind="openai", base_url=None, api_key="sk-live-xyz", settings=settings,
+        )
+
+    await session.rollback()
+    assert await list_models(session) == []
+
+
 async def test_resolve_model_order(
     session: AsyncSession, seeded_user: User, settings: Settings
 ) -> None:

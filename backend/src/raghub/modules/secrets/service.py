@@ -24,7 +24,13 @@ from raghub.modules.secrets.models import Secret
 
 
 async def set_secret(
-    session: AsyncSession, *, actor_id: UUID | None, name: str, value: str, settings: Settings
+    session: AsyncSession,
+    *,
+    actor_id: UUID | None,
+    name: str,
+    value: str,
+    settings: Settings,
+    commit: bool = True,
 ) -> Secret:
     kek = crypto.load_kek(settings.kek_file)
     nonce, ciphertext = crypto.encrypt(kek, value)
@@ -51,7 +57,10 @@ async def set_secret(
         target_type="secret",
         target_id=name,
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return row
 
 
@@ -59,9 +68,12 @@ async def list_secrets(session: AsyncSession) -> list[Secret]:
     return list((await session.execute(select(Secret).order_by(Secret.name))).scalars())
 
 
-async def delete_secret(session: AsyncSession, *, name: str) -> None:
+async def delete_secret(session: AsyncSession, *, name: str, commit: bool = True) -> None:
     await session.execute(sa_delete(Secret).where(Secret.name == name))
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
 
 
 async def _get_secret_decrypted(session: AsyncSession, *, name: str, settings: Settings) -> str:

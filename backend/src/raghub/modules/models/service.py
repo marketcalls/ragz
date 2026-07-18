@@ -92,12 +92,12 @@ async def create_model(
     await session.flush()
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.created",
                        target_type="model", target_id=str(model.id))
-    await session.commit()
     if api_key is not None:
         await secrets_service.set_secret(
             session, actor_id=ctx.user_id, name=f"model:{model.id}",
-            value=api_key, settings=settings,
+            value=api_key, settings=settings, commit=False,
         )
+    await session.commit()
     return model
 
 
@@ -121,12 +121,12 @@ async def update_model(
         model.enabled = enabled
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.updated",
                        target_type="model", target_id=str(model.id))
-    await session.commit()
     if api_key is not None:
         await secrets_service.set_secret(
             session, actor_id=ctx.user_id, name=f"model:{model.id}",
-            value=api_key, settings=settings,
+            value=api_key, settings=settings, commit=False,
         )
+    await session.commit()
     return model
 
 
@@ -137,5 +137,5 @@ async def delete_model(
     await session.delete(model)
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.deleted",
                        target_type="model", target_id=str(model_id))
+    await secrets_service.delete_secret(session, name=f"model:{model_id}", commit=False)
     await session.commit()
-    await secrets_service.delete_secret(session, name=f"model:{model_id}")
