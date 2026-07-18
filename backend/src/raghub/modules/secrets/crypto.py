@@ -27,9 +27,13 @@ def ensure_kek(path: str) -> None:
     if p.exists():
         return
     p.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(base64.urlsafe_b64encode(_secrets.token_bytes(_KEK_BYTES)))
+    try:
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(base64.urlsafe_b64encode(_secrets.token_bytes(_KEK_BYTES)))
+    except FileExistsError:
+        # Another process won the race; key already exists
+        return
 
 
 def load_kek(path: str) -> bytes:
@@ -44,11 +48,15 @@ def load_kek(path: str) -> bytes:
 
 def encrypt(kek: bytes, plaintext: str) -> tuple[bytes, bytes]:
     """Return (nonce, ciphertext) under AES-256-GCM."""
+    if len(kek) != _KEK_BYTES:
+        raise SecretsError("invalid KEK length")
     nonce = _secrets.token_bytes(_NONCE_BYTES)
     return nonce, AESGCM(kek).encrypt(nonce, plaintext.encode(), None)
 
 
 def decrypt(kek: bytes, nonce: bytes, ciphertext: bytes) -> str:
+    if len(kek) != _KEK_BYTES:
+        raise SecretsError("invalid KEK length")
     try:
         return AESGCM(kek).decrypt(nonce, ciphertext, None).decode()
     except InvalidTag as exc:
@@ -58,4 +66,5 @@ def decrypt(kek: bytes, nonce: bytes, ciphertext: bytes) -> str:
 def fingerprint(value: str) -> str:
     """Display-safe identifier: last 4 chars + truncated SHA-256. Never log the value."""
     digest = hashlib.sha256(value.encode()).hexdigest()[:12]
-    return f"...{value[-4:]} sha256:{digest}"
+    suffix = value[-4:] if len(value) > 8 else "????"
+    return f"...{suffix} sha256:{digest}"

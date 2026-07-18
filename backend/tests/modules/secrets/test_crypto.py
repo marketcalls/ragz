@@ -52,3 +52,43 @@ def test_fingerprint_format_and_no_leak() -> None:
     fp = fingerprint("sk-abcdef1234567890wxyz")
     assert re.fullmatch(r"\.\.\.wxyz sha256:[0-9a-f]{12}", fp)
     assert "sk-abcdef1234567890" not in fp
+
+
+def test_ensure_kek_race_condition(tmp_path: Path) -> None:
+    """Calling ensure_kek twice must not raise (second call wins race gracefully)."""
+    path = str(tmp_path / "kek")
+    ensure_kek(path)
+    # Second call should return normally without exception
+    ensure_kek(path)
+    assert Path(path).exists()
+
+
+def test_ensure_kek_race_pre_created_file(tmp_path: Path) -> None:
+    """Pre-creating the file should not cause ensure_kek to raise FileExistsError."""
+    path = str(tmp_path / "kek")
+    tmp_path.mkdir(exist_ok=True)
+    Path(path).write_bytes(b"fake_kek_content")
+    # Should not raise even though file exists
+    ensure_kek(path)
+    assert Path(path).exists()
+
+
+def test_fingerprint_short_secret_reversibility() -> None:
+    """Short secrets should not leak any characters."""
+    fp = fingerprint("abcd")
+    assert "abcd" not in fp
+    assert re.fullmatch(r"\.\.\..... sha256:[0-9a-f]{12}", fp)
+
+
+def test_decrypt_with_invalid_kek_length() -> None:
+    """decrypt() should reject KEK that is not exactly 32 bytes."""
+    kek_16 = b"x" * 16
+    with pytest.raises(SecretsError, match="invalid KEK length"):
+        decrypt(kek_16, b"x" * 12, b"x" * 32)
+
+
+def test_encrypt_with_invalid_kek_length() -> None:
+    """encrypt() should reject KEK that is not exactly 32 bytes."""
+    kek_16 = b"x" * 16
+    with pytest.raises(SecretsError, match="invalid KEK length"):
+        encrypt(kek_16, "plaintext")
