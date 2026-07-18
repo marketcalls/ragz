@@ -65,3 +65,13 @@ async def test_connect_error_maps_to_upstream_error() -> None:
 
     with pytest.raises(UpstreamError):
         await collect(make(httpx.MockTransport(handler)))
+
+
+async def test_malformed_json_in_stream_maps_to_upstream_error() -> None:
+    body = b"data: {not-json\n\n"
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=body,
+                                      headers={"content-type": "text/event-stream"})
+    )
+    with pytest.raises(UpstreamError, match="malformed stream chunk from gateway"):
+        await collect(make(transport))

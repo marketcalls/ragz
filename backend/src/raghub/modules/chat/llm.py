@@ -63,15 +63,20 @@ class LiteLLMStreamer:
                     "POST", "/v1/chat/completions", json=payload, headers=headers
                 ) as response:
                     if response.status_code != 200:
-                        await response.aread()
-                        raise UpstreamError(f"LLM gateway returned {response.status_code}")
+                        body = await response.aread()
+                        body_str = body.decode(errors="replace")[:200]
+                        msg = f"LLM gateway returned {response.status_code}: {body_str}"
+                        raise UpstreamError(msg)
                     async for line in response.aiter_lines():
                         if not line.startswith("data: "):
                             continue
                         data = line.removeprefix("data: ").strip()
                         if data == "[DONE]":
                             break
-                        chunk = json.loads(data)
+                        try:
+                            chunk = json.loads(data)
+                        except (json.JSONDecodeError, ValueError) as exc:
+                            raise UpstreamError("malformed stream chunk from gateway") from exc
                         usage = chunk.get("usage")
                         if usage:
                             yield LLMUsage(
