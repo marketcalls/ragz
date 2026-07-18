@@ -7,7 +7,7 @@ const TONES = {
   accent: 'bg-accent-soft text-accent-on-soft',
   danger: 'bg-danger-soft text-danger',
   warning: 'bg-warning-soft text-warning',
-  muted: 'bg-subtle text-muted',
+  muted: 'bg-subtle text-secondary', // text-muted is below AA for pill labels (theme spec §5)
 } as const;
 
 export type StatusTone = keyof typeof TONES;
