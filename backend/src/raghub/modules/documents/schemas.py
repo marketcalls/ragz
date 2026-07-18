@@ -37,4 +37,4 @@ class AclUpdate(BaseModel):
     null`, never `[]`.
     """
 
-    acl_group_ids: list[UUID] | None = Field(default=None, min_length=1)
+    acl_group_ids: list[UUID] | None = Field(min_length=1)

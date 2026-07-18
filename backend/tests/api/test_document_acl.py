@@ -49,6 +49,19 @@ async def test_acl_rejects_empty_list(
     assert r.status_code == 422
 
 
+async def test_acl_requires_field(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    chat_env: dict, stack_env: None,  # type: ignore[type-arg]
+) -> None:
+    """acl_group_ids is required-but-nullable: the body must explicitly carry
+    the key (null to clear, a non-empty list to set); omitting it entirely is
+    rejected with 422 rather than silently defaulting to "clear"."""
+    doc = chat_env["document"]
+    h = await auth(client, "a@acme.com")
+    r = await client.put(f"/api/v1/documents/{doc.id}/acl", json={}, headers=h)
+    assert r.status_code == 422
+
+
 async def test_acl_rejects_foreign_group(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
     chat_env: dict, stack_env: None,  # type: ignore[type-arg]
