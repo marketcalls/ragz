@@ -15,6 +15,13 @@ dependencies = [
     "structlog>=24.1",
     "email-validator>=2.1",
     "redis>=5.0",
+    "httpx>=0.27",
+    "celery[redis]>=5.4",
+    "qdrant-client>=1.12",
+    "fastembed>=0.6",
+    "docling>=2.15",
+    "aioboto3>=13.0",
+    "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]
@@ -22,7 +29,8 @@ dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
-    "testcontainers[postgres,redis]>=4.5",
+    "testcontainers[postgres,redis,qdrant,minio]>=4.5",
+    "python-docx>=1.1",
     "ruff>=0.4",
     "mypy>=1.10",
     "import-linter>=2.0",
@@ -49,6 +57,17 @@ ignore = ["S101"]  # allow assert in tests
 strict = true
 mypy_path = "src"
 packages = ["raghub"]
+
+[[tool.mypy.overrides]]
+module = [
+    "celery.*", "kombu.*", "fastembed.*", "aioboto3.*", "aiobotocore.*",
+    "botocore.*", "docling.*", "docling_core.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "raghub.worker.tasks"
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

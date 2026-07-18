@@ -12,6 +12,18 @@ class Settings(BaseSettings):
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
 
+    # Plan B: ingestion & retrieval
+    qdrant_url: str = "http://localhost:56333"
+    minio_endpoint: str = "http://localhost:59000"
+    minio_access_key: str = "raghub"
+    minio_secret_key: str = "raghub123"  # noqa: S105 (dev-only default; prod overrides via env)
+    minio_bucket: str = "raghub-documents"
+    tei_url: str = "http://localhost:58080"
+    embedding_backend: str = "tei"  # "tei" | "hash" (hash = deterministic, test/dev only)
+    embedding_dim: int = 1024  # bge-m3
+    max_upload_mb: int = 100
+    interactive_upload_mb: int = 10  # uploads below this jump to the interactive queue
+
 
 @lru_cache
 def get_settings() -> Settings:
