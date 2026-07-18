@@ -103,3 +103,25 @@ async def test_oversized_upload_413(
     )
     assert r.status_code == 413
     get_settings.cache_clear()
+
+
+async def test_oversized_upload_chunked_abort_413(
+    client: httpx.AsyncClient, seeded_user: User, stack_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    captured_enqueues: dict,  # type: ignore[type-arg]
+) -> None:
+    """Test that oversized uploads are aborted during chunked read."""
+    from raghub.core.config import get_settings
+    monkeypatch.setenv("RAGHUB_MAX_UPLOAD_MB", "1")
+    get_settings.cache_clear()
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    # Create a 2MB file payload (exceeds 1MB limit)
+    large_data = b"x" * (2 * 1024 * 1024)
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents", headers=h,
+        files={"file": ("large.bin", large_data, "application/octet-stream")},
+    )
+    assert r.status_code == 413
+    assert captured_enqueues["ingest"] == []
+    get_settings.cache_clear()

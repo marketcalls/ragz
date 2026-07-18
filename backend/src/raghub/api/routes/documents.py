@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
@@ -21,12 +21,26 @@ CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
              response_model=DocumentOut)
 async def upload_document(
     workspace_id: UUID, session: SessionDep, ctx: CtxDep,
-    file: Annotated[UploadFile, File()],
+    request: Request, file: Annotated[UploadFile, File()],
 ) -> DocumentOut:
-    data = await file.read()
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
-    if len(data) > max_bytes:
-        raise PayloadTooLarge(f"file exceeds {get_settings().max_upload_mb} MB limit")
+
+    # Check Content-Length header before reading (with 4KB multipart overhead allowance)
+    if content_length := request.headers.get("content-length"):
+        try:
+            if int(content_length) > max_bytes + 4096:
+                raise PayloadTooLarge(f"file exceeds {get_settings().max_upload_mb} MB limit")
+        except ValueError:
+            pass  # Invalid Content-Length, let chunked read handle it
+
+    # Read file in chunks, aborting early if size exceeds limit
+    buf = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        buf.extend(chunk)
+        if len(buf) > max_bytes:
+            raise PayloadTooLarge(f"file exceeds {get_settings().max_upload_mb} MB limit")
+
+    data = bytes(buf)
     doc = await service.create_from_upload(
         session, ctx, workspace_id,
         filename=file.filename or "upload.bin",
