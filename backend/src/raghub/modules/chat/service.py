@@ -31,9 +31,11 @@ from raghub.modules.chat.llm import LLMDelta, LLMStreamer, LLMUsage
 from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message
 from raghub.modules.chat.prompting import (
     PromptSource,
+    build_conversational_messages,
     build_messages,
     parse_citation_markers,
 )
+from raghub.modules.chat.router import classify_query
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
@@ -375,10 +377,56 @@ async def stream_reply(
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
-    the route (models_service.resolve_model) before any bytes are streamed."""
-    yield retrieval_started_event()
+    the route (models_service.resolve_model) before any bytes are streamed.
+
+    Phase-1 CHAT-3 router seam: `classify_query` (router.py) runs first on the
+    user's message. "conversational" turns (small talk) skip retrieval
+    entirely - no retrieval_started/sources frames, no <data> blocks in the
+    prompt, and the persisted assistant reply carries no citations. Anything
+    else takes the retrieval path below, unchanged. Phase 3 may swap
+    classify_query for a smarter router without touching this function.
+    """
+    conversational = classify_query(user_message.content) == "conversational"
+    if not conversational:
+        yield retrieval_started_event()
 
     try:
+        if conversational:
+            all_messages = await list_messages(session, chat.id)
+            history = [
+                (m.role, m.content) for m in path_to_root(all_messages, user_message)
+            ]
+            prompt = build_conversational_messages(
+                history=history,
+                user_query=user_message.content,
+                budget=settings.chat_context_token_budget,
+            )
+
+            convo_parts: list[str] = []
+            convo_usage: LLMUsage | None = None
+            async for item in streamer.stream(
+                model=model.litellm_model_name, messages=prompt
+            ):
+                if isinstance(item, LLMDelta):
+                    convo_parts.append(item.text)
+                    yield token_event(item.text)
+                else:
+                    convo_usage = item
+
+            convo_answer = "".join(convo_parts)
+            msg = await _persist_assistant(
+                session, ctx, chat, parent=user_message, content=convo_answer,
+                model_id=model.id, usage=convo_usage, citations=[],
+            )
+            yield citations_event([])
+            yield done_event(
+                message_id=str(msg.id),
+                prompt_tokens=convo_usage.prompt_tokens if convo_usage else 0,
+                completion_tokens=convo_usage.completion_tokens if convo_usage else 0,
+                no_answer=False,
+            )
+            return
+
         result = await retriever(session, ctx, chat.workspace_id, user_message.content)
         sources = await _source_refs(session, ctx, result)
         yield sources_event(sources)

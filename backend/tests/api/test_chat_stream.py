@@ -305,6 +305,66 @@ async def test_retrieval_failure_yields_generic_message_and_persists_user_messag
     assert [m.role for m in msgs] == ["user"]  # persisted; no assistant reply
 
 
+async def test_small_talk_skips_retrieval(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+    fake_streamer: FakeStreamer,
+) -> None:
+    """CHAT-3 Phase-1 router: "Hi" is classified as conversational, so the SSE
+    flow skips retrieval_started/sources entirely and the retriever is never
+    invoked; only token/citations/done frames go out."""
+    class FailingRetriever:
+        async def __call__(  # type: ignore[no-untyped-def]
+            self, session, ctx, workspace_id, query, top_k=8
+        ):
+            pytest.fail("retriever must not be called for a conversational turn")
+
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FailingRetriever(),
+        llm_streamer=fake_streamer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "Hi"}, headers=h)
+    assert r.status_code == 200
+    events = parse_sse(r.text)
+    names = [e for e, _ in events]
+    assert "retrieval_started" not in names
+    assert "sources" not in names
+    assert names[0] == "token"
+    assert names[-1] == "done"
+    assert names == ["token"] * (len(names) - 2) + ["citations", "done"]
+
+    answer = "".join(d["delta"] for e, d in events if e == "token")
+    assert answer == "".join(fake_streamer.deltas)
+    done = events[-1][1]
+    assert done["no_answer"] is False
+
+    # No sources -> no data blocks in the prompt sent to the LLM, and a
+    # short conversational system prompt instead of the retrieval one.
+    sent = fake_streamer.calls[0]["messages"]
+    assert sent[0]["content"].startswith("You are RagHub, the assistant for this document")  # type: ignore[index]
+    assert "<data" not in sent[-1]["content"]  # type: ignore[index]
+    assert sent[-1]["content"] == "Hi"  # type: ignore[index]
+
+    # Persisted with no citations.
+    assistant = next(
+        m for m in (await session.execute(select(Message))).scalars()
+        if m.role == "assistant"
+    )
+    assert assistant.content == answer
+    cits = list((await session.execute(select(Citation))).scalars())
+    assert cits == []
+
+
 async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     session: AsyncSession, seeded_user: User, seeded_superadmin: User,

@@ -21,6 +21,16 @@ SYSTEM_PROMPT = (
     "- If the sources do not contain the answer, say so plainly instead of guessing."
 )
 
+CONVERSATIONAL_SYSTEM_PROMPT = (
+    "You are RagHub, the assistant for this document workspace. The user's "
+    "message is small talk, not a document question, so no retrieval was "
+    "performed and there are no source excerpts for this turn.\n"
+    "Rules:\n"
+    "- Answer briefly and naturally.\n"
+    "- Invite the user to ask about the documents in this workspace.\n"
+    "- Do not fabricate or claim document content - you were given none this turn."
+)
+
 TRUNCATION_NOTE = (
     "[Earlier conversation truncated: {n} older messages omitted to fit the "
     "context budget.]"
@@ -73,6 +83,38 @@ def render_data_blocks(sources: Sequence[PromptSource]) -> str:
     return "\n".join(parts)
 
 
+def _budget_history(
+    history: Sequence[tuple[str, str]], remaining: int
+) -> tuple[list[tuple[str, str]], int]:
+    """Walk `history` newest-first, keeping turns that fit in `remaining` tokens.
+
+    Returns the kept turns (oldest-first, original order) and the count of
+    older turns dropped. Shared by build_messages and
+    build_conversational_messages so both truncate the same way.
+    """
+    kept: list[tuple[str, str]] = []
+    dropped = 0
+    for role, content in reversed(history):
+        cost = estimate_tokens(content)
+        if remaining - cost < 0:
+            dropped = len(history) - len(kept)
+            break
+        kept.append((role, content))
+        remaining -= cost
+    kept.reverse()
+    return kept, dropped
+
+
+def _history_messages(
+    history: Sequence[tuple[str, str]], dropped: int
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    if dropped:
+        messages.append({"role": "system", "content": TRUNCATION_NOTE.format(n=dropped)})
+    messages.extend({"role": role, "content": content} for role, content in history)
+    return messages
+
+
 def build_messages(
     *,
     sources: Sequence[PromptSource],
@@ -98,24 +140,39 @@ def build_messages(
         + estimate_tokens(data_block)
         + estimate_tokens(user_query)
     )
-    kept: list[tuple[str, str]] = []
-    dropped = 0
-    for role, content in reversed(history):
-        cost = estimate_tokens(content)
-        if remaining - cost < 0:
-            dropped = len(history) - len(kept)
-            break
-        kept.append((role, content))
-        remaining -= cost
-    kept.reverse()
+    kept, dropped = _budget_history(history, remaining)
 
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if dropped:
-        messages.append({"role": "system", "content": TRUNCATION_NOTE.format(n=dropped)})
-    messages.extend({"role": role, "content": content} for role, content in kept)
+    messages.extend(_history_messages(kept, dropped))
     messages.append(
         {"role": "user", "content": f"{data_block}\n\nQuestion: {user_query}"}
     )
+    return messages
+
+
+def build_conversational_messages(
+    *,
+    history: Sequence[tuple[str, str]],
+    user_query: str,
+    budget: int,
+) -> list[dict[str, str]]:
+    """Sibling of build_messages for small talk (Phase-1 CHAT-3 router).
+
+    No <data> blocks are rendered and no retrieval happened this turn, so the
+    system prompt is CONVERSATIONAL_SYSTEM_PROMPT and the user query is sent
+    verbatim (no "Question:" wrapper, since there is nothing to disambiguate
+    it from). History budgeting mirrors build_messages exactly.
+    """
+    remaining = budget - (
+        estimate_tokens(CONVERSATIONAL_SYSTEM_PROMPT) + estimate_tokens(user_query)
+    )
+    kept, dropped = _budget_history(history, remaining)
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": CONVERSATIONAL_SYSTEM_PROMPT}
+    ]
+    messages.extend(_history_messages(kept, dropped))
+    messages.append({"role": "user", "content": user_query})
     return messages
 
 
