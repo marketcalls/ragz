@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from raghub.api.routes.auth import router as auth_router
+from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
 from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
@@ -33,5 +34,6 @@ def create_app(
         )
 
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(users_router, prefix="/api/v1")
     app.include_router(workspaces_router, prefix="/api/v1")
     return app

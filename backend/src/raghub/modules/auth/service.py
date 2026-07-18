@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.app_settings import get_or_create_signing_key
 from raghub.core.config import Settings
-from raghub.core.errors import AuthenticationError, ConflictError
+from raghub.core.errors import AuthenticationError, ConflictError, NotFoundError
 from raghub.modules.auth.models import Invitation, RefreshToken, User
 from raghub.modules.auth.passwords import hash_password, verify_password
 from raghub.modules.auth.tokens import issue_access_token
@@ -135,5 +135,48 @@ async def accept_invitation(session: AsyncSession, *, raw_token: str, password: 
     user = User(org_id=inv.org_id, email=inv.email,
                 password_hash=hash_password(password), role=inv.role)
     session.add(user)
+    await session.commit()
+    return user
+
+
+async def list_users(session: AsyncSession, ctx: TenantContext) -> list[User]:
+    return list(
+        (
+            await session.execute(
+                select(User).where(User.org_id == ctx.org_id).order_by(User.email)
+            )
+        ).scalars()
+    )
+
+
+async def _org_user(session: AsyncSession, ctx: TenantContext, user_id: UUID) -> User:
+    user = (
+        await session.execute(
+            select(User).where(User.id == user_id, User.org_id == ctx.org_id)
+        )
+    ).scalar_one_or_none()
+    if user is None or user.role == "superadmin":
+        raise NotFoundError("user not found")
+    return user
+
+
+async def get_org_user(session: AsyncSession, ctx: TenantContext, user_id: UUID) -> User:
+    return await _org_user(session, ctx, user_id)
+
+
+async def set_user_active(
+    session: AsyncSession, ctx: TenantContext, user_id: UUID, active: bool
+) -> User:
+    user = await _org_user(session, ctx, user_id)
+    user.active = active
+    await session.commit()
+    return user
+
+
+async def set_user_role(
+    session: AsyncSession, ctx: TenantContext, user_id: UUID, role: str
+) -> User:
+    user = await _org_user(session, ctx, user_id)
+    user.role = role
     await session.commit()
     return user
