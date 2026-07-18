@@ -143,7 +143,9 @@ async def list_users(session: AsyncSession, ctx: TenantContext) -> list[User]:
     return list(
         (
             await session.execute(
-                select(User).where(User.org_id == ctx.org_id).order_by(User.email)
+                select(User)
+                .where(User.org_id == ctx.org_id, User.role != "superadmin")
+                .order_by(User.email)
             )
         ).scalars()
     )

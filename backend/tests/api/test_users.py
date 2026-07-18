@@ -62,6 +62,22 @@ async def test_empty_body_patch_returns_addressed_user(
     assert r.json()["email"] == "p@acme.com"
 
 
+async def test_list_excludes_superadmin_in_same_org(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """A superadmin in the same org must not be enumerable via GET /api/v1/users."""
+    superadmin = User(
+        org_id=seeded_user.org_id, email="s@acme.com",
+        password_hash=seeded_user.password_hash, role="superadmin",
+    )
+    session.add(superadmin)
+    await session.commit()
+
+    h = await auth(client, "a@acme.com")
+    emails = [u["email"] for u in (await client.get("/api/v1/users", headers=h)).json()]
+    assert "s@acme.com" not in emails
+
+
 async def test_empty_body_patch_cross_org_user_404s(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

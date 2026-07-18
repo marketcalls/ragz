@@ -31,7 +31,7 @@ class InvitationAccept(BaseModel):
 class UserOut(BaseModel):
     id: UUID
     email: EmailStr
-    role: str
+    role: Literal["admin", "user", "superadmin"]
     active: bool
 
     model_config = {"from_attributes": True}
