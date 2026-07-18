@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -16,6 +19,20 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
+from raghub.modules.models.sync import sync_models_to_litellm
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Startup replay heals proxy restarts/volume wipes (SEC-4 pattern). A failed
+    startup sync is only a warning: the next registry CRUD or restart retries."""
+    try:
+        async with app.state.session_factory() as session:
+            deployed = await sync_models_to_litellm(session, get_settings())
+        structlog.get_logger().info("litellm_startup_sync", deployed=deployed)
+    except Exception as exc:  # noqa: BLE001 - startup must not die if the proxy is down
+        structlog.get_logger().warning("litellm_startup_sync_failed", error=str(exc))
+    yield
 
 
 def create_app(
@@ -23,7 +40,9 @@ def create_app(
     redis_client: Redis | None = None,
 ) -> FastAPI:
     configure_logging()
-    app = FastAPI(title="RagHub", docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app = FastAPI(
+        title="RagHub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=_lifespan
+    )
     if session_factory is None:
         session_factory = build_session_factory(build_engine(get_settings().database_url))
     app.state.session_factory = session_factory
