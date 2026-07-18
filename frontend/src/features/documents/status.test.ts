@@ -7,6 +7,7 @@ test.each([
   ['queued', 'accent', 'Processing'],
   ['processing', 'accent', 'Processing'],
   ['failed', 'danger', 'Failed'],
+  ['deleting', 'muted', 'Deleting…'],
 ] as const)('%s → %s pill "%s"', (status, tone, label) => {
   expect(statusPresentation({ status })).toEqual({ tone, label });
 });
@@ -17,6 +18,7 @@ test('shouldPoll only while something is in flight', () => {
   expect(shouldPoll([doc('indexed'), doc('failed')])).toBe(false);
   expect(shouldPoll([doc('indexed'), doc('processing')])).toBe(true);
   expect(shouldPoll([doc('queued')])).toBe(true);
+  expect(shouldPoll([doc('deleting')])).toBe(true);
 });
 
 test('formatBytes', () => {

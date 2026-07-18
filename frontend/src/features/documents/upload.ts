@@ -1,50 +1,89 @@
 import { refreshAccessToken } from '@/api/client';
 import { getAccessToken } from '@/lib/auth-store';
 
-function attempt(workspaceId: string, form: FormData, onProgress: (pct: number) => void): Promise<number> {
+interface AttemptResult {
+  status: number;
+  responseText: string;
+}
+
+// Backend accepts exactly one multipart part named "file" per POST
+// (Body_upload_document_api_v1_workspaces__workspace_id__documents_post —
+// schema.d.ts) and returns a single DocumentOut. There is no batch endpoint.
+function attempt(workspaceId: string, file: File, onLoaded: (loaded: number) => void): Promise<AttemptResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `/api/v1/workspaces/${workspaceId}/documents`);
     const token = getAccessToken();
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      if (e.lengthComputable) onLoaded(e.loaded);
     };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.status);
-        return;
-      }
-      if (xhr.status === 401) {
-        resolve(401);
-        return;
-      }
-      let detail = `upload failed (${xhr.status})`;
-      try {
-        const problem = JSON.parse(xhr.responseText) as { detail?: string };
-        if (problem.detail) detail = problem.detail;
-      } catch {
-        /* keep default */
-      }
-      reject(new Error(detail));
-    };
+    xhr.onload = () => resolve({ status: xhr.status, responseText: xhr.responseText });
     xhr.onerror = () => reject(new Error('network error during upload'));
+    const form = new FormData();
+    form.append('file', file);
     xhr.send(form);
   });
 }
 
-/** XHR (fetch has no upload progress). Retries once after a token refresh on 401. */
+// problem+json `detail` is normally a string, but FastAPI validation errors
+// (422) send an array of ValidationError objects — fall back to a generic
+// message rather than rendering "[object Object]" in a toast.
+function extractDetail(responseText: string): string {
+  try {
+    const problem = JSON.parse(responseText) as { detail?: unknown };
+    if (typeof problem.detail === 'string') return problem.detail;
+  } catch {
+    /* not JSON — fall through to generic message */
+  }
+  return 'upload failed';
+}
+
+async function uploadOne(workspaceId: string, file: File, onLoaded: (loaded: number) => void): Promise<void> {
+  let result = await attempt(workspaceId, file, onLoaded);
+  if (result.status === 401) {
+    if (!(await refreshAccessToken())) throw new Error('session expired');
+    result = await attempt(workspaceId, file, onLoaded);
+    if (result.status === 401) throw new Error('session expired');
+  }
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(extractDetail(result.responseText));
+  }
+}
+
+export interface UploadFailure {
+  file: File;
+  message: string;
+}
+
+/**
+ * Uploads files sequentially, one POST per file (the backend has no batch
+ * upload endpoint). XHR, not fetch (fetch has no upload-progress events).
+ * `onProgress` receives an aggregate 0-100 percent, bytes-weighted across the
+ * whole batch, so the existing single progress-bar UI keeps working unchanged.
+ *
+ * A single file's failure (e.g. 409 dedup, 413 oversize) does not abort the
+ * batch: it's collected into the returned array so the caller can toast it
+ * individually by filename while the remaining files continue uploading.
+ */
 export async function uploadDocuments(
   workspaceId: string,
   files: File[],
   onProgress: (pct: number) => void,
-): Promise<void> {
-  const form = new FormData();
-  for (const file of files) form.append('files', file);
-  const status = await attempt(workspaceId, form, onProgress);
-  if (status === 401) {
-    if (!(await refreshAccessToken())) throw new Error('session expired');
-    const retryStatus = await attempt(workspaceId, form, onProgress);
-    if (retryStatus === 401) throw new Error('session expired');
+): Promise<UploadFailure[]> {
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0) || 1;
+  let doneBytes = 0;
+  const failures: UploadFailure[] = [];
+  for (const file of files) {
+    try {
+      await uploadOne(workspaceId, file, (loaded) => {
+        onProgress(Math.round(((doneBytes + loaded) / totalBytes) * 100));
+      });
+    } catch (err) {
+      failures.push({ file, message: err instanceof Error ? err.message : 'upload failed' });
+    }
+    doneBytes += file.size;
+    onProgress(Math.round((doneBytes / totalBytes) * 100));
   }
+  return failures;
 }

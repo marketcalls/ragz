@@ -32,7 +32,10 @@ export function DocumentsPage() {
     uploadDocuments(workspaceId, files, (pct) =>
       setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, pct } : u))),
     )
-      .then(() => void documents.refetch())
+      .then((failures) => {
+        for (const failure of failures) toast.error(`${failure.file.name}: ${failure.message}`);
+        void documents.refetch();
+      })
       .catch((err: Error) => toast.error(err.message))
       .finally(() => setUploads((prev) => prev.filter((u) => u.key !== key)));
   };

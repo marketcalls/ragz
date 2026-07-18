@@ -7,6 +7,7 @@ test.each([
   ['accent', 'bg-accent-soft text-accent-on-soft'],
   ['danger', 'bg-danger-soft text-danger'],
   ['warning', 'bg-warning-soft text-warning'],
+  ['muted', 'bg-subtle text-muted'],
 ] as const)('tone %s applies soft bg + strong text', (tone, expected) => {
   render(<StatusPill tone={tone}>Indexed</StatusPill>);
   const pill = screen.getByText('Indexed');

@@ -10,13 +10,17 @@ export function statusPresentation(doc: Pick<DocumentOut, 'status'>): {
       return { tone: 'success', label: 'Indexed' };
     case 'failed':
       return { tone: 'danger', label: 'Failed' };
+    case 'deleting':
+      return { tone: 'muted', label: 'Deleting…' };
     default:
       return { tone: 'accent', label: 'Processing' };
   }
 }
 
 export function shouldPoll(docs: readonly DocumentOut[] | undefined): boolean {
-  return (docs ?? []).some((d) => d.status === 'queued' || d.status === 'processing');
+  return (docs ?? []).some(
+    (d) => d.status === 'queued' || d.status === 'processing' || d.status === 'deleting',
+  );
 }
 
 export function formatBytes(n: number): string {
