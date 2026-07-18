@@ -11,6 +11,7 @@ This module is the ONLY caller of secrets service._get_secret_decrypted
 from typing import Any
 
 import httpx
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import Settings
@@ -59,9 +60,19 @@ async def sync_models_to_litellm(
             base_url=settings.litellm_url, headers=headers,
             transport=transport, timeout=30.0,
         ) as client:
-            info = await client.get("/v1/model/info")
-            info.raise_for_status()
-            for deployed in info.json().get("data", []):
+            try:
+                info = await client.get("/v1/model/info")
+                info.raise_for_status()
+                deployed_models = info.json().get("data", [])
+            except httpx.HTTPStatusError:
+                # A fresh/empty proxy returns 500 ("LLM Model List not loaded")
+                # when it has no models - nothing to delete, so treat as empty
+                # and continue the replay instead of failing the first sync.
+                structlog.get_logger().info(
+                    "litellm_model_list_unavailable, treating as empty"
+                )
+                deployed_models = []
+            for deployed in deployed_models:
                 deployed_id = deployed.get("model_info", {}).get("id")
                 if deployed_id:
                     r = await client.post("/model/delete", json={"id": deployed_id})

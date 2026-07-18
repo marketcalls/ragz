@@ -106,6 +106,33 @@ async def test_proxy_failure_maps_to_upstream_error(
     assert {m.sync_status for m in await list_models(session)} == {"error"}
 
 
+async def test_sync_tolerates_empty_litellm_proxy_on_first_sync(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """A fresh LiteLLM proxy with zero models returns 500 on GET /v1/model/info
+    ("LLM Model List not loaded"). The replay must treat that as an empty
+    deployed list and still register the first model, rather than failing."""
+    ctx = super_ctx(seeded_user)
+    await create_model(session, ctx, litellm_model_name="gpt-4o-mini",
+                       display_name="GPT", provider_kind="openai", base_url=None,
+                       api_key="sk-live-777", settings=settings)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/model/info":
+            return httpx.Response(
+                500,
+                json={"detail": {"error": "LLM Model List not loaded in ..."}},
+            )
+        return httpx.Response(200, json={})
+
+    count = await sync_models_to_litellm(
+        session, settings, transport=httpx.MockTransport(handler)
+    )
+    assert count == 1
+    statuses = {m.litellm_model_name: m.sync_status for m in await list_models(session)}
+    assert statuses == {"gpt-4o-mini": "synced"}
+
+
 def test_decryption_has_exactly_one_caller() -> None:
     """Iron rule 3 guard: _get_secret_decrypted appears only in its module and sync.py."""
     src_root = Path(raghub.__file__).parent
