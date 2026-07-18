@@ -59,7 +59,9 @@ export function ChatPage() {
     (workspace && 'default_model_id' in workspace
       ? (workspace as { default_model_id?: string | null }).default_model_id
       : null) ?? null;
-  const effectiveModelId = modelId ?? workspaceDefault;
+  // Must mirror ModelSelector's display fallback (first enabled model) — otherwise a
+  // workspace without a default shows a selected model but sends none (409, found by E2E).
+  const effectiveModelId = modelId ?? workspaceDefault ?? models?.[0]?.id ?? null;
 
   // DEVIATION (Task 10, carry-forward from the Task 8 review): useChatStream's
   // status freezes after abort() — no terminal event follows, so the UI would
