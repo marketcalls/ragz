@@ -54,12 +54,15 @@ class TeiReranker:
                     },
                 )
                 r.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise RerankUnavailable(str(exc)) from exc
-        scores = [0.0] * len(texts)
-        for item in r.json():  # [{"index": i, "score": s}, ...] sorted by score
-            scores[int(item["index"])] = float(item["score"])
-        return scores
+            scores = [0.0] * len(texts)
+            for item in r.json():  # [{"index": i, "score": s}, ...] sorted by score
+                idx = int(item["index"])
+                if idx < 0 or idx >= len(texts):
+                    raise IndexError(f"reranker returned out-of-bounds index {idx}")
+                scores[idx] = float(item["score"])
+            return scores
+        except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+            raise RerankUnavailable("reranker returned an unusable response") from exc
 
 
 class LexicalReranker:

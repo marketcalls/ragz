@@ -45,6 +45,26 @@ async def test_tei_reranker_5xx_raises_typed_error() -> None:
         await r.rerank("q", ["a"])
 
 
+async def test_tei_reranker_malformed_json_raises_typed_error() -> None:
+    """200 response with unparseable JSON should degrade gracefully."""
+    r = TeiReranker(
+        "http://tei-rerank",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, text="not-json")),
+    )
+    with pytest.raises(RerankUnavailable):
+        await r.rerank("q", ["a"])
+
+
+async def test_tei_reranker_index_out_of_bounds_raises_typed_error() -> None:
+    """Valid JSON with out-of-bounds item index should degrade gracefully."""
+    def bad_index(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"index": 5, "score": 0.9}])
+
+    r = TeiReranker("http://tei-rerank", transport=httpx.MockTransport(bad_index))
+    with pytest.raises(RerankUnavailable):
+        await r.rerank("q", ["a", "b"])
+
+
 async def test_lexical_reranker_is_deterministic_overlap() -> None:
     r = LexicalReranker()
     scores = await r.rerank(
