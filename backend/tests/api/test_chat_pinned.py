@@ -122,6 +122,36 @@ async def test_huge_query_never_streams_an_answer_over_empty_sources(
         assert len(sources) > 0  # a real answer streamed -> sources were non-empty
 
 
+async def test_huge_query_forces_no_answer_even_when_retriever_says_answerable(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings,
+    chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
+) -> None:
+    """Sibling of test_huge_query_never_streams_an_answer_over_empty_sources,
+    pinned to the specific regression: the retriever says no_answer=False and
+    returns real hits, but the huge query still drives sources_budget to 0,
+    so fit_sources drops every chunk and kept_sources ends up empty. The
+    no-answer guard must fire on the empty fit itself, not on
+    result.no_answer -- streaming an answer over an empty sources frame is
+    never acceptable even when retrieval was "confident"."""
+    reader = FakeChunkReader()
+    retriever = FakeRetriever(chat_env["document"].id, no_answer=False)
+    huge_query = "填充词语 " * 750
+    async with make_client(engine, redis_client, test_settings,
+                           retriever, fake_streamer, chunk_reader=reader) as c:
+        h = await auth(c, "a@acme.com")
+        chat_id = await make_model_and_chat(c, chat_env, session, seeded_superadmin, h)
+        r = await c.post(f"/api/v1/chats/{chat_id}/messages",
+                         json={"content": huge_query}, headers=h)
+        events = parse_sse(r.text)
+    sources = next(d for e, d in events if e == "sources")["sources"]
+    assert sources == []  # the fit dropped every chunk
+    done = next(d for e, d in events if e == "done")
+    assert done["no_answer"] is True
+    tokens = "".join(d["delta"] for e, d in events if e == "token")
+    assert tokens == NO_ANSWER_TEXT
+
+
 async def test_long_pinned_chunk_does_not_starve_retrieved_sources(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings,
     chat_env: dict[str, Any], session: AsyncSession,

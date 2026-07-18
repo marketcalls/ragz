@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
 
+import structlog
 import tiktoken
 
 SYSTEM_PROMPT = (
@@ -262,11 +263,19 @@ _FALLBACK_ENCODING = "cl100k_base"
 CANNONBALL_MARKER = "\n\n-- content truncated for brevity --\n\n"
 
 
-@lru_cache(maxsize=8)
-def _encoding(model_hint: str | None) -> "tiktoken.Encoding":
-    """Encoder per model hint. Unknown/None hints (incl. LiteLLM names like
-    "ollama/llama3") fall back to cl100k_base — a far better estimator than
-    chars//4 for every model family we route to, especially CJK/Indic text."""
+# Module-level sentinel: once acquiring a tiktoken encoding has failed once
+# (network unreachable, air-gapped host, OSError from a corrupt cache, ...),
+# every subsequent call short-circuits to the char-based fallback instead of
+# retrying the download per call/request.
+_ENCODING_UNAVAILABLE = False
+
+
+def _load_encoding(model_hint: str | None) -> tiktoken.Encoding:
+    """Unknown/None hints (incl. LiteLLM names like "ollama/llama3") fall back
+    to cl100k_base — a far better estimator than chars//4 for every model
+    family we route to, especially CJK/Indic text. KeyError (model name not
+    recognized by tiktoken) is resolved locally with no I/O; anything else
+    (the encoding download itself failing) propagates to the caller."""
     if model_hint:
         try:
             return tiktoken.encoding_for_model(model_hint)
@@ -275,18 +284,65 @@ def _encoding(model_hint: str | None) -> "tiktoken.Encoding":
     return tiktoken.get_encoding(_FALLBACK_ENCODING)
 
 
+@lru_cache(maxsize=8)
+def _encoding(model_hint: str | None) -> "tiktoken.Encoding | None":
+    """Encoder per model hint, or None once tiktoken's encoding data is known
+    to be unreachable. The FIRST call for a given model hint downloads the
+    encoding over the network if it isn't already cached on disk — normally
+    a one-time cost, but blocking and in-request unless warmed up (see
+    warm_token_encoder), and a hard failure on an air-gapped host. On any
+    failure we log once, latch _ENCODING_UNAVAILABLE, and every caller (this
+    turn and forever after in this process) falls back to a character-based
+    estimate instead of raising into the request path."""
+    global _ENCODING_UNAVAILABLE
+    if _ENCODING_UNAVAILABLE:
+        return None
+    try:
+        return _load_encoding(model_hint)
+    except Exception:
+        _ENCODING_UNAVAILABLE = True
+        structlog.get_logger().warning(
+            "tiktoken_unavailable, falling back to char estimate"
+        )
+        return None
+
+
+_CHARS_PER_TOKEN_ESTIMATE = 4
+
+
 def count_tokens(text: str, model_hint: str | None = None) -> int:
+    encoding = _encoding(model_hint)
+    if encoding is None:
+        return max(1, len(text) // _CHARS_PER_TOKEN_ESTIMATE)
     # disallowed_special=(): document text containing literal special-token
     # strings is DATA and must count, not raise.
-    return len(_encoding(model_hint).encode(text, disallowed_special=()))
+    return len(encoding.encode(text, disallowed_special=()))
+
+
+def _cannonball_chars(text: str, max_tokens: int) -> str:
+    """Char-based middle-out split used when tiktoken is unavailable: same
+    head/tail/marker shape as the tokenizer path, but sized len-proportionally
+    (chars//4) to match count_tokens' fallback estimate."""
+    max_chars = max(max_tokens * _CHARS_PER_TOKEN_ESTIMATE, 1)
+    if len(text) <= max_chars:
+        return text
+    marker_cost = len(CANNONBALL_MARKER)
+    keep = max(max_chars - marker_cost, 2)
+    head = keep // 2
+    tail = keep - head
+    return text[:head] + CANNONBALL_MARKER + text[-tail:]
 
 
 def cannonball(text: str, max_tokens: int, model_hint: str | None = None) -> str:
     """Middle-out truncation for a single oversized text (AnythingLLM's
     "cannonball"): keep the head and tail halves and splice CANNONBALL_MARKER
     over the middle. Head+tail carry the intro and conclusion — the highest-
-    signal parts of most prose. Returns `text` unchanged when it already fits."""
+    signal parts of most prose. Returns `text` unchanged when it already fits.
+    Falls back to a character-proportional split when tiktoken is unavailable
+    (see _encoding)."""
     enc = _encoding(model_hint)
+    if enc is None:
+        return _cannonball_chars(text, max_tokens)
     tokens = enc.encode(text, disallowed_special=())
     if len(tokens) <= max_tokens:
         return text
@@ -295,3 +351,14 @@ def cannonball(text: str, max_tokens: int, model_hint: str | None = None) -> str
     head = keep // 2
     tail = keep - head
     return enc.decode(tokens[:head]) + CANNONBALL_MARKER + enc.decode(tokens[-tail:])
+
+
+def warm_token_encoder() -> None:
+    """Touch count_tokens once so tiktoken's first-call encoding download
+    (when the host is online and the encoding isn't already cached on disk)
+    happens here, off the request path, instead of blocking the first chat
+    turn. Synchronous by design — callers (api/app.py's lifespan, the worker's
+    process-init hook) wrap it in asyncio.to_thread. Never raises: a failed
+    warmup just latches the same _ENCODING_UNAVAILABLE fallback a real request
+    would hit anyway."""
+    count_tokens("warmup")

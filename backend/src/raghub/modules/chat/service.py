@@ -566,9 +566,15 @@ async def stream_reply(
         # (the rendered prompt). If the fit dropped every pinned/backfilled
         # chunk (e.g. an exhausted budget), the original retrieval verdict
         # stands rather than streaming an answer over an effectively empty
-        # sources frame.
+        # sources frame. And regardless of that verdict: an empty kept_sources
+        # means there is nothing left to ground an answer in at all (e.g. a
+        # huge query that eats the whole sources budget), so the no-answer
+        # path fires unconditionally rather than trusting a stale
+        # result.no_answer=False computed before the fit ran.
         kept_keys = {(s.document_id, s.page, s.chunk_index) for s in sources}
-        no_answer = result.no_answer and not ((pinned_keys | backfilled_keys) & kept_keys)
+        no_answer = not kept_sources or (
+            result.no_answer and not ((pinned_keys | backfilled_keys) & kept_keys)
+        )
 
         if no_answer:
             yield token_event(NO_ANSWER_TEXT)

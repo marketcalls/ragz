@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -23,6 +24,7 @@ from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
 from raghub.modules.chat.llm import LLMStreamer
+from raghub.modules.chat.prompting import warm_token_encoder
 from raghub.modules.chat.service import ChunkReader, Retriever
 from raghub.modules.models.sync import sync_models_to_litellm
 from raghub.modules.retrieval.service import RetrievalChunkReader, retrieve
@@ -40,6 +42,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         structlog.get_logger().info("litellm_startup_sync", deployed=deployed)
     except Exception as exc:  # noqa: BLE001 - startup must not die if the proxy is down
         structlog.get_logger().warning("litellm_startup_sync_failed", error=str(exc))
+    # Off the request path: primes tiktoken's encoding cache (a blocking
+    # network download on a cold cache) so the first chat turn never pays it.
+    # warm_token_encoder never raises - a failed warmup just latches the same
+    # char-estimate fallback a real request would hit anyway.
+    await asyncio.to_thread(warm_token_encoder)
     yield
 
 

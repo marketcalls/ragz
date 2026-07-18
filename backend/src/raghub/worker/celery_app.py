@@ -1,7 +1,17 @@
 from celery import Celery
+from celery.signals import worker_process_init
 from kombu import Queue
 
 from raghub.core.config import get_settings
+from raghub.modules.chat.prompting import warm_token_encoder
+
+
+@worker_process_init.connect  # type: ignore[untyped-decorator]  # blinker Signal.connect
+def _warm_token_encoder_on_worker_start(**kwargs: object) -> None:
+    """Sync hook (no event loop here): primes tiktoken's encoding cache once
+    per worker process, off the task path, mirroring the API's startup
+    warmup. Never raises - see warm_token_encoder."""
+    warm_token_encoder()
 
 
 def build_celery() -> Celery:

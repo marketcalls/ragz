@@ -56,3 +56,7 @@ an instance beyond localhost:
    (X-Forwarded-For handling lands with the deployment hardening pass).
 6. **Ports**: all compose services bind 127.0.0.1 by design; only your reverse
    proxy should be reachable from outside.
+7. **Air-gapped installs**: chat token counting downloads a tiktoken encoding on
+   first use; bake the tiktoken cache (set `TIKTOKEN_CACHE_DIR` and pre-populate it
+   in the image) for exact counts offline, or accept the automatic character-based
+   estimate fallback if the download can't happen.
