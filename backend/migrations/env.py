@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 import raghub.core.app_settings  # noqa: F401
 import raghub.modules.audit.models  # noqa: F401
 import raghub.modules.auth.models  # noqa: F401  (registered as tasks add them)
+import raghub.modules.chat.models  # noqa: F401
 import raghub.modules.documents.models  # noqa: F401
 import raghub.modules.models.models  # noqa: F401
 import raghub.modules.secrets.models  # noqa: F401

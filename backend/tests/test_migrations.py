@@ -2,7 +2,7 @@
 
 Unlike the rest of the test suite (which builds schema via
 ``Base.metadata.create_all`` for speed), this test exercises the actual
-10-revision alembic chain against a fresh Postgres instance so that a broken
+11-revision alembic chain against a fresh Postgres instance so that a broken
 migration (bad SQL, wrong down_revision, etc.) is caught before merge.
 """
 
@@ -24,6 +24,9 @@ EXPECTED_TABLES = {
     "ingest_jobs",
     "secrets",
     "models",
+    "chats",
+    "messages",
+    "citations",
     "alembic_version",
 }
 

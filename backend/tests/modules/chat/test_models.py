@@ -1,0 +1,37 @@
+import pytest
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from raghub.modules.auth.models import User
+from raghub.modules.chat.models import Chat, Citation, Message
+from raghub.modules.tenancy.models import Workspace
+
+
+async def test_tree_rows_and_sibling_constraint(
+    session: AsyncSession, seeded_user: User
+) -> None:
+    ws = Workspace(org_id=seeded_user.org_id, name="W")
+    session.add(ws)
+    await session.flush()
+    chat = Chat(org_id=seeded_user.org_id, workspace_id=ws.id, user_id=seeded_user.id)
+    session.add(chat)
+    await session.flush()
+    root = Message(chat_id=chat.id, parent_message_id=None, sibling_index=0,
+                   role="user", content="q1")
+    session.add(root)
+    await session.flush()
+    answer = Message(chat_id=chat.id, parent_message_id=root.id, sibling_index=0,
+                     role="assistant", content="a1 [1]")
+    session.add(answer)
+    await session.flush()
+    session.add(Citation(message_id=answer.id, document_id=ws.id, chunk_ref="d:1:0",
+                         page=1, score=0.9, marker=1))
+    await session.commit()
+    assert chat.title == "New chat"
+
+    dup = Message(chat_id=chat.id, parent_message_id=root.id, sibling_index=0,
+                  role="assistant", content="dup")
+    session.add(dup)
+    with pytest.raises(IntegrityError):
+        await session.flush()
+    await session.rollback()
