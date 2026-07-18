@@ -20,6 +20,7 @@ from raghub.modules.chat.llm import LLMDelta, LLMUsage
 from raghub.modules.documents.models import Document
 from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
+from raghub.modules.retrieval.rerank import get_reranker
 from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from raghub.modules.secrets.crypto import ensure_kek
 from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
@@ -55,6 +56,7 @@ def _clear_caches() -> None:
     get_settings.cache_clear()
     get_qdrant.cache_clear()  # also drops the client's httpx pool between event loops
     get_dense_embedder.cache_clear()
+    get_reranker.cache_clear()
 
 
 @pytest.fixture(scope="session")
@@ -96,6 +98,7 @@ def stack_env(
     monkeypatch.setenv("RAGHUB_MINIO_SECRET_KEY", minio_config["secret_key"])
     monkeypatch.setenv("RAGHUB_MINIO_BUCKET", "raghub-test")
     monkeypatch.setenv("RAGHUB_EMBEDDING_BACKEND", "hash")
+    monkeypatch.setenv("RAGHUB_RERANK_BACKEND", "lexical")
     _clear_caches()
     yield
     _clear_caches()

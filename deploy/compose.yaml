@@ -66,6 +66,23 @@ services:
       retries: 30
       start_period: 180s
 
+  tei-rerank:
+    # Same TEI image serving a cross-encoder instead of an embedder. First start
+    # downloads BAAI/bge-reranker-v2-m3 (~2.3 GB) into the teirerankdata volume;
+    # start_period allows for it. CPU image; GPU variants are a prod concern.
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    platform: linux/amd64  # no arm64 build published; runs under emulation on Apple Silicon (same as tei)
+    profiles: ["ml"]  # not required for CI/dev; tests use the lexical backend
+    command: --model-id BAAI/bge-reranker-v2-m3
+    ports: ["127.0.0.1:58081:80"]
+    volumes: [teirerankdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/80' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
   litellm:
     image: ghcr.io/berriai/litellm:main-stable  # rolling stable; bump policy per PRD MODEL-13 (monthly, behind a probe run)
     depends_on:
@@ -90,3 +107,4 @@ volumes:
   qdrantdata:
   miniodata:
   teidata:
+  teirerankdata:

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     tei_url: str = "http://localhost:58080"
     embedding_backend: str = "tei"  # "tei" | "hash" (hash = deterministic, test/dev only)
     embedding_dim: int = 1024  # bge-m3
+    # Plan E: cross-encoder reranker (CHAT-2 pull-forward)
+    rerank_url: str = "http://localhost:58081"
+    rerank_backend: str = "tei"  # "tei" | "lexical" (lexical = deterministic, test/dev only)
     max_upload_mb: int = 100
     interactive_upload_mb: int = 10  # uploads below this jump to the interactive queue
 
