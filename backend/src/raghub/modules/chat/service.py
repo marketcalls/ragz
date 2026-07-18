@@ -5,7 +5,7 @@ alternate parent->child, sibling_index is dense per (chat, parent).
 """
 
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Protocol
 from uuid import UUID
 
@@ -33,15 +33,19 @@ from raghub.modules.chat.prompting import (
     PromptSource,
     build_conversational_messages,
     build_messages,
+    count_tokens,
+    fit_sources,
     parse_citation_markers,
+    split_budget,
 )
 from raghub.modules.chat.router import classify_query
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
-from raghub.modules.retrieval.service import RetrievalResult
+from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
+from raghub.modules.tenancy.models import Workspace
 
 ROLE_USER = "user"
 ROLE_ASSISTANT = "assistant"
@@ -314,11 +318,11 @@ def path_to_root(messages: list[Message], leaf: Message) -> list[Message]:
 
 
 async def _source_refs(
-    session: AsyncSession, ctx: TenantContext, result: RetrievalResult
+    session: AsyncSession, ctx: TenantContext, chunks: Sequence[RetrievedChunk]
 ) -> list[SourceRef]:
     filenames: dict[UUID, str] = {}
     refs: list[SourceRef] = []
-    for marker, chunk in enumerate(result.chunks, start=1):
+    for marker, chunk in enumerate(chunks, start=1):
         if chunk.document_id not in filenames:
             doc = await documents_service.get_document_checked(session, ctx, chunk.document_id)
             filenames[chunk.document_id] = doc.filename
@@ -334,6 +338,27 @@ async def _source_refs(
             )
         )
     return refs
+
+
+async def _prepare_sources(
+    session: AsyncSession,
+    ctx: TenantContext,
+    chunks: Sequence[RetrievedChunk],
+    *,
+    max_tokens: int,
+    model_hint: str | None,
+) -> tuple[list[SourceRef], list[PromptSource]]:
+    """Marker assignment + budget fitting in one place, so the `sources` SSE
+    frame lists exactly the blocks the model receives (markers stay dense:
+    fit_sources keeps a prefix)."""
+    refs = await _source_refs(session, ctx, chunks)
+    prompt_sources = [
+        PromptSource(marker=r.marker, filename=r.filename, page=r.page,
+                     text=chunks[i].text)
+        for i, r in enumerate(refs)
+    ]
+    kept = fit_sources(prompt_sources, max_tokens, model_hint)
+    return refs[: len(kept)], kept
 
 
 async def _persist_assistant(
@@ -369,6 +394,7 @@ async def stream_reply(
     ctx: TenantContext,
     *,
     chat: Chat,
+    workspace: Workspace,
     user_message: Message,
     model: Model,
     streamer: LLMStreamer,
@@ -400,6 +426,8 @@ async def stream_reply(
                 history=history,
                 user_query=user_message.content,
                 budget=settings.chat_context_token_budget,
+                system_prompt_override=workspace.system_prompt_override,
+                model_hint=model.litellm_model_name,
             )
 
             convo_parts: list[str] = []
@@ -427,8 +455,15 @@ async def stream_reply(
             )
             return
 
+        model_hint = model.litellm_model_name
+        split = split_budget(settings.chat_context_token_budget)
+        query_cost = count_tokens(user_message.content, model_hint)
+
         result = await retriever(session, ctx, chat.workspace_id, user_message.content)
-        sources = await _source_refs(session, ctx, result)
+        sources, kept_sources = await _prepare_sources(
+            session, ctx, result.chunks,
+            max_tokens=max(split.sources - query_cost, 0), model_hint=model_hint,
+        )
         yield sources_event(sources)
 
         if result.no_answer:
@@ -445,14 +480,12 @@ async def stream_reply(
         all_messages = await list_messages(session, chat.id)
         history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
         prompt = build_messages(
-            sources=[
-                PromptSource(marker=s.marker, filename=s.filename, page=s.page,
-                             text=result.chunks[s.marker - 1].text)
-                for s in sources
-            ],
+            sources=kept_sources,
             history=history,
             user_query=user_message.content,
             budget=settings.chat_context_token_budget,
+            system_prompt_override=workspace.system_prompt_override,
+            model_hint=model_hint,
         )
 
         parts: list[str] = []

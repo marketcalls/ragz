@@ -25,6 +25,7 @@ from raghub.modules.models import service as models_service
 from raghub.modules.models.models import Model
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context, rate_limit_user
+from raghub.modules.tenancy.models import Workspace
 
 router = APIRouter(tags=["chat"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -56,17 +57,19 @@ def _sse(events: AsyncIterator[SSEEvent]) -> StreamingResponse:
     )
 
 
-async def _resolve_model(
+async def _resolve_workspace_and_model(
     session: AsyncSession, ctx: TenantContext, chat: Chat,
     requested_model_id: UUID | None,
-) -> Model:
+) -> tuple[Workspace, Model]:
     """Explicit body model_id -> workspace default -> typed error (404/409 as
-    problem+json, BEFORE any SSE bytes are sent)."""
+    problem+json, BEFORE any SSE bytes are sent). The workspace is returned too:
+    stream_reply needs its retrieval settings and prompt override."""
     workspace = await tenancy_service.get_workspace(session, ctx, chat.workspace_id)
-    return await models_service.resolve_model(
+    model = await models_service.resolve_model(
         session, requested_model_id=requested_model_id,
         default_model_id=workspace.default_model_id,
     )
+    return workspace, model
 
 
 @router.post("/chats", status_code=201, response_model=ChatOut)
@@ -110,7 +113,9 @@ async def send_message(
     session: SessionDep, settings: SettingsDep, ctx: SendCtxDep,
 ) -> StreamingResponse:
     chat = await service.get_chat(session, ctx, chat_id)
-    model = await _resolve_model(session, ctx, chat, body.model_id)  # fail fast
+    workspace, model = await _resolve_workspace_and_model(
+        session, ctx, chat, body.model_id
+    )  # fail fast
     messages = await service.list_messages(session, chat.id)
     parent = service.resolve_parent(
         messages, body.parent_message_id,
@@ -120,7 +125,7 @@ async def send_message(
         session, ctx, chat, role=service.ROLE_USER, content=body.content, parent=parent
     )
     return _sse(service.stream_reply(
-        session, ctx, chat=chat, user_message=user_msg, model=model,
+        session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
         streamer=_streamer(request, settings),
         retriever=request.app.state.retriever, settings=settings,
     ))
@@ -135,13 +140,13 @@ async def regenerate(
     chat, msg = await service.get_message(session, ctx, message_id)
     if msg.role != service.ROLE_ASSISTANT or msg.parent_message_id is None:
         raise ConflictError("only assistant messages can be regenerated")
-    model = await _resolve_model(
+    workspace, model = await _resolve_workspace_and_model(
         session, ctx, chat, body.model_id if body is not None else None
     )
     messages = await service.list_messages(session, chat.id)
     user_msg = next(m for m in messages if m.id == msg.parent_message_id)
     return _sse(service.stream_reply(
-        session, ctx, chat=chat, user_message=user_msg, model=model,
+        session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
         streamer=_streamer(request, settings),
         retriever=request.app.state.retriever, settings=settings,
     ))

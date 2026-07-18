@@ -213,10 +213,13 @@ class FakeRetriever:
     def __init__(self, document_id: UUID, no_answer: bool = False) -> None:
         self.document_id = document_id
         self.no_answer = no_answer
+        self.chunks: list[RetrievedChunk] | None = None  # tests may script these
 
     async def __call__(
         self, session, ctx, workspace_id, query, top_k=None  # type: ignore[no-untyped-def]
     ) -> RetrievalResult:
+        if self.chunks is not None:
+            return RetrievalResult(no_answer=self.no_answer, chunks=list(self.chunks))
         chunks = [
             RetrievedChunk(document_id=self.document_id, page=3, chunk_index=0,
                            text="Revenue was 12M.", score=0.91),
