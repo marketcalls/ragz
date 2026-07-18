@@ -12,6 +12,8 @@ import { useWorkspace } from '@/features/workspaces/workspace-context';
 
 import { AssistantMessage } from './assistant-message';
 import { ChatInput } from './chat-input';
+import { EditMessageForm } from './edit-message-form';
+import { MessageActions } from './message-actions';
 import { ModelSelector } from './model-selector';
 import { useChat, useCreateChat } from './queries';
 import type { SourceChipData } from './source-panel';
@@ -32,10 +34,9 @@ export function ChatPage() {
   const chatQuery = useChat(chatId);
   const createChat = useCreateChat();
   const stream = useChatStream(chatId);
-  // `select` (branch switching) is wired into the UI once the actions row
-  // lands in Task 11; unused for now, so it's left out of the destructure.
-  const { path } = useTreeSelection(chatQuery.data?.messages);
+  const { path, select } = useTreeSelection(chatQuery.data?.messages);
   const [modelId, setModelId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // Persisted citations (MessageNode.citations) → source chips; filenames
   // resolved from the workspace's document list (shared query cache).
@@ -127,17 +128,56 @@ export function ChatPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-thread space-y-5 px-4 py-6">
           {chatId && chatQuery.isPending ? <Spinner label="Loading chat…" /> : null}
-          {path.map((entry) =>
-            entry.message.role === 'user' ? (
-              <UserMessage key={entry.message.id} content={entry.message.content} />
-            ) : (
+          {path.map((entry) => {
+            const m = entry.message;
+            if (m.role === 'user') {
+              if (editingId === m.id) {
+                return (
+                  <EditMessageForm
+                    key={m.id}
+                    initial={m.content}
+                    onCancel={() => setEditingId(null)}
+                    onSend={(content) => {
+                      setEditingId(null);
+                      // Sibling of the edited message: same parent (phase1 spec §2.1).
+                      // For a ROOT message this passes explicit null — which the backend
+                      // reads as "new root sibling" (presence semantics, chat/schemas.py).
+                      stream.send(content, m.parent_message_id ?? null, effectiveModelId);
+                    }}
+                  />
+                );
+              }
+              return (
+                <UserMessage
+                  key={m.id}
+                  content={m.content}
+                  footer={
+                    <MessageActions
+                      entry={entry}
+                      disabled={busy}
+                      onSelectSibling={select}
+                      onEdit={() => setEditingId(m.id)}
+                    />
+                  }
+                />
+              );
+            }
+            return (
               <AssistantMessage
-                key={entry.message.id}
-                content={entry.message.content}
-                sources={chipsFor(entry.message)}
+                key={m.id}
+                content={m.content}
+                sources={chipsFor(m)}
+                footer={
+                  <MessageActions
+                    entry={entry}
+                    disabled={busy}
+                    onSelectSibling={select}
+                    onRegenerate={() => stream.regenerate(m.id)}
+                  />
+                }
               />
-            ),
-          )}
+            );
+          })}
           {showStreamBlock ? <StreamingMessage stream={stream} /> : null}
           {!chatId && path.length === 0 && stream.status === 'idle' ? (
             <p className="pt-16 text-center text-[15px] text-secondary">
