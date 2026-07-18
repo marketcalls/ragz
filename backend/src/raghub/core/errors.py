@@ -36,3 +36,8 @@ class RateLimitExceeded(RagHubError):
 
 class WorkspaceAccessDenied(AuthorizationError):
     title = "Workspace access denied"
+
+
+class PayloadTooLarge(RagHubError):
+    status_code = 413
+    title = "Payload too large"

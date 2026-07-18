@@ -6,7 +6,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from raghub.api.routes.auth import router as auth_router
+from raghub.api.routes.documents import router as documents_router
 from raghub.api.routes.health import router as health_router
+from raghub.api.routes.search import router as search_router
 from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
 from raghub.core.config import get_settings
@@ -70,4 +72,6 @@ def create_app(
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(workspaces_router, prefix="/api/v1")
+    app.include_router(documents_router, prefix="/api/v1")
+    app.include_router(search_router, prefix="/api/v1")
     return app
