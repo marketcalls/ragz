@@ -61,15 +61,15 @@ async def test_same_org_cross_workspace_isolation(
 def test_tenant_filter_pins_both_tenant_and_workspace_conditions() -> None:
     """Pins the exact shape of the ONE filter builder (iron rule 1): the `must`
     list has to carry BOTH a tenant_id and a workspace_id FieldCondition. Kills
-    the mutant that drops the tenant_id condition while keeping workspace_id
-    (a mutant the black-box retrieval tests above can't distinguish from the
-    correct filter when org A and org B never share a workspace_id). Reaching
-    into the private `_tenant_filter` is intentional and sanctioned only in
-    this isolation suite."""
+    the mutant that drops the tenant_id condition while keeping workspace_id.
+    Phase 2 EXTENSION (not a weakening): acl_group_ids became a required kwarg;
+    None means the admin+/maintenance bypass and must produce NO acl clause —
+    exactly two conditions, both plain FieldConditions."""
     org_id = uuid4()
     workspace_id = uuid4()
-    flt = _tenant_filter(org_id=org_id, workspace_id=workspace_id)
+    flt = _tenant_filter(org_id=org_id, workspace_id=workspace_id, acl_group_ids=None)
     assert flt.must is not None
+    assert len(flt.must) == 2  # Phase 2: pins that None adds nothing
     seen = {}
     for cond in flt.must:
         assert isinstance(cond, models.FieldCondition)
@@ -77,6 +77,45 @@ def test_tenant_filter_pins_both_tenant_and_workspace_conditions() -> None:
         seen[cond.key] = cond.match.value
     assert seen.get("tenant_id") == str(org_id)
     assert seen.get("workspace_id") == str(workspace_id)
+
+
+def test_tenant_filter_acl_clause_shape() -> None:
+    """Pins the ACL must-clause (RBAC-5): a nested Filter whose `should` is
+    exactly [IsEmpty(acl_groups), MatchAny(sorted caller groups)] — point is
+    unrestricted OR intersects the caller's groups. must-nesting matters: a
+    top-level `should` would let an acl match OVERRIDE the tenant conditions."""
+    org_id, workspace_id = uuid4(), uuid4()
+    g1, g2 = uuid4(), uuid4()
+    flt = _tenant_filter(
+        org_id=org_id, workspace_id=workspace_id, acl_group_ids=frozenset({g1, g2})
+    )
+    assert flt.must is not None and len(flt.must) == 3
+    nested = [c for c in flt.must if isinstance(c, models.Filter)]
+    assert len(nested) == 1
+    should = nested[0].should
+    assert should is not None and len(should) == 2
+    empty = [c for c in should if isinstance(c, models.IsEmptyCondition)]
+    assert len(empty) == 1 and empty[0].is_empty.key == "acl_groups"
+    match = [c for c in should if isinstance(c, models.FieldCondition)]
+    assert len(match) == 1 and match[0].key == "acl_groups"
+    assert isinstance(match[0].match, models.MatchAny)
+    assert match[0].match.any == sorted([str(g1), str(g2)])
+
+
+def test_tenant_filter_empty_groups_fails_closed() -> None:
+    """A caller with NO groups must still get the ACL clause — IsEmpty only,
+    never MatchAny(any=[]) (whose semantics we refuse to depend on) and never
+    a dropped clause (which would leak every restricted document)."""
+    flt = _tenant_filter(
+        org_id=uuid4(), workspace_id=uuid4(), acl_group_ids=frozenset()
+    )
+    assert flt.must is not None
+    nested = [c for c in flt.must if isinstance(c, models.Filter)]
+    assert len(nested) == 1
+    should = nested[0].should
+    assert should is not None and len(should) == 1
+    assert isinstance(should[0], models.IsEmptyCondition)
+    assert should[0].is_empty.key == "acl_groups"
 
 
 async def test_non_member_workspace_retrieval_denied(

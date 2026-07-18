@@ -4,7 +4,8 @@
 a Qdrant filter. Its only callers are `retrieve()`, `delete_document_points()`,
 `list_document_chunks()`, `get_chunks_by_refs()`, and `update_document_acl()` —
 all in this module. The adversarial suite in tests/isolation/ exists to catch
-any regression here.
+any regression here. `_tenant_filter`'s ACL posture is decided per caller via
+`_ctx_acl` for user-facing reads and `None` for the two maintenance paths.
 """
 
 import asyncio
@@ -41,10 +42,24 @@ class RetrievalResult:
 
 
 def _tenant_filter(
-    *, org_id: UUID, workspace_id: UUID | None = None, document_id: UUID | None = None
+    *,
+    org_id: UUID,
+    workspace_id: UUID | None = None,
+    document_id: UUID | None = None,
+    acl_group_ids: frozenset[UUID] | None,
 ) -> models.Filter:
-    """The ONE Qdrant filter builder. tenant_id is always a must-condition;
-    acl_groups intersection lands here in Phase 2 without touching callers."""
+    """The ONE Qdrant filter builder. tenant_id is always a must-condition.
+
+    acl_group_ids is REQUIRED (no default) so every caller states its ACL
+    posture explicitly:
+      * None      -> no ACL clause. Sanctioned for admin+ retrieval (RBAC-5
+                     restricts users, not the admins who manage the library)
+                     and for maintenance paths already scoped tenant+document.
+      * frozenset -> nested must-clause: acl_groups IS EMPTY (unrestricted;
+                     also matches every pre-Phase-2 point, ingested as []) OR
+                     intersects the caller's groups. An empty set emits
+                     IsEmpty only — fail closed, never MatchAny(any=[]).
+    """
     must: list[models.Condition] = [
         models.FieldCondition(key="tenant_id", match=models.MatchValue(value=str(org_id)))
     ]
@@ -60,7 +75,25 @@ def _tenant_filter(
                 key="document_id", match=models.MatchValue(value=str(document_id))
             )
         )
+    if acl_group_ids is not None:
+        acl_should: list[models.Condition] = [
+            models.IsEmptyCondition(is_empty=models.PayloadField(key="acl_groups"))
+        ]
+        if acl_group_ids:
+            acl_should.append(
+                models.FieldCondition(
+                    key="acl_groups",
+                    match=models.MatchAny(any=sorted(str(g) for g in acl_group_ids)),
+                )
+            )
+        must.append(models.Filter(should=acl_should))
     return models.Filter(must=must)
+
+
+def _ctx_acl(ctx: TenantContext) -> frozenset[UUID] | None:
+    """ACL posture for user-facing reads: admins bypass (documented RBAC-5
+    stance), everyone else carries their current group memberships."""
+    return None if ctx.role in ("admin", "superadmin") else ctx.group_ids
 
 
 async def ensure_collection(embedding_model: str = "bge-m3") -> str:
@@ -134,7 +167,7 @@ async def retrieve(
     await ensure_collection(ws.embedding_model)
     dense_vec = (await get_dense_embedder().embed([query]))[0]
     sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
-    flt = _tenant_filter(org_id=ctx.org_id, workspace_id=workspace_id)
+    flt = _tenant_filter(org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx))
     client = get_qdrant()
     fetch_k = _RERANK_PREFETCH if ws.rerank_enabled else k
     prefetch_limit = max(fetch_k, k * 4)
@@ -199,7 +232,8 @@ async def list_document_chunks(
     if not await client.collection_exists(COLLECTION):
         return []
     flt = _tenant_filter(
-        org_id=ctx.org_id, workspace_id=workspace_id, document_id=document_id
+        org_id=ctx.org_id, workspace_id=workspace_id, document_id=document_id,
+        acl_group_ids=_ctx_acl(ctx),
     )
     chunks: list[RetrievedChunk] = []
     offset: models.ExtendedPointId | None = None
@@ -266,7 +300,8 @@ async def get_chunks_by_refs(
         wanted_indices.setdefault(doc_id, set()).add((page, chunk_index))
     for doc_id, wanted in wanted_indices.items():
         flt = _tenant_filter(
-            org_id=ctx.org_id, workspace_id=workspace_id, document_id=doc_id
+            org_id=ctx.org_id, workspace_id=workspace_id, document_id=doc_id,
+            acl_group_ids=_ctx_acl(ctx),
         )
         offset: models.ExtendedPointId | None = None
         for _ in range(_SCROLL_PAGE_CAP):
@@ -317,7 +352,8 @@ async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
     await get_qdrant().delete(
         COLLECTION,
         points_selector=models.FilterSelector(
-            filter=_tenant_filter(org_id=org_id, document_id=document_id)
+            # maintenance path: must remove ALL of the document's points
+            filter=_tenant_filter(org_id=org_id, document_id=document_id, acl_group_ids=None)
         ),
         wait=True,
     )
@@ -344,7 +380,8 @@ async def update_document_acl(
         COLLECTION,
         payload={"acl_groups": sorted(str(g) for g in (acl_group_ids or []))},
         points=models.FilterSelector(
-            filter=_tenant_filter(org_id=org_id, document_id=document_id)
+            # maintenance path: must restamp ALL of the document's points
+            filter=_tenant_filter(org_id=org_id, document_id=document_id, acl_group_ids=None)
         ),
         wait=True,
     )
