@@ -3,14 +3,18 @@
 If any test here fails, treat it as a security incident, not a flake.
 """
 
+from uuid import uuid4
+
 import pytest
+from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.documents.ingest import run_delete
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
-from raghub.modules.retrieval.service import retrieve
+from raghub.modules.retrieval.service import _tenant_filter, retrieve
+from tests.isolation.conftest import ingest_text, seed_same_org_two_workspaces
 
 
 async def test_org_a_never_sees_org_b_chunks(
@@ -23,8 +27,51 @@ async def test_org_a_never_sees_org_b_chunks(
                             "org bravo secret: the vault code is 9962", top_k=10)
     returned_docs = {c.document_id for c in result.chunks}
     assert doc_b.id not in returned_docs
+    assert doc_a.id in returned_docs  # self-contained: not a vacuous empty-result pass
     assert all(d == doc_a.id for d in returned_docs)
     assert all("9962" not in c.text for c in result.chunks)
+
+
+async def test_same_org_cross_workspace_isolation(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Same tenant_id, DIFFERENT workspace_id — the real product-leak scenario
+    (two teams in one org). Kills the mutant that drops the workspace_id
+    must-condition from _tenant_filter while keeping tenant_id: without it,
+    ws1's user would see ws2's chunks because both share an org_id."""
+    ctx1, ws1, ctx2, ws2 = await seed_same_org_two_workspaces(session)
+    doc1 = await ingest_text(session, ctx1, ws1, "ws1.txt",
+                             "workspace one secret: the launch code is 5521")
+    doc2 = await ingest_text(session, ctx2, ws2, "ws2.txt",
+                             "workspace two secret: the launch code is 8834")
+    # Query ws1 (ctx1 is a member of ws1 only) with ws2's exact secret as the lure.
+    result = await retrieve(session, ctx1, ws1.id,
+                            "workspace two secret: the launch code is 8834", top_k=10)
+    returned_docs = {c.document_id for c in result.chunks}
+    assert doc2.id not in returned_docs
+    assert doc1.id in returned_docs
+    assert all("8834" not in c.text for c in result.chunks)
+
+
+def test_tenant_filter_pins_both_tenant_and_workspace_conditions() -> None:
+    """Pins the exact shape of the ONE filter builder (iron rule 1): the `must`
+    list has to carry BOTH a tenant_id and a workspace_id FieldCondition. Kills
+    the mutant that drops the tenant_id condition while keeping workspace_id
+    (a mutant the black-box retrieval tests above can't distinguish from the
+    correct filter when org A and org B never share a workspace_id). Reaching
+    into the private `_tenant_filter` is intentional and sanctioned only in
+    this isolation suite."""
+    org_id = uuid4()
+    workspace_id = uuid4()
+    flt = _tenant_filter(org_id=org_id, workspace_id=workspace_id)
+    assert flt.must is not None
+    seen = {}
+    for cond in flt.must:
+        assert isinstance(cond, models.FieldCondition)
+        assert isinstance(cond.match, models.MatchValue)
+        seen[cond.key] = cond.match.value
+    assert seen.get("tenant_id") == str(org_id)
+    assert seen.get("workspace_id") == str(workspace_id)
 
 
 async def test_non_member_workspace_retrieval_denied(
