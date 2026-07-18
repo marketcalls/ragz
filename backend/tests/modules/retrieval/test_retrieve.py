@@ -108,8 +108,13 @@ async def test_delete_document_points(session: AsyncSession, qdrant_collection: 
     assert result.chunks == []
 
 
-async def test_delete_points_tolerates_missing_collection(qdrant_url: str) -> None:
-    """Deleting a never-indexed document must be a no-op, not a Qdrant 404 (smoke regression)."""
+async def test_delete_points_tolerates_missing_collection(stack_env: None) -> None:
+    """Deleting a never-indexed document must be a no-op, not a Qdrant 404 (smoke regression).
+
+    Uses stack_env (NOT the bare qdrant_url fixture) so get_qdrant() is redirected to
+    the test container — otherwise this test's delete_collection would hit whatever
+    Qdrant ambient settings point at (it once wiped the dev compose collection).
+    """
     from uuid import uuid4
 
     from raghub.modules.retrieval.client import COLLECTION, get_qdrant
