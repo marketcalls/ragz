@@ -107,7 +107,10 @@ async def test_get_chunks_by_refs_stops_scrolling_once_all_refs_found(
     monkeypatch.setattr("raghub.modules.retrieval.service._SCROLL_PAGE", 2)
     ctx, ws = await seed_workspace(session, "refsEarlyStopOrg")
     texts = [f"chunk number {i}" for i in range(5)]
-    doc_id = await upsert_texts(ctx, ws, texts)
+    # Sequential point ids: Qdrant scroll order is point-id order, so chunk 0 is
+    # deterministically on scroll page 1 (page size 2). Random ids made this flaky.
+    ids = [f"00000000-0000-0000-0000-00000000000{i}" for i in range(5)]
+    doc_id = await upsert_texts(ctx, ws, texts, point_ids=ids)
     refs = [f"{doc_id}:1:0"]  # first chunk only, satisfied by the first page
     client = get_qdrant()
     orig_scroll = client.scroll

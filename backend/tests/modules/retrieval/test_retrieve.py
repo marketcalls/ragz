@@ -36,14 +36,21 @@ async def seed_workspace(
     return ctx, ws
 
 
-async def upsert_texts(ctx: TenantContext, ws: Workspace, texts: list[str]) -> str:
-    """Test seeding via raw points; production code goes through the pipeline."""
+async def upsert_texts(
+    ctx: TenantContext, ws: Workspace, texts: list[str],
+    point_ids: list[str] | None = None,
+) -> str:
+    """Test seeding via raw points; production code goes through the pipeline.
+
+    point_ids: optional deterministic ids — Qdrant scroll order is point-id order,
+    so tests asserting page positions must pass sequential ids (see early-stop test).
+    """
     document_id = str(uuid4())
     dense = await get_dense_embedder().embed(texts)
     sparse = await asyncio.to_thread(embed_sparse, texts)
     points = [
         models.PointStruct(
-            id=str(uuid4()),
+            id=point_ids[i] if point_ids else str(uuid4()),
             vector={"dense": d, "sparse": s},
             payload={"tenant_id": str(ctx.org_id), "workspace_id": str(ws.id),
                      "document_id": document_id, "page": i + 1, "chunk_index": i,
