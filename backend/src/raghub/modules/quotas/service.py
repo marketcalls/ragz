@@ -10,7 +10,7 @@ rollup table until Plan G's load tests demand one.
 
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -206,3 +206,59 @@ async def set_user_quota(
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="quota.user_set", target_type="user", target_id=str(user_id))
     await session.commit()
+
+
+async def org_usage_summary(
+    session: AsyncSession, *, org_id: UUID, days: int
+) -> dict[str, list[dict[str, object]]]:
+    """Aggregates for the admin dashboard (ADM-4/QUOTA-7 groundwork; Plan G
+    charts these). Straight indexed-ledger group-bys — see module docstring
+    for the no-rollup-table decision."""
+    since = naive_utc() - timedelta(days=days)
+    base = (UsageRecord.org_id == org_id, UsageRecord.created_at >= since)
+    day_col = func.date_trunc("day", UsageRecord.created_at)
+    by_day = (
+        await session.execute(
+            select(day_col, func.sum(_TOKENS)).where(*base).group_by(day_col).order_by(day_col)
+        )
+    ).all()
+    by_model = (
+        await session.execute(
+            select(UsageRecord.model_id, func.sum(_TOKENS))
+            .where(*base).group_by(UsageRecord.model_id)
+            .order_by(func.sum(_TOKENS).desc())
+        )
+    ).all()
+    by_user = (
+        await session.execute(
+            select(UsageRecord.user_id, User.email, func.sum(_TOKENS))
+            .join(User, User.id == UsageRecord.user_id)
+            .where(*base).group_by(UsageRecord.user_id, User.email)
+            .order_by(func.sum(_TOKENS).desc()).limit(10)
+        )
+    ).all()
+    return {
+        "by_day": [{"day": d.date(), "tokens": int(t)} for d, t in by_day],
+        "by_model": [{"model_id": m, "tokens": int(t)} for m, t in by_model],
+        "by_user": [{"user_id": u, "email": e, "tokens": int(t)} for u, e, t in by_user],
+    }
+
+
+async def platform_usage_by_org(
+    session: AsyncSession, *, days: int = 30
+) -> list[dict[str, object]]:
+    """Cross-org totals over a UNIFORM trailing window (per-org reset days would
+    make rows incomparable side by side). SUP-3 groundwork."""
+    from raghub.modules.tenancy.models import Organization
+
+    since = naive_utc() - timedelta(days=days)
+    rows = (
+        await session.execute(
+            select(UsageRecord.org_id, Organization.name, func.sum(_TOKENS))
+            .join(Organization, Organization.id == UsageRecord.org_id)
+            .where(UsageRecord.created_at >= since)
+            .group_by(UsageRecord.org_id, Organization.name)
+            .order_by(func.sum(_TOKENS).desc())
+        )
+    ).all()
+    return [{"org_id": o, "name": n, "tokens": int(t)} for o, n, t in rows]
