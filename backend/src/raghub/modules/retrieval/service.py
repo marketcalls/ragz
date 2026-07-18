@@ -140,7 +140,10 @@ async def retrieve(
 async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
     """Deletion propagation entry point — lives here so filter knowledge never
     leaves this module. org_id scoping is defense in depth beyond the spec's
-    document_id filter."""
+    document_id filter. A missing collection means nothing was ever indexed —
+    deleting a never-indexed document must succeed (found by real-stack smoke)."""
+    if not await get_qdrant().collection_exists(COLLECTION):
+        return
     await get_qdrant().delete(
         COLLECTION,
         points_selector=models.FilterSelector(

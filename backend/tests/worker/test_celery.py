@@ -19,3 +19,10 @@ def test_ingest_chain_structure() -> None:
     assert names == ["documents.parse", "documents.chunk", "documents.embed_upsert"]
     assert all(t.options.get("queue") == "interactive" for t in sig.tasks)
     assert all(t.args == ("doc-id-123",) for t in sig.tasks)
+
+
+def test_tasks_module_included_for_standalone_worker() -> None:
+    """A real `celery -A ...celery_app worker` must import tasks.py (smoke regression)."""
+    from raghub.worker.celery_app import celery_app
+
+    assert "raghub.worker.tasks" in celery_app.conf.include

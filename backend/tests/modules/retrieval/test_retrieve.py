@@ -106,3 +106,16 @@ async def test_delete_document_points(session: AsyncSession, qdrant_collection: 
     await delete_document_points(ctx.org_id, UUID(doc_id))
     result = await retrieve(session, ctx, ws.id, "target text to delete")
     assert result.chunks == []
+
+
+async def test_delete_points_tolerates_missing_collection(qdrant_url: str) -> None:
+    """Deleting a never-indexed document must be a no-op, not a Qdrant 404 (smoke regression)."""
+    from uuid import uuid4
+
+    from raghub.modules.retrieval.client import COLLECTION, get_qdrant
+    from raghub.modules.retrieval.service import delete_document_points
+
+    client = get_qdrant()
+    if await client.collection_exists(COLLECTION):
+        await client.delete_collection(COLLECTION)
+    await delete_document_points(uuid4(), uuid4())  # must not raise
