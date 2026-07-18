@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from raghub.api.app import create_app
 from raghub.core.config import Settings, get_settings
 from raghub.core.db import build_session_factory
+from raghub.core.errors import UpstreamError
 from raghub.modules.auth.models import User
 from raghub.modules.chat.models import Citation, Message
 from raghub.modules.chat.service import NO_ANSWER_TEXT
@@ -232,3 +233,71 @@ async def test_explicit_model_override_and_bad_model_404(
     )
     assert r.status_code == 200  # falls back to the workspace default (llama3)
     assert fake_streamer.calls[-1]["model"] == "llama3"
+
+
+async def test_upstream_error_yields_generic_message(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """UpstreamError from LLM gateway yields generic error message to client."""
+    class FailingStreamer:
+        async def stream(self, *, model: str, messages: list[dict[str, str]]):  # type: ignore[no-untyped-def]
+            if False:
+                yield  # Make this an async generator
+            raise UpstreamError(detail="<html>502 Bad Gateway</html>")
+
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FailingStreamer(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "test?"}, headers=h)
+    events = parse_sse(r.text)
+    names = [e for e, _ in events]
+    assert names[-1] == "error"
+    # Assert generic message, not the raw gateway detail
+    assert events[-1][1]["detail"] == "the language model gateway failed"
+
+
+async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """RuntimeError mid-stream yields generic error message and terminates cleanly."""
+    from raghub.modules.chat.llm import LLMDelta
+
+    class MidStreamFailingStreamer:
+        async def stream(self, *, model: str, messages: list[dict[str, str]]):  # type: ignore[no-untyped-def]
+            yield LLMDelta("partial")
+            raise RuntimeError("unexpected failure")
+
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=MidStreamFailingStreamer(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "test?"}, headers=h)
+    events = parse_sse(r.text)
+    names = [e for e, _ in events]
+    assert names[-1] == "error"
+    assert events[-1][1]["detail"] == "streaming failed unexpectedly"
+    # Verify the event sequence ends cleanly (no additional events after error)
+    assert len(events[-1:]) == 1

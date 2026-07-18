@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 from uuid import UUID
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -316,33 +317,33 @@ async def stream_reply(
     sources = await _source_refs(session, ctx, result)
     yield sources_event(sources)
 
-    if result.no_answer:
-        yield token_event(NO_ANSWER_TEXT)
-        msg = await _persist_assistant(
-            session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
-            model_id=None, usage=None, citations=[],
-        )
-        yield citations_event([])
-        yield done_event(message_id=str(msg.id), prompt_tokens=0,
-                         completion_tokens=0, no_answer=True)
-        return
-
-    all_messages = await list_messages(session, chat.id)
-    history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
-    prompt = build_messages(
-        sources=[
-            PromptSource(marker=s.marker, filename=s.filename, page=s.page,
-                         text=result.chunks[s.marker - 1].text)
-            for s in sources
-        ],
-        history=history,
-        user_query=user_message.content,
-        budget=settings.chat_context_token_budget,
-    )
-
-    parts: list[str] = []
-    usage: LLMUsage | None = None
     try:
+        if result.no_answer:
+            yield token_event(NO_ANSWER_TEXT)
+            msg = await _persist_assistant(
+                session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
+                model_id=None, usage=None, citations=[],
+            )
+            yield citations_event([])
+            yield done_event(message_id=str(msg.id), prompt_tokens=0,
+                             completion_tokens=0, no_answer=True)
+            return
+
+        all_messages = await list_messages(session, chat.id)
+        history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
+        prompt = build_messages(
+            sources=[
+                PromptSource(marker=s.marker, filename=s.filename, page=s.page,
+                             text=result.chunks[s.marker - 1].text)
+                for s in sources
+            ],
+            history=history,
+            user_query=user_message.content,
+            budget=settings.chat_context_token_budget,
+        )
+
+        parts: list[str] = []
+        usage: LLMUsage | None = None
         async for item in streamer.stream(
             model=model.litellm_model_name, messages=prompt
         ):
@@ -351,33 +352,39 @@ async def stream_reply(
                 yield token_event(item.text)
             else:
                 usage = item
-    except UpstreamError as exc:
-        # User message stays persisted; the client may retry (-> sibling).
-        yield error_event(exc.detail or "LLM gateway error")
-        return
 
-    answer = "".join(parts)
-    markers = parse_citation_markers(answer, len(sources))
-    by_marker = {s.marker: s for s in sources}
-    citation_refs = [
-        CitationRef(
-            marker=n,
-            document_id=by_marker[n].document_id,
-            chunk_ref=f"{by_marker[n].document_id}:{by_marker[n].page}:"
-                      f"{by_marker[n].chunk_index}",
-            page=by_marker[n].page,
-            score=by_marker[n].score,
+        answer = "".join(parts)
+        markers = parse_citation_markers(answer, len(sources))
+        by_marker = {s.marker: s for s in sources}
+        citation_refs = [
+            CitationRef(
+                marker=n,
+                document_id=by_marker[n].document_id,
+                chunk_ref=f"{by_marker[n].document_id}:{by_marker[n].page}:"
+                          f"{by_marker[n].chunk_index}",
+                page=by_marker[n].page,
+                score=by_marker[n].score,
+            )
+            for n in markers
+        ]
+        msg = await _persist_assistant(
+            session, ctx, chat, parent=user_message, content=answer, model_id=model.id,
+            usage=usage, citations=citation_refs,
         )
-        for n in markers
-    ]
-    msg = await _persist_assistant(
-        session, ctx, chat, parent=user_message, content=answer, model_id=model.id,
-        usage=usage, citations=citation_refs,
-    )
-    yield citations_event(citation_refs)
-    yield done_event(
-        message_id=str(msg.id),
-        prompt_tokens=usage.prompt_tokens if usage else 0,
-        completion_tokens=usage.completion_tokens if usage else 0,
-        no_answer=False,
-    )
+        yield citations_event(citation_refs)
+        yield done_event(
+            message_id=str(msg.id),
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            completion_tokens=usage.completion_tokens if usage else 0,
+            no_answer=False,
+        )
+    except UpstreamError:
+        # User message stays persisted; the client may retry (-> sibling).
+        # Do not forward exc.detail as it can carry raw gateway body text.
+        yield error_event("the language model gateway failed")
+        return
+    except Exception:
+        # Log unexpected errors but yield generic message to client.
+        structlog.get_logger().error("stream_failed", exc_info=True)
+        yield error_event("streaming failed unexpectedly")
+        return
