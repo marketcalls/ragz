@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     public_api_base_url: str = "http://localhost:8000"  # builds the OIDC redirect_uri
     frontend_base_url: str = "http://localhost:5173"    # post-callback redirect target
 
+    # QUOTA-3 backstop: USD mirrored onto per-user LiteLLM virtual keys per 1M
+    # tokens of allocation. 0 disables max_budget (local-only installs).
+    litellm_usd_per_million_tokens: float = 5.0
+
 
 @lru_cache
 def get_settings() -> Settings:

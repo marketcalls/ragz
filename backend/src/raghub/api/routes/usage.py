@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
+from raghub.core.config import get_settings
+from raghub.modules.models import keys
 from raghub.modules.quotas import service
 from raghub.modules.quotas.schemas import OrgQuotaIn, OrgQuotaOut, UserQuotaIn
 from raghub.modules.tenancy.context import TenantContext, require_role
@@ -40,3 +42,6 @@ async def put_user_quota(
     user_id: UUID, body: UserQuotaIn, session: SessionDep, ctx: AdminDep
 ) -> None:
     await service.set_user_quota(session, ctx, user_id, body.monthly_tokens)
+    await keys.update_user_budget(
+        session, get_settings(), user_id=user_id, monthly_tokens=body.monthly_tokens,
+    )
