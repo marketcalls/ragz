@@ -505,6 +505,11 @@ async def stream_reply(
         model_hint = model.litellm_model_name
         split = split_budget(settings.chat_context_token_budget)
         query_cost = count_tokens(user_message.content, model_hint)
+        # The budget actually available to render sources, AFTER the user's
+        # question is paid for. Capping pinned chunks against this (not the
+        # raw split.sources share) means a long user message can't let pinned
+        # docs eat the entire rendered budget and starve retrieval.
+        sources_budget = max(split.sources - query_cost, 0)
 
         pinned_chunks: list[RetrievedChunk] = []
         for doc in await documents_service.list_pinned_documents(
@@ -514,18 +519,25 @@ async def stream_reply(
                 await chunk_reader.list_document_chunks(ctx, chat.workspace_id, doc.id)
             )
         pinned_chunks = cap_chunks_by_tokens(
-            pinned_chunks, split.sources // 2, model_hint
+            pinned_chunks, sources_budget // 2, model_hint
         )
+        pinned_keys = {(str(c.document_id), c.page, c.chunk_index) for c in pinned_chunks}
 
         result = await retriever(session, ctx, chat.workspace_id, user_message.content)
         merged = merge_chunks(pinned_chunks, result.chunks)
-        no_answer = result.no_answer and not pinned_chunks
 
         sources, kept_sources = await _prepare_sources(
-            session, ctx, merged,
-            max_tokens=max(split.sources - query_cost, 0), model_hint=model_hint,
+            session, ctx, merged, max_tokens=sources_budget, model_hint=model_hint,
         )
         yield sources_event(sources)
+
+        # no_answer is decided AFTER the final fit: pinned material only
+        # counts as grounding if it actually survived into kept_sources (the
+        # rendered prompt). If the fit dropped every pinned chunk (e.g. an
+        # exhausted budget), the original retrieval verdict stands rather
+        # than streaming an answer over an effectively empty sources frame.
+        kept_keys = {(s.document_id, s.page, s.chunk_index) for s in sources}
+        no_answer = result.no_answer and not (pinned_keys & kept_keys)
 
         if no_answer:
             yield token_event(NO_ANSWER_TEXT)

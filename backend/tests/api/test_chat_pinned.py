@@ -83,3 +83,71 @@ async def test_no_answer_refusal_suppressed_when_pinned_docs_exist(
     assert tokens != NO_ANSWER_TEXT  # streamed a real (fake) LLM answer
     sources = next(d for e, d in events if e == "sources")["sources"]
     assert len(sources) == 1  # the pinned chunk carried the turn
+
+
+async def test_huge_query_never_streams_an_answer_over_empty_sources(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings,
+    chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
+) -> None:
+    """Edge case: a user message whose token cost alone exceeds the whole
+    sources share (5600) drives sources_budget to 0, so the pinned half-cap
+    also drops to 0 and the pinned chunk cannot survive into kept_sources.
+    The no_answer decision must key off THAT (the post-fit reality), not the
+    pre-fit pinned pool -- so the retrieval no_answer verdict must stand:
+    either the client gets a non-empty sources frame with a real answer, or
+    it gets the no-answer refusal. It must never get an answer streamed over
+    a sources frame that turned out empty."""
+    reader = FakeChunkReader()
+    await seed_pinned_doc(session, seeded_user, chat_env, reader)
+    retriever = FakeRetriever(chat_env["document"].id, no_answer=True)
+    retriever.chunks = []
+    # CJK repeats stay well under the 32000-char body limit while still
+    # tokenizing far denser than ASCII (~6000 tokens here, > split.sources
+    # of 5600) -- "filler " * N would need >40000 chars to reach that count.
+    huge_query = "填充词语 " * 750
+    async with make_client(engine, redis_client, test_settings,
+                           retriever, fake_streamer, chunk_reader=reader) as c:
+        h = await auth(c, "a@acme.com")
+        chat_id = await make_model_and_chat(c, chat_env, session, seeded_superadmin, h)
+        r = await c.post(f"/api/v1/chats/{chat_id}/messages",
+                         json={"content": huge_query}, headers=h)
+        events = parse_sse(r.text)
+    done = next(d for e, d in events if e == "done")
+    sources = next(d for e, d in events if e == "sources")["sources"]
+    if done["no_answer"]:
+        tokens = "".join(d["delta"] for e, d in events if e == "token")
+        assert tokens == NO_ANSWER_TEXT
+    else:
+        assert len(sources) > 0  # a real answer streamed -> sources were non-empty
+
+
+async def test_long_pinned_chunk_does_not_starve_retrieved_sources(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings,
+    chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
+) -> None:
+    """Starvation edge case: a pinned chunk sized between half and the full
+    post-query sources budget must be excluded by the half-cap rather than
+    crowding out retrieval -- with a modest query, retrieved chunks still
+    make it into the rendered sources frame."""
+    reader = FakeChunkReader()
+    pinned_doc = await seed_pinned_doc(session, seeded_user, chat_env, reader)
+    # ~3302 tokens: bigger than half of the ~5596 post-query sources budget
+    # (~2798), but well under the full budget -- exactly the failure mode
+    # the half-cap exists to prevent.
+    reader.document_chunks[pinned_doc.id] = [
+        RetrievedChunk(document_id=pinned_doc.id, page=1, chunk_index=0,
+                       text="filler " * 3300, score=1.0),
+    ]
+    async with make_client(engine, redis_client, test_settings,
+                           FakeRetriever(chat_env["document"].id), fake_streamer,
+                           chunk_reader=reader) as c:
+        h = await auth(c, "a@acme.com")
+        chat_id = await make_model_and_chat(c, chat_env, session, seeded_superadmin, h)
+        r = await c.post(f"/api/v1/chats/{chat_id}/messages",
+                         json={"content": "what was revenue?"}, headers=h)
+        events = parse_sse(r.text)
+    sources = next(d for e, d in events if e == "sources")["sources"]
+    assert str(pinned_doc.id) not in {s["document_id"] for s in sources}
+    assert str(chat_env["document"].id) in {s["document_id"] for s in sources}
