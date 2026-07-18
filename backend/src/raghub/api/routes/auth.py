@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.core.config import Settings, get_settings
 from raghub.core.errors import AuthenticationError
+from raghub.core.ratelimit import rate_limit
 from raghub.modules.auth import service
 from raghub.modules.auth.schemas import (
     AccessTokenResponse,
@@ -32,7 +33,11 @@ def _set_refresh(response: Response, raw: str, settings: Settings) -> None:
     )
 
 
-@router.post("/login", response_model=AccessTokenResponse)
+@router.post(
+    "/login",
+    response_model=AccessTokenResponse,
+    dependencies=[Depends(rate_limit("login", limit=10, window_seconds=60))],
+)
 async def login(
     body: LoginRequest, response: Response, session: SessionDep, settings: SettingsDep
 ) -> AccessTokenResponse:

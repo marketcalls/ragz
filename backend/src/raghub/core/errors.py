@@ -27,3 +27,8 @@ class NotFoundError(RagHubError):
 class ConflictError(RagHubError):
     status_code = 409
     title = "Conflict"
+
+
+class RateLimitExceeded(RagHubError):
+    status_code = 429
+    title = "Too many requests"
