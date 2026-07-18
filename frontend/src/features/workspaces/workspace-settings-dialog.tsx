@@ -26,14 +26,34 @@ export function WorkspaceSettingsDialog({
 
   const submit = (e: FormEvent): void => {
     e.preventDefault();
+
+    // Only send fields that actually changed from the snapshot this dialog opened
+    // with — the backend's model_fields_set partial-update contract treats every
+    // included field as an explicit write, so sending unchanged fields defeats
+    // concurrent-admin safety and adds audit noise.
+    const changes: {
+      top_k?: number;
+      min_score?: number;
+      rerank_enabled?: boolean;
+      system_prompt_override?: string | null;
+    } = {};
+    const nextTopK = Number(topK);
+    const nextMinScore = Number(minScore);
+    const nextOverride = override.trim() === '' ? null : override;
+    if (nextTopK !== workspace.top_k) changes.top_k = nextTopK;
+    if (nextMinScore !== workspace.min_score) changes.min_score = nextMinScore;
+    if (rerank !== workspace.rerank_enabled) changes.rerank_enabled = rerank;
+    if (nextOverride !== workspace.system_prompt_override) {
+      changes.system_prompt_override = nextOverride;
+    }
+
+    if (Object.keys(changes).length === 0) {
+      onOpenChange(false);
+      return;
+    }
+
     patch.mutate(
-      {
-        id: workspace.id,
-        top_k: Number(topK),
-        min_score: Number(minScore),
-        rerank_enabled: rerank,
-        system_prompt_override: override.trim() === '' ? null : override,
-      },
+      { id: workspace.id, ...changes },
       {
         onSuccess: () => {
           toast('Workspace retrieval settings saved');
@@ -71,7 +91,7 @@ export function WorkspaceSettingsDialog({
                 type="number"
                 min={0}
                 max={1}
-                step={0.05}
+                step="any"
                 required
                 value={minScore}
                 onChange={(e) => setMinScore(e.target.value)}
