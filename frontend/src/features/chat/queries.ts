@@ -43,3 +43,31 @@ export function useCreateChat() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chats'] }),
   });
 }
+
+export function useRenameChat() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { chatId: string; title: string }) => {
+      const { data, error } = await api.PATCH('/api/v1/chats/{chat_id}', {
+        params: { path: { chat_id: input.chatId } },
+        body: { title: input.title },
+      });
+      if (error) throw new Error('failed to rename chat');
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chats'] }),
+  });
+}
+
+export function useDeleteChat() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (chatId: string) => {
+      const { error } = await api.DELETE('/api/v1/chats/{chat_id}', {
+        params: { path: { chat_id: chatId } },
+      });
+      if (error) throw new Error('failed to delete chat');
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chats'] }),
+  });
+}
