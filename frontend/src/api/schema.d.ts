@@ -593,6 +593,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/orgs/{org_id}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Org Quota */
+        get: operations["get_org_quota_api_v1_admin_orgs__org_id__quota_get"];
+        /** Put Org Quota */
+        put: operations["put_org_quota_api_v1_admin_orgs__org_id__quota_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{user_id}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put User Quota */
+        put: operations["put_user_quota_api_v1_users__user_id__quota_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/usage/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Usage Me */
+        get: operations["usage_me_api_v1_usage_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/usage/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Usage Summary */
+        get: operations["usage_summary_api_v1_admin_usage_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/usage/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Usage By Org */
+        get: operations["usage_by_org_api_v1_admin_usage_orgs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -716,6 +802,16 @@ export interface components {
             page: number;
             /** Score */
             score: number;
+        };
+        /** DayUsage */
+        DayUsage: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Tokens */
+            tokens: number;
         };
         /** DocumentOut */
         DocumentOut: {
@@ -946,6 +1042,13 @@ export interface components {
             /** Display Name */
             display_name: string;
         };
+        /** ModelUsage */
+        ModelUsage: {
+            /** Model Id */
+            model_id: string | null;
+            /** Tokens */
+            tokens: number;
+        };
         /** OrgOut */
         OrgOut: {
             /**
@@ -957,6 +1060,44 @@ export interface components {
             name: string;
             /** Sso Domains */
             sso_domains: string[] | null;
+        };
+        /** OrgQuotaIn */
+        OrgQuotaIn: {
+            /** Monthly Tokens */
+            monthly_tokens: number;
+            /** Default User Monthly Tokens */
+            default_user_monthly_tokens?: number | null;
+            /**
+             * Reset Day
+             * @default 1
+             */
+            reset_day: number;
+        };
+        /** OrgQuotaOut */
+        OrgQuotaOut: {
+            /**
+             * Org Id
+             * Format: uuid
+             */
+            org_id: string;
+            /** Monthly Tokens */
+            monthly_tokens: number;
+            /** Default User Monthly Tokens */
+            default_user_monthly_tokens: number | null;
+            /** Reset Day */
+            reset_day: number;
+        };
+        /** OrgUsage */
+        OrgUsage: {
+            /**
+             * Org Id
+             * Format: uuid
+             */
+            org_id: string;
+            /** Name */
+            name: string;
+            /** Tokens */
+            tokens: number;
         };
         /**
          * RegenerateRequest
@@ -1020,6 +1161,29 @@ export interface components {
             /** Domains */
             domains: string[];
         };
+        /** UsageMeterOut */
+        UsageMeterOut: {
+            /** Used Tokens */
+            used_tokens: number;
+            /** Allocated Tokens */
+            allocated_tokens: number | null;
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+            /** Warning */
+            warning: boolean;
+        };
+        /** UsageSummaryOut */
+        UsageSummaryOut: {
+            /** By Day */
+            by_day: components["schemas"]["DayUsage"][];
+            /** By Model */
+            by_model: components["schemas"]["ModelUsage"][];
+            /** By User */
+            by_user: components["schemas"]["UserUsage"][];
+        };
         /** UserOut */
         UserOut: {
             /**
@@ -1046,6 +1210,23 @@ export interface components {
             active?: boolean | null;
             /** Role */
             role?: ("admin" | "user") | null;
+        };
+        /** UserQuotaIn */
+        UserQuotaIn: {
+            /** Monthly Tokens */
+            monthly_tokens?: number | null;
+        };
+        /** UserUsage */
+        UserUsage: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Email */
+            email: string;
+            /** Tokens */
+            tokens: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -2433,6 +2614,176 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_org_quota_api_v1_admin_orgs__org_id__quota_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgQuotaOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_org_quota_api_v1_admin_orgs__org_id__quota_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgQuotaIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgQuotaOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_user_quota_api_v1_users__user_id__quota_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserQuotaIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    usage_me_api_v1_usage_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageMeterOut"];
+                };
+            };
+        };
+    };
+    usage_summary_api_v1_admin_usage_summary_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSummaryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    usage_by_org_api_v1_admin_usage_orgs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgUsage"][];
                 };
             };
         };
