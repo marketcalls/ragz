@@ -33,6 +33,22 @@ async def test_set_and_clear_acl(
     assert r.json()["acl_group_ids"] is None
 
 
+async def test_acl_rejects_empty_list(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    chat_env: dict, stack_env: None,  # type: ignore[type-arg]
+) -> None:
+    """[] is invalid: clearing a restriction is `null`, never `[]` — a wire-
+    level `[]` would otherwise be ambiguous with "restricted to no groups"
+    (get_document_checked's `is not None` gate), silently colliding with the
+    "unrestricted" meaning the payload shape suggests. Rejected at the schema
+    layer (422) before it ever reaches set_document_acl."""
+    doc = chat_env["document"]
+    h = await auth(client, "a@acme.com")
+    r = await client.put(f"/api/v1/documents/{doc.id}/acl",
+                         json={"acl_group_ids": []}, headers=h)
+    assert r.status_code == 422
+
+
 async def test_acl_rejects_foreign_group(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
     chat_env: dict, stack_env: None,  # type: ignore[type-arg]

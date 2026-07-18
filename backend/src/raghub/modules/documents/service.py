@@ -121,6 +121,13 @@ async def set_document_acl(
     document_id: UUID,
     acl_group_ids: list[UUID] | None,
 ) -> Document:
+    """Invariant: acl_group_ids is None === unrestricted (every workspace
+    member may read the document); a non-empty list restricts reads to those
+    groups. `[]` is never a valid value here — AclUpdate rejects it at the
+    schema layer (422) precisely because get_document_checked's `is not None`
+    gate would otherwise treat a wire-level `[]` as "restricted to no
+    groups" (i.e. admins-only), silently different from the "unrestricted"
+    the payload shape suggests."""
     doc = await get_document_checked(session, ctx, document_id)
     if acl_group_ids is not None:
         owned = set(

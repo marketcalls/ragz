@@ -21,6 +21,7 @@ from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.service import retrieve
+from raghub.modules.tenancy.models import Group
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 TEXT = b"The flux capacitor requires 1.21 gigawatts.\n\nInvoice 0231 covers plutonium."
@@ -122,3 +123,49 @@ async def test_embed_upsert_after_delete_leaves_no_orphaned_points(
         exact=True,
     )
     assert count.count == 0
+
+
+async def test_embed_upsert_stamps_final_acl_after_race(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Regression for the ACL/ingest race: an ACL set on the PG row while a
+    document is mid-ingest must not be lost. run_embed_upsert loads the doc
+    row once before its batch loop; if an admin's ACL PUT lands in that
+    window, update_document_acl (called by the PUT) only re-stamps points
+    that already exist in Qdrant — any batch upserted afterward would carry
+    the stale ACL captured at loop start unless the runner re-stamps against
+    the row's CURRENT acl_group_ids right before marking the document
+    indexed. This asserts the invariant end-to-end without a scroll going
+    through the (Task-4, not-yet-built) ACL-aware retrieval filter: every
+    point for the document must carry the new, non-empty ACL."""
+    ctx, ws, doc = await _upload(session, "ing6")
+    await run_parse(doc.id)
+    await run_chunk(doc.id)
+
+    group = Group(org_id=ctx.org_id, name="finance")
+    session.add(group)
+    await session.flush()
+    doc.acl_group_ids = [group.id]
+    await session.commit()
+
+    await run_embed_upsert(doc.id)
+
+    await session.refresh(doc)
+    assert doc.status == "indexed"
+
+    points, _ = await get_qdrant().scroll(
+        COLLECTION,
+        scroll_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id", match=models.MatchValue(value=str(doc.id))
+                )
+            ]
+        ),
+        limit=100,
+        with_payload=True,
+    )
+    assert points  # the document actually indexed something
+    for point in points:
+        payload = point.payload or {}
+        assert payload.get("acl_groups") == [str(group.id)]

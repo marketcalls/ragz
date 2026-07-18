@@ -329,7 +329,15 @@ async def update_document_acl(
     """ACL re-index for already-indexed points (RBAC-5): rewrites the acl_groups
     payload in place via set_payload — no re-embed. Lives here so payload/filter
     knowledge never leaves this module (iron rule 1). A missing collection means
-    nothing indexed yet; the ingestion pipeline will stamp the ACL at upsert."""
+    nothing indexed yet; the ingestion pipeline will stamp the ACL at upsert.
+
+    Invariant: acl_group_ids is None === unrestricted, encoded here as an empty
+    payload list (sorted(str(g) for g in (acl_group_ids or []))) — the point
+    carries no acl_groups values, so `_tenant_filter`'s future acl intersection
+    check matches unconditionally. A CALLER passing `[]` for "restricted to no
+    groups" would collide with this exact encoding, which is why `[]` is
+    rejected at the AclUpdate schema layer before it ever reaches this
+    function or Document.acl_group_ids."""
     if not await get_qdrant().collection_exists(COLLECTION):
         return
     await get_qdrant().set_payload(
