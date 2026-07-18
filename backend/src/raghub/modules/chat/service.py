@@ -28,7 +28,7 @@ from raghub.modules.chat.events import (
     token_event,
 )
 from raghub.modules.chat.llm import LLMDelta, LLMStreamer, LLMUsage
-from raghub.modules.chat.models import Chat, Citation, Message
+from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message
 from raghub.modules.chat.prompting import (
     PromptSource,
     build_messages,
@@ -43,6 +43,22 @@ from raghub.modules.tenancy.context import TenantContext
 
 ROLE_USER = "user"
 ROLE_ASSISTANT = "assistant"
+
+_TITLE_MAX_CHARS = 48
+
+
+def _auto_title(content: str) -> str:
+    """Derive a short, single-line chat title from the first user message.
+
+    Collapses whitespace/newlines, then truncates to _TITLE_MAX_CHARS at a
+    word boundary (falling back to a hard cut if there's no boundary),
+    appending an ellipsis only when truncation actually happened.
+    """
+    text = " ".join(content.split())
+    if len(text) <= _TITLE_MAX_CHARS:
+        return text
+    truncated = text[:_TITLE_MAX_CHARS].rsplit(" ", 1)[0]
+    return f"{truncated}…"
 
 
 async def create_chat(
@@ -245,6 +261,15 @@ async def add_message(
         completion_tokens=completion_tokens,
     )
     session.add(msg)
+    if (
+        role == ROLE_USER
+        and parent is None
+        and sibling_count == 0
+        and chat.title == DEFAULT_CHAT_TITLE
+    ):
+        title = _auto_title(content)
+        if title:
+            chat.title = title
     chat.updated_at = naive_utc()  # explicit: onupdate only fires when a column changes
     await session.commit()
     return msg

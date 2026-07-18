@@ -6,6 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from raghub.core.db import Base, UUIDPk, naive_utc
 
+DEFAULT_CHAT_TITLE = "New chat"
+
 
 class Chat(UUIDPk, Base):
     __tablename__ = "chats"
@@ -13,7 +15,7 @@ class Chat(UUIDPk, Base):
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
-    title: Mapped[str] = mapped_column(default="New chat")
+    title: Mapped[str] = mapped_column(default=DEFAULT_CHAT_TITLE)
     updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
 
 

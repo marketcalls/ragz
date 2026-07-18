@@ -101,3 +101,50 @@ async def test_membership_required_for_create(
                              role="user", workspace_ids=frozenset())
     with pytest.raises(NotFoundError):
         await create_chat(session, stranger, workspace_id=ws.id)
+
+
+async def test_first_root_message_sets_title_with_truncation(
+    session: AsyncSession, seeded_user: User
+) -> None:
+    ctx, ws = await make_ctx(session, seeded_user)
+    chat = await create_chat(session, ctx, workspace_id=ws.id)
+    assert chat.title == "New chat"
+
+    content = (
+        "  What   is\nthe capital of France and why is it important for trade "
+        "routes historically?  "
+    )
+    await add_message(session, ctx, chat, role="user", content=content, parent=None)
+    assert chat.title == "What is the capital of France and why is it…"
+
+
+async def test_first_root_message_sets_title_short_case(
+    session: AsyncSession, seeded_user: User
+) -> None:
+    ctx, ws = await make_ctx(session, seeded_user)
+    chat = await create_chat(session, ctx, workspace_id=ws.id)
+
+    u1 = await add_message(session, ctx, chat, role="user", content="Hi there", parent=None)
+    assert chat.title == "Hi there"
+
+    # A child (assistant) message never re-titles the chat.
+    await add_message(session, ctx, chat, role="assistant", content="Hello!", parent=u1)
+    assert chat.title == "Hi there"
+
+
+async def test_second_root_sibling_does_not_retitle(
+    session: AsyncSession, seeded_user: User
+) -> None:
+    """An edit-and-resend of the first message creates a second ROOT sibling
+    (sibling_index == 1); it must not overwrite the title set by the first."""
+    ctx, ws = await make_ctx(session, seeded_user)
+    chat = await create_chat(session, ctx, workspace_id=ws.id)
+
+    await add_message(session, ctx, chat, role="user", content="Original question", parent=None)
+    assert chat.title == "Original question"
+
+    await add_message(
+        session, ctx, chat, role="user", content="Completely different edited question",
+        parent=None,
+    )
+    assert chat.title == "Original question"
