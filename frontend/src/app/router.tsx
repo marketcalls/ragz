@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
+import { ModelsPage } from '@/features/admin/models/models-page';
 import { UsersPage } from '@/features/admin/users/users-page';
 import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
 import { LoginPage } from '@/features/auth/login-page';
@@ -9,11 +10,6 @@ import { DocumentsPage } from '@/features/documents/documents-page';
 
 import { RequireAuth } from './require-auth';
 import { RequireRole } from './require-role';
-
-// Placeholder pages are replaced as their tasks land (Task 14).
-function ComingSoon({ name }: { name: string }) {
-  return <p className="p-6 text-secondary">{name} — under construction</p>;
-}
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -34,7 +30,7 @@ export const router = createBrowserRouter([
           },
           {
             element: <RequireRole role="superadmin" />,
-            children: [{ path: '/admin/models', element: <ComingSoon name="Models" /> }],
+            children: [{ path: '/admin/models', element: <ModelsPage /> }],
           },
         ],
       },
