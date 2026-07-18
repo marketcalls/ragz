@@ -67,7 +67,7 @@ services:
       start_period: 180s
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-v1.72.6-stable
+    image: ghcr.io/berriai/litellm:main-stable  # rolling stable; bump policy per PRD MODEL-13 (monthly, behind a probe run)
     depends_on:
       postgres:
         condition: service_healthy
