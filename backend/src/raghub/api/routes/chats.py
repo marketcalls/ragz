@@ -13,7 +13,14 @@ from raghub.modules.chat import service
 from raghub.modules.chat.events import SSEEvent
 from raghub.modules.chat.llm import LiteLLMStreamer, LLMStreamer
 from raghub.modules.chat.models import Chat
-from raghub.modules.chat.schemas import ChatCreate, ChatOut, MessageSend, RegenerateRequest
+from raghub.modules.chat.schemas import (
+    ChatCreate,
+    ChatOut,
+    ChatPatch,
+    ChatTreeOut,
+    MessageSend,
+    RegenerateRequest,
+)
 from raghub.modules.models import service as models_service
 from raghub.modules.models.models import Model
 from raghub.modules.tenancy import service as tenancy_service
@@ -68,6 +75,28 @@ async def create_chat(body: ChatCreate, session: SessionDep, ctx: CtxDep) -> Cha
         session, ctx, workspace_id=body.workspace_id, title=body.title
     )
     return ChatOut.model_validate(chat)
+
+
+@router.get("/chats", response_model=list[ChatOut])
+async def list_chats(session: SessionDep, ctx: CtxDep) -> list[ChatOut]:
+    return [ChatOut.model_validate(c) for c in await service.list_chats(session, ctx)]
+
+
+@router.get("/chats/{chat_id}", response_model=ChatTreeOut)
+async def get_chat_tree(chat_id: UUID, session: SessionDep, ctx: CtxDep) -> ChatTreeOut:
+    return await service.get_chat_tree(session, ctx, chat_id)
+
+
+@router.patch("/chats/{chat_id}", response_model=ChatOut)
+async def rename_chat(
+    chat_id: UUID, body: ChatPatch, session: SessionDep, ctx: CtxDep
+) -> ChatOut:
+    return ChatOut.model_validate(await service.rename_chat(session, ctx, chat_id, body.title))
+
+
+@router.delete("/chats/{chat_id}", status_code=204)
+async def delete_chat(chat_id: UUID, session: SessionDep, ctx: CtxDep) -> None:
+    await service.delete_chat(session, ctx, chat_id)
 
 
 @router.post("/chats/{chat_id}/messages")

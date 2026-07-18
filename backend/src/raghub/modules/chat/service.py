@@ -34,6 +34,7 @@ from raghub.modules.chat.prompting import (
     build_messages,
     parse_citation_markers,
 )
+from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
 from raghub.modules.retrieval.service import RetrievalResult
@@ -123,6 +124,40 @@ async def list_citations(
     for citation in (await session.execute(stmt)).scalars():
         by_message[citation.message_id].append(citation)
     return by_message
+
+
+def build_tree(
+    messages: list[Message], citations: dict[UUID, list[Citation]]
+) -> list[MessageNode]:
+    children: dict[UUID | None, list[Message]] = defaultdict(list)
+    for m in messages:
+        children[m.parent_message_id].append(m)
+
+    def node(m: Message) -> MessageNode:
+        kids = sorted(children.get(m.id, []), key=lambda c: c.sibling_index)
+        return MessageNode(
+            id=m.id, parent_message_id=m.parent_message_id,
+            sibling_index=m.sibling_index, role=m.role, content=m.content,
+            model_id=m.model_id, prompt_tokens=m.prompt_tokens,
+            completion_tokens=m.completion_tokens, created_at=m.created_at,
+            citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
+            children=[node(k) for k in kids],
+        )
+
+    roots = sorted(children.get(None, []), key=lambda m: m.sibling_index)
+    return [node(r) for r in roots]
+
+
+async def get_chat_tree(
+    session: AsyncSession, ctx: TenantContext, chat_id: UUID
+) -> ChatTreeOut:
+    chat = await get_chat(session, ctx, chat_id)
+    messages = await list_messages(session, chat_id)
+    citations = await list_citations(session, chat_id)
+    return ChatTreeOut(
+        id=chat.id, workspace_id=chat.workspace_id, title=chat.title,
+        messages=build_tree(messages, citations),
+    )
 
 
 def active_leaf(messages: list[Message]) -> Message | None:

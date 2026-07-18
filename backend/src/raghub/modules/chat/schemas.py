@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -37,5 +38,45 @@ class ChatOut(BaseModel):
     id: UUID
     workspace_id: UUID
     title: str
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ChatPatch(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class CitationOut(BaseModel):
+    marker: int
+    document_id: UUID
+    chunk_ref: str
+    page: int
+    score: float
+
+    model_config = {"from_attributes": True}
+
+
+class MessageNode(BaseModel):
+    id: UUID
+    parent_message_id: UUID | None
+    sibling_index: int
+    role: str
+    content: str
+    model_id: UUID | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    created_at: datetime
+    citations: list[CitationOut]
+    children: list["MessageNode"]
+
+
+MessageNode.model_rebuild()
+
+
+class ChatTreeOut(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    title: str
+    messages: list[MessageNode]
