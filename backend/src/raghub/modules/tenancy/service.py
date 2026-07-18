@@ -1,9 +1,10 @@
+from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
+from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
 from raghub.modules.models import service as models_service
@@ -89,5 +90,28 @@ async def set_default_model(
     if model_id is not None:
         await models_service.get_model(session, model_id)  # NotFoundError if unknown
     ws.default_model_id = model_id
+    await session.commit()
+    return ws
+
+
+_RETRIEVAL_SETTINGS_FIELDS = {"top_k", "min_score", "rerank_enabled", "system_prompt_override"}
+
+
+async def update_retrieval_settings(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID,
+    updates: Mapping[str, object],
+) -> Workspace:
+    """ADM-3 tuning knobs. `system_prompt_override` is the only nullable field —
+    explicit null clears it; null for any other field is a 409."""
+    ws = await get_workspace(session, ctx, workspace_id)
+    for field, value in updates.items():
+        if field not in _RETRIEVAL_SETTINGS_FIELDS:
+            raise ConflictError(f"not a retrieval setting: {field}")
+        if value is None and field != "system_prompt_override":
+            raise ConflictError(f"{field} cannot be null")
+        setattr(ws, field, value)
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="workspace.retrieval_settings_changed",
+                       target_type="workspace", target_id=str(ws.id))
     await session.commit()
     return ws

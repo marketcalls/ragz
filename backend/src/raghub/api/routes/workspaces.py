@@ -38,12 +38,21 @@ async def add_member(
     await service.add_member(session, ctx, workspace_id, body.user_id, body.role)
 
 
+_SETTINGS_FIELDS = ("top_k", "min_score", "rerank_enabled", "system_prompt_override")
+
+
 @router.patch("/{workspace_id}", response_model=WorkspaceOut)
 async def patch_workspace(
     workspace_id: UUID, body: WorkspacePatch, session: SessionDep, ctx: AdminDep
 ) -> WorkspaceOut:
+    ws = None
     if "default_model_id" in body.model_fields_set:
         ws = await service.set_default_model(session, ctx, workspace_id, body.default_model_id)
-    else:
+    updates = {
+        f: getattr(body, f) for f in _SETTINGS_FIELDS if f in body.model_fields_set
+    }
+    if updates:
+        ws = await service.update_retrieval_settings(session, ctx, workspace_id, updates)
+    if ws is None:
         ws = await service.get_workspace(session, ctx, workspace_id)
     return WorkspaceOut.model_validate(ws)
