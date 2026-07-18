@@ -23,6 +23,7 @@ dependencies = [
     "aioboto3>=13.0",
     "python-multipart>=0.0.9",
     "cryptography>=42.0",
+    "tiktoken>=0.9",
 ]
 
 [dependency-groups]

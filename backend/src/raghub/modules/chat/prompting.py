@@ -7,6 +7,9 @@ tests/modules/chat/test_prompting.py.
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
+
+import tiktoken
 
 SYSTEM_PROMPT = (
     "You are RagHub, an assistant that answers strictly from the provided source "
@@ -184,3 +187,45 @@ def parse_citation_markers(text: str, max_marker: int) -> list[int]:
         if 1 <= n <= max_marker and n not in seen:
             seen.append(n)
     return seen
+
+
+# --- Real token counting (Plan E, gap G1) -----------------------------------
+
+_FALLBACK_ENCODING = "cl100k_base"
+
+CANNONBALL_MARKER = "\n\n-- content truncated for brevity --\n\n"
+
+
+@lru_cache(maxsize=8)
+def _encoding(model_hint: str | None) -> "tiktoken.Encoding":
+    """Encoder per model hint. Unknown/None hints (incl. LiteLLM names like
+    "ollama/llama3") fall back to cl100k_base — a far better estimator than
+    chars//4 for every model family we route to, especially CJK/Indic text."""
+    if model_hint:
+        try:
+            return tiktoken.encoding_for_model(model_hint)
+        except KeyError:
+            pass
+    return tiktoken.get_encoding(_FALLBACK_ENCODING)
+
+
+def count_tokens(text: str, model_hint: str | None = None) -> int:
+    # disallowed_special=(): document text containing literal special-token
+    # strings is DATA and must count, not raise.
+    return len(_encoding(model_hint).encode(text, disallowed_special=()))
+
+
+def cannonball(text: str, max_tokens: int, model_hint: str | None = None) -> str:
+    """Middle-out truncation for a single oversized text (AnythingLLM's
+    "cannonball"): keep the head and tail halves and splice CANNONBALL_MARKER
+    over the middle. Head+tail carry the intro and conclusion — the highest-
+    signal parts of most prose. Returns `text` unchanged when it already fits."""
+    enc = _encoding(model_hint)
+    tokens = enc.encode(text, disallowed_special=())
+    if len(tokens) <= max_tokens:
+        return text
+    marker_cost = len(enc.encode(CANNONBALL_MARKER))
+    keep = max(max_tokens - marker_cost, 2)
+    head = keep // 2
+    tail = keep - head
+    return enc.decode(tokens[:head]) + CANNONBALL_MARKER + enc.decode(tokens[-tail:])
