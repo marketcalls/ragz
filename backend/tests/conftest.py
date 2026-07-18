@@ -139,11 +139,21 @@ def test_settings(kek_file: str) -> Settings:
     return Settings(_env_file=None, kek_file=kek_file)
 
 
+def _stub_litellm_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/v1/model/info":
+        return httpx.Response(200, json={"data": []})
+    return httpx.Response(200, json={})
+
+
 @pytest.fixture
 async def client(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings
 ) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(session_factory=build_session_factory(engine), redis_client=redis_client)
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+    )
     app.dependency_overrides[get_settings] = lambda: test_settings
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:

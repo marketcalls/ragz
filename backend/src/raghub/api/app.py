@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +13,7 @@ from raghub.api.routes.admin_secrets import router as admin_secrets_router
 from raghub.api.routes.auth import router as auth_router
 from raghub.api.routes.documents import router as documents_router
 from raghub.api.routes.health import router as health_router
+from raghub.api.routes.models import router as models_router
 from raghub.api.routes.search import router as search_router
 from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
@@ -28,7 +30,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     startup sync is only a warning: the next registry CRUD or restart retries."""
     try:
         async with app.state.session_factory() as session:
-            deployed = await sync_models_to_litellm(session, get_settings())
+            deployed = await sync_models_to_litellm(
+                session, get_settings(), transport=app.state.litellm_transport
+            )
         structlog.get_logger().info("litellm_startup_sync", deployed=deployed)
     except Exception as exc:  # noqa: BLE001 - startup must not die if the proxy is down
         structlog.get_logger().warning("litellm_startup_sync_failed", error=str(exc))
@@ -38,6 +42,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     redis_client: Redis | None = None,
+    litellm_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -49,6 +54,7 @@ def create_app(
     if redis_client is None:
         redis_client = Redis.from_url(get_settings().redis_url)
     app.state.redis = redis_client
+    app.state.litellm_transport = litellm_transport
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:
@@ -95,4 +101,5 @@ def create_app(
     app.include_router(documents_router, prefix="/api/v1")
     app.include_router(search_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
+    app.include_router(models_router, prefix="/api/v1")
     return app

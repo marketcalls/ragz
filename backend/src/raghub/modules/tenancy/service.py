@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
 from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
+from raghub.modules.models import service as models_service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace, WorkspaceMember
 
@@ -65,4 +66,28 @@ async def get_workspace_checked(
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     if ctx.role == "user" and workspace_id not in ctx.workspace_ids:
         raise WorkspaceAccessDenied("workspace not found or not accessible")
+    return ws
+
+
+async def get_workspace(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+) -> Workspace:
+    ws = (
+        await session.execute(
+            select(Workspace).where(Workspace.id == workspace_id, Workspace.org_id == ctx.org_id)
+        )
+    ).scalar_one_or_none()
+    if ws is None or (ctx.role == "user" and workspace_id not in ctx.workspace_ids):
+        raise NotFoundError("workspace not found")
+    return ws
+
+
+async def set_default_model(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, model_id: UUID | None
+) -> Workspace:
+    ws = await get_workspace(session, ctx, workspace_id)
+    if model_id is not None:
+        await models_service.get_model(session, model_id)  # NotFoundError if unknown
+    ws.default_model_id = model_id
+    await session.commit()
     return ws

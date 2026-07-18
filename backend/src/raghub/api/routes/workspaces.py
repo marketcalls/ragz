@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.modules.tenancy import service
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
-from raghub.modules.tenancy.schemas import MemberAdd, WorkspaceCreate, WorkspaceOut
+from raghub.modules.tenancy.schemas import (
+    MemberAdd,
+    WorkspaceCreate,
+    WorkspaceOut,
+    WorkspacePatch,
+)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -31,3 +36,14 @@ async def add_member(
     workspace_id: UUID, body: MemberAdd, session: SessionDep, ctx: AdminDep
 ) -> None:
     await service.add_member(session, ctx, workspace_id, body.user_id, body.role)
+
+
+@router.patch("/{workspace_id}", response_model=WorkspaceOut)
+async def patch_workspace(
+    workspace_id: UUID, body: WorkspacePatch, session: SessionDep, ctx: AdminDep
+) -> WorkspaceOut:
+    if "default_model_id" in body.model_fields_set:
+        ws = await service.set_default_model(session, ctx, workspace_id, body.default_model_id)
+    else:
+        ws = await service.get_workspace(session, ctx, workspace_id)
+    return WorkspaceOut.model_validate(ws)
