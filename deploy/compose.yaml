@@ -102,6 +102,15 @@ services:
       timeout: 5s
       retries: 12
 
+  dex:
+    # Manual SSO smoke target (see Plan F Completion Criteria). Not used in CI —
+    # the OIDC protocol seam is covered by MockTransport tests.
+    image: dexidp/dex:v2.41.1
+    profiles: ["sso"]
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes: ["./dex-config.yaml:/etc/dex/config.yaml:ro"]
+    ports: ["127.0.0.1:55556:5556"]
+
 volumes:
   pgdata:
   qdrantdata:

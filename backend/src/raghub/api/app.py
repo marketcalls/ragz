@@ -18,6 +18,7 @@ from raghub.api.routes.documents import router as documents_router
 from raghub.api.routes.groups import router as groups_router
 from raghub.api.routes.health import router as health_router
 from raghub.api.routes.models import router as models_router
+from raghub.api.routes.oidc import router as oidc_router
 from raghub.api.routes.search import router as search_router
 from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
@@ -59,6 +60,7 @@ def create_app(
     retriever: Retriever | None = None,
     llm_streamer: LLMStreamer | None = None,
     chunk_reader: ChunkReader | None = None,
+    oidc_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -74,6 +76,7 @@ def create_app(
     app.state.retriever = retriever if retriever is not None else retrieve
     app.state.llm_streamer = llm_streamer
     app.state.chunk_reader = chunk_reader if chunk_reader is not None else RetrievalChunkReader()
+    app.state.oidc_transport = oidc_transport
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:
@@ -115,6 +118,7 @@ def create_app(
 
     app.include_router(health_router)
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(oidc_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(workspaces_router, prefix="/api/v1")
     app.include_router(documents_router, prefix="/api/v1")
