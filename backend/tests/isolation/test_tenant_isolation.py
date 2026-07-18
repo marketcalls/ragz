@@ -13,7 +13,7 @@ from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.documents.ingest import run_delete
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
-from raghub.modules.retrieval.service import _tenant_filter, retrieve
+from raghub.modules.retrieval.service import _tenant_filter, get_chunks_by_refs, retrieve
 from tests.isolation.conftest import ingest_text, seed_same_org_two_workspaces
 
 
@@ -118,3 +118,30 @@ async def test_canary_unfiltered_query_sees_both_orgs(
                                           limit=10, with_payload=True)
     tenants = {str((p.payload or {})["tenant_id"]) for p in raw.points}
     assert len(tenants) == 2  # both orgs visible when the must-filter is absent
+
+
+async def test_chunk_refs_cross_workspace_never_resolve(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Citation-backfill leak test (Plan E): a member of ws1 replaying ws2's
+    persisted chunk_refs must get NOTHING — same org, different workspace, the
+    same product-leak scenario as the retrieval test above. Kills the mutant
+    that resolves refs by deterministic point id (bypassing the filter)."""
+    ctx1, ws1, ctx2, ws2 = await seed_same_org_two_workspaces(session)
+    doc2 = await ingest_text(session, ctx2, ws2, "ws2.txt",
+                             "workspace two secret: the launch code is 8834")
+    refs = [f"{doc2.id}:1:0"]
+    assert await get_chunks_by_refs(ctx1, ws1.id, refs) == []
+    # Not a vacuous pass: the same refs DO resolve for the rightful workspace.
+    resolved = await get_chunks_by_refs(ctx2, ws2.id, refs)
+    assert [c.document_id for c in resolved] == [doc2.id]
+    assert "8834" in resolved[0].text
+
+
+async def test_chunk_refs_cross_org_never_resolve(
+    session: AsyncSession, two_orgs: dict  # type: ignore[type-arg]
+) -> None:
+    ctx_a, ws_a, _ = two_orgs["a"]
+    _, _, doc_b = two_orgs["b"]
+    # Org A replays org B's chunk_ref against its own workspace: nothing.
+    assert await get_chunks_by_refs(ctx_a, ws_a.id, [f"{doc_b.id}:1:0"]) == []

@@ -1,11 +1,13 @@
 """THE single Qdrant search code path (iron rule 1).
 
-`_tenant_filter` below is the only function in the codebase allowed to construct a
-Qdrant filter. `retrieve()` and `delete_document_points()` are its only callers.
-The adversarial suite in tests/isolation/ exists to catch any regression here.
+`_tenant_filter` below is the only function in the codebase allowed to construct
+a Qdrant filter. Its only callers are `retrieve()`, `delete_document_points()`,
+`list_document_chunks()`, and `get_chunks_by_refs()` — all in this module. The
+adversarial suite in tests/isolation/ exists to catch any regression here.
 """
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from uuid import UUID
 
@@ -166,6 +168,113 @@ async def retrieve(
     )
     best_cosine = float(top_dense.points[0].score) if top_dense.points else 0.0
     return RetrievalResult(chunks=chunks, no_answer=best_cosine < ws.min_score)
+
+
+_SCROLL_PAGE = 256
+
+
+async def list_document_chunks(
+    ctx: TenantContext, workspace_id: UUID, document_id: UUID
+) -> list[RetrievedChunk]:
+    """All chunks of one document in (page, chunk_index) order — the pinned-
+    document read path (gap G3). Runs under the SAME tenant filter as
+    retrieve(); a document outside the caller's org/workspace scrolls to
+    nothing. score=1.0 marks always-present (pinned) context. Callers must
+    already hold workspace access (documents.list_pinned_documents gates)."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return []
+    flt = _tenant_filter(
+        org_id=ctx.org_id, workspace_id=workspace_id, document_id=document_id
+    )
+    chunks: list[RetrievedChunk] = []
+    offset: models.ExtendedPointId | None = None
+    while True:
+        points, offset = await client.scroll(
+            COLLECTION, scroll_filter=flt, limit=_SCROLL_PAGE,
+            offset=offset, with_payload=True,
+        )
+        for p in points:
+            payload = p.payload or {}
+            chunks.append(
+                RetrievedChunk(
+                    document_id=UUID(str(payload["document_id"])),
+                    page=int(payload["page"]),
+                    chunk_index=int(payload["chunk_index"]),
+                    text=str(payload["text"]),
+                    score=1.0,
+                )
+            )
+        if offset is None:
+            break
+    chunks.sort(key=lambda c: (c.page, c.chunk_index))
+    return chunks
+
+
+def _parse_chunk_ref(ref: str) -> tuple[UUID, int, int] | None:
+    parts = ref.split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        return UUID(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
+
+
+async def get_chunks_by_refs(
+    ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+) -> list[RetrievedChunk]:
+    """Resolve persisted citation chunk_refs ("{document_id}:{page}:{chunk_index}")
+    back to chunk payloads — the citation-backfill read path (fillSourceWindow,
+    gap G3/B3). Every lookup runs under the SAME tenant filter as retrieve():
+    refs pointing at another org or workspace scroll to nothing and silently
+    drop, as do malformed refs. Result is in ref order, deduped. score=0.0
+    marks backfilled context. Callers must already hold workspace access (the
+    chat service gates via get_chat + the workspace load in the same turn)."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return []
+    parsed: list[tuple[UUID, int, int]] = []
+    seen_keys: set[tuple[UUID, int, int]] = set()
+    for ref in refs:
+        key = _parse_chunk_ref(ref)
+        if key is not None and key not in seen_keys:
+            seen_keys.add(key)
+            parsed.append(key)
+    found: dict[tuple[UUID, int, int], RetrievedChunk] = {}
+    for doc_id in {key[0] for key in parsed}:
+        flt = _tenant_filter(
+            org_id=ctx.org_id, workspace_id=workspace_id, document_id=doc_id
+        )
+        points, _ = await client.scroll(
+            COLLECTION, scroll_filter=flt, limit=_SCROLL_PAGE, with_payload=True,
+        )
+        for p in points:
+            payload = p.payload or {}
+            chunk = RetrievedChunk(
+                document_id=UUID(str(payload["document_id"])),
+                page=int(payload["page"]),
+                chunk_index=int(payload["chunk_index"]),
+                text=str(payload["text"]),
+                score=0.0,
+            )
+            found[(chunk.document_id, chunk.page, chunk.chunk_index)] = chunk
+    return [found[key] for key in parsed if key in found]
+
+
+class RetrievalChunkReader:
+    """Default ChunkReader implementation for the chat service seam (Task 9).
+    Thin bound wrapper so tests can inject a fake with the same shape."""
+
+    async def list_document_chunks(
+        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID
+    ) -> list[RetrievedChunk]:
+        return await list_document_chunks(ctx, workspace_id, document_id)
+
+    async def get_chunks_by_refs(
+        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+    ) -> list[RetrievedChunk]:
+        return await get_chunks_by_refs(ctx, workspace_id, refs)
 
 
 async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
