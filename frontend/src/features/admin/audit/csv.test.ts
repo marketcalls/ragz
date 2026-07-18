@@ -29,3 +29,40 @@ test('renders multiple rows joined by newline', () => {
   const rows = [{ a: '1' }, { a: '2' }];
   expect(toCsv(rows, ['a'])).toBe('a\n1\n2');
 });
+
+test('neutralizes cells starting with = to prevent formula injection', () => {
+  expect(toCsv([{ a: '=1+1' }], ['a'])).toBe("a\n'=1+1");
+});
+
+test('neutralizes cells starting with + to prevent formula injection', () => {
+  expect(toCsv([{ a: '+1+1' }], ['a'])).toBe("a\n'+1+1");
+});
+
+test('neutralizes cells starting with - to prevent formula injection', () => {
+  expect(toCsv([{ a: '-1+1' }], ['a'])).toBe("a\n'-1+1");
+});
+
+test('neutralizes cells starting with @ to prevent formula injection', () => {
+  expect(toCsv([{ a: '@SUM(1)' }], ['a'])).toBe("a\n'@SUM(1)");
+});
+
+test('neutralizes cells starting with tab to prevent formula injection', () => {
+  expect(toCsv([{ a: '\t=1+1' }], ['a'])).toBe("a\n'\t=1+1");
+});
+
+test('neutralizes cells starting with carriage return to prevent formula injection', () => {
+  expect(toCsv([{ a: '\r=1+1' }], ['a'])).toBe("a\n'\r=1+1");
+});
+
+test('neutralizes and quotes a formula-injection cell that also contains a comma', () => {
+  expect(toCsv([{ a: '=1+1,2' }], ['a'])).toBe('a\n"\'=1+1,2"');
+});
+
+test('does not treat an interior = sign as formula injection', () => {
+  expect(toCsv([{ a: 'x=1' }], ['a'])).toBe('a\nx=1');
+});
+
+test('documented: negative-looking data (leading -) is still prefixed but remains human-readable', () => {
+  expect(toCsv([{ a: '-' }], ['a'])).toBe("a\n'-");
+  expect(toCsv([{ a: '-5' }], ['a'])).toBe("a\n'-5");
+});
