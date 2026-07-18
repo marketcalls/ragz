@@ -55,6 +55,30 @@ async def test_admin_bypasses_acl(
     assert restricted.id in {c.document_id for c in result.chunks}
 
 
+async def test_superadmin_bypasses_acl(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Superadmin also bypasses ACL, same as admin. Like test_admin_bypasses_acl
+    but with role="superadmin". The superadmin ctx carries NO groups, so a pass
+    here proves the bypass comes from the role check in retrieve()."""
+    from raghub.modules.auth.models import User
+    from raghub.modules.tenancy.context import TenantContext
+
+    ctx_in, ctx_out, ctx_admin, ws, _, restricted, _ = await _seed(session)
+    # Create a superadmin user (groupless)
+    superadmin = User(org_id=ctx_admin.org_id, email="superadm@aclorg.com",
+                      password_hash="x", role="superadmin")  # noqa: S106
+    session.add(superadmin)
+    await session.flush()
+    # Superadmin doesn't need workspace membership; they bypass it
+    ctx_superadmin = TenantContext(
+        user_id=superadmin.id, org_id=ctx_admin.org_id, role="superadmin",
+        workspace_ids=frozenset()
+    )
+    result = await retrieve(session, ctx_superadmin, ws.id, RESTRICTED, top_k=10)
+    assert restricted.id in {c.document_id for c in result.chunks}
+
+
 async def test_acl_change_reindexes_live_points(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
