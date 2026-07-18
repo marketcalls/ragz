@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from raghub.core.db import Base, UUIDPk
@@ -34,3 +34,22 @@ class WorkspaceMember(Base):
     )
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
     role: Mapped[str] = mapped_column(default="member")
+
+
+class Group(UUIDPk, Base):
+    __tablename__ = "groups"
+    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_groups_org_name"),)
+
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str]
+
+
+class UserGroup(Base):
+    __tablename__ = "user_groups"
+
+    group_id: Mapped[UUID] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
