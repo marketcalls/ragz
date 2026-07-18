@@ -10,6 +10,26 @@ export interface ModelCreate {
   api_key?: string; // write-only: sent, never read back
 }
 
+export interface ModelPatchInput {
+  display_name?: string;
+  base_url?: string;
+  enabled?: boolean;
+  api_key?: string; // write-only: sent, never read back
+}
+
+// A 502 on these routes means the LOCAL write already succeeded and only the
+// LiteLLM gateway sync failed — the row is persisted with sync_status="error".
+// Callers surface this as a distinguishable, partial-success error rather
+// than a generic failure, and must still refresh the list either way.
+export class PartialSyncError extends Error {}
+
+function mutationError(response: Response | undefined): Error {
+  if (response?.status === 502) {
+    return new PartialSyncError('saved locally — gateway sync failed; see sync status');
+  }
+  return new Error('request failed');
+}
+
 function useInvalidateModels() {
   const queryClient = useQueryClient();
   return () => {
@@ -33,26 +53,28 @@ export function useCreateModel() {
   const invalidate = useInvalidateModels();
   return useMutation({
     mutationFn: async (body: ModelCreate) => {
-      const { data, error } = await api.POST('/api/v1/admin/models', { body });
-      if (error) throw new Error('failed to add model');
+      const { data, error, response } = await api.POST('/api/v1/admin/models', { body });
+      if (error) throw mutationError(response);
       return data;
     },
-    onSuccess: invalidate,
+    // Invalidate on every outcome, not just success: a 502 still means the
+    // local row changed (server state moved), so the stale cache must go.
+    onSettled: invalidate,
   });
 }
 
 export function usePatchModel() {
   const invalidate = useInvalidateModels();
   return useMutation({
-    mutationFn: async (input: { modelId: string; body: { enabled?: boolean } }) => {
-      const { data, error } = await api.PATCH('/api/v1/admin/models/{model_id}', {
+    mutationFn: async (input: { modelId: string; body: ModelPatchInput }) => {
+      const { data, error, response } = await api.PATCH('/api/v1/admin/models/{model_id}', {
         params: { path: { model_id: input.modelId } },
         body: input.body,
       });
-      if (error) throw new Error('failed to update model');
+      if (error) throw mutationError(response);
       return data;
     },
-    onSuccess: invalidate,
+    onSettled: invalidate,
   });
 }
 
@@ -60,11 +82,11 @@ export function useDeleteModel() {
   const invalidate = useInvalidateModels();
   return useMutation({
     mutationFn: async (modelId: string) => {
-      const { error } = await api.DELETE('/api/v1/admin/models/{model_id}', {
+      const { error, response } = await api.DELETE('/api/v1/admin/models/{model_id}', {
         params: { path: { model_id: modelId } },
       });
-      if (error) throw new Error('failed to remove model');
+      if (error) throw mutationError(response);
     },
-    onSuccess: invalidate,
+    onSettled: invalidate,
   });
 }

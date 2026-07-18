@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type { ModelOut } from '@/api/types';
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
 import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
+import { toast } from '@/components/ui/toaster';
 
 import { ModelFormDialog } from './model-form-dialog';
 import { useAdminModels, useDeleteModel, usePatchModel } from './queries';
@@ -22,15 +23,28 @@ export function ModelsPage() {
   const models = useAdminModels();
   const patchModel = usePatchModel();
   const deleteModel = useDeleteModel();
-  const [addOpen, setAddOpen] = useState(false);
+  // 'create' | a specific model being edited | null (closed). `formKey` forces
+  // a fresh mount on every open so the dialog's fields always start from the
+  // current target's data instead of stale state from a previous session.
+  const [formTarget, setFormTarget] = useState<'create' | ModelOut | null>(null);
+  const [formKey, setFormKey] = useState(0);
   const [removing, setRemoving] = useState<ModelOut | null>(null);
+
+  const openCreate = (): void => {
+    setFormTarget('create');
+    setFormKey((k) => k + 1);
+  };
+  const openEdit = (model: ModelOut): void => {
+    setFormTarget(model);
+    setFormKey((k) => k + 1);
+  };
 
   return (
     <>
       <TopBar
         title="Models"
         actions={
-          <Button variant="primary" size="sm" onClick={() => setAddOpen(true)}>
+          <Button variant="primary" size="sm" onClick={openCreate}>
             <Plus className="h-3.5 w-3.5" aria-hidden /> Add model
           </Button>
         }
@@ -74,15 +88,23 @@ export function ModelsPage() {
                         checked={model.enabled}
                         disabled={patchModel.isPending}
                         onChange={(e) =>
-                          patchModel.mutate({
-                            modelId: model.id,
-                            body: { enabled: e.target.checked },
-                          })
+                          patchModel.mutate(
+                            { modelId: model.id, body: { enabled: e.target.checked } },
+                            { onError: (err) => toast.error(err.message) },
+                          )
                         }
                         className="h-4 w-4 accent-[var(--accent)]"
                       />
                     </TD>
                     <TD className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Edit ${model.display_name}`}
+                        onClick={() => openEdit(model)}
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -99,7 +121,12 @@ export function ModelsPage() {
           ) : null}
         </div>
       </div>
-      <ModelFormDialog open={addOpen} onOpenChange={setAddOpen} />
+      <ModelFormDialog
+        key={formKey}
+        open={formTarget !== null}
+        onOpenChange={(o) => !o && setFormTarget(null)}
+        model={formTarget === 'create' ? null : formTarget}
+      />
       <Dialog open={removing !== null} onOpenChange={(o) => !o && setRemoving(null)}>
         <DialogContent
           title="Remove model"
@@ -111,7 +138,9 @@ export function ModelsPage() {
               variant="danger"
               disabled={deleteModel.isPending}
               onClick={() => {
-                if (removing) deleteModel.mutate(removing.id);
+                if (removing) {
+                  deleteModel.mutate(removing.id, { onError: (err) => toast.error(err.message) });
+                }
                 setRemoving(null);
               }}
             >
