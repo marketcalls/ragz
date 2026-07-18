@@ -10,13 +10,14 @@ from testcontainers.qdrant import QdrantContainer
 from testcontainers.redis import RedisContainer
 
 from raghub.api.app import create_app
-from raghub.core.config import get_settings
+from raghub.core.config import Settings, get_settings
 from raghub.core.db import Base, build_engine, build_session_factory
 from raghub.core.storage import ObjectStorage
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
+from raghub.modules.secrets.crypto import ensure_kek
 from raghub.modules.tenancy.models import Organization
 
 
@@ -127,8 +128,23 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(engine: AsyncEngine, redis_client: Redis) -> AsyncIterator[httpx.AsyncClient]:
+def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
+    path = tmp_path_factory.mktemp("kek") / "raghub_kek"
+    ensure_kek(str(path))
+    return str(path)
+
+
+@pytest.fixture
+def test_settings(kek_file: str) -> Settings:
+    return Settings(_env_file=None, kek_file=kek_file)
+
+
+@pytest.fixture
+async def client(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings
+) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(session_factory=build_session_factory(engine), redis_client=redis_client)
+    app.dependency_overrides[get_settings] = lambda: test_settings
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -141,6 +157,23 @@ async def seeded_user(session: AsyncSession) -> User:
     await session.flush()
     user = User(
         org_id=org.id, email="a@acme.com", password_hash=hash_password("pw123456"), role="admin"
+    )
+    session.add(user)
+    await session.commit()
+    return user
+
+
+@pytest.fixture
+async def seeded_superadmin(session: AsyncSession) -> User:
+    org = Organization(name="Platform")
+    session.add(org)
+    await session.flush()
+    user = User(
+        # NOTE: brief used "root@platform.test", but pydantic EmailStr (email_validator)
+        # rejects the ".test" TLD as a reserved/special-use domain (RFC 2606) -- ".example"
+        # is the RFC-2606 reserved domain that email_validator does NOT block.
+        org_id=org.id, email="root@platform.example",
+        password_hash=hash_password("pw123456"), role="superadmin",
     )
     session.add(user)
     await session.commit()
