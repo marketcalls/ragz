@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError
+from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
 from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
 from raghub.modules.tenancy.context import TenantContext
@@ -48,3 +48,21 @@ async def add_member(
                        action="workspace.member_added", target_type="workspace_member",
                        target_id=f"{workspace_id}:{user_id}")
     await session.commit()
+
+
+async def get_workspace_checked(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+) -> Workspace:
+    """The one workspace-access gate used by documents and retrieval (iron rule 1's
+    Postgres-side counterpart). Same 403 for cross-org and non-member so existence
+    never leaks."""
+    ws = (
+        await session.execute(
+            select(Workspace).where(Workspace.id == workspace_id, Workspace.org_id == ctx.org_id)
+        )
+    ).scalar_one_or_none()
+    if ws is None:
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
+    if ctx.role == "user" and workspace_id not in ctx.workspace_ids:
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
+    return ws

@@ -32,3 +32,7 @@ class ConflictError(RagHubError):
 class RateLimitExceeded(RagHubError):
     status_code = 429
     title = "Too many requests"
+
+
+class WorkspaceAccessDenied(AuthorizationError):
+    title = "Workspace access denied"

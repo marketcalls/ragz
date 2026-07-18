@@ -6,13 +6,17 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from testcontainers.minio import MinioContainer
 from testcontainers.postgres import PostgresContainer
+from testcontainers.qdrant import QdrantContainer
 from testcontainers.redis import RedisContainer
 
 from raghub.api.app import create_app
+from raghub.core.config import get_settings
 from raghub.core.db import Base, build_engine, build_session_factory
 from raghub.core.storage import ObjectStorage
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
+from raghub.modules.retrieval.client import get_qdrant
+from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.tenancy.models import Organization
 
 
@@ -37,6 +41,18 @@ async def redis_client(redis_url: str) -> AsyncIterator[Redis]:
 
 
 @pytest.fixture(scope="session")
+def qdrant_url() -> Iterator[str]:
+    with QdrantContainer("qdrant/qdrant:v1.10.1") as q:
+        yield f"http://{q.get_container_host_ip()}:{q.get_exposed_port(6333)}"
+
+
+def _clear_caches() -> None:
+    get_settings.cache_clear()
+    get_qdrant.cache_clear()  # also drops the client's httpx pool between event loops
+    get_dense_embedder.cache_clear()
+
+
+@pytest.fixture(scope="session")
 def minio_config() -> Iterator[dict[str, str]]:
     with MinioContainer() as m:
         cfg = m.get_config()
@@ -57,6 +73,39 @@ async def storage(minio_config: dict[str, str]) -> ObjectStorage:
     )
     await s.ensure_bucket()
     return s
+
+
+@pytest.fixture
+def stack_env(
+    pg_url: str,
+    qdrant_url: str,
+    minio_config: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Point ambient settings at the test containers; dense backend = deterministic
+    hash (no TEI, no model downloads)."""
+    monkeypatch.setenv("RAGHUB_DATABASE_URL", pg_url)
+    monkeypatch.setenv("RAGHUB_QDRANT_URL", qdrant_url)
+    monkeypatch.setenv("RAGHUB_MINIO_ENDPOINT", minio_config["endpoint"])
+    monkeypatch.setenv("RAGHUB_MINIO_ACCESS_KEY", minio_config["access_key"])
+    monkeypatch.setenv("RAGHUB_MINIO_SECRET_KEY", minio_config["secret_key"])
+    monkeypatch.setenv("RAGHUB_MINIO_BUCKET", "raghub-test")
+    monkeypatch.setenv("RAGHUB_EMBEDDING_BACKEND", "hash")
+    _clear_caches()
+    yield
+    _clear_caches()
+
+
+@pytest.fixture
+async def qdrant_collection(stack_env: None) -> None:
+    """Fresh collection per test (the Qdrant container is session-scoped)."""
+    from raghub.modules.retrieval.client import COLLECTION
+    from raghub.modules.retrieval.service import ensure_collection
+
+    client = get_qdrant()
+    if await client.collection_exists(COLLECTION):
+        await client.delete_collection(COLLECTION)
+    await ensure_collection()
 
 
 @pytest.fixture
