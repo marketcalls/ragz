@@ -34,7 +34,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_audit_events_action'), 'audit_events', ['action'], unique=False)
     op.create_index(op.f('ix_audit_events_org_id'), 'audit_events', ['org_id'], unique=False)
     # ### end Alembic commands ###
-    op.execute("REVOKE UPDATE, DELETE ON audit_events FROM raghub")
+    op.execute("REVOKE UPDATE, DELETE ON audit_events FROM current_user")
 
 
 def downgrade() -> None:

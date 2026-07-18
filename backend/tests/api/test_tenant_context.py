@@ -47,3 +47,20 @@ async def test_role_guard(
     user_headers = {"Authorization": f"Bearer {user_tok}"}
     assert (await client.get("/probe/admin", headers=admin_headers)).status_code == 200
     assert (await client.get("/probe/admin", headers=user_headers)).status_code == 403
+
+
+async def test_superadmin_bypasses_role_guard(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    wire_probe(client._transport.app)  # type: ignore[attr-defined]
+    superadmin = User(
+        org_id=seeded_user.org_id,
+        email="root@acme.com",
+        password_hash=seeded_user.password_hash,
+        role="superadmin",
+    )
+    session.add(superadmin)
+    await session.commit()
+    tok = await login_token(client, "root@acme.com")
+    r = await client.get("/probe/admin", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200

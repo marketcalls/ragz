@@ -10,11 +10,11 @@ from raghub.modules.tenancy.models import Organization
 async def test_bootstrap_idempotent(engine: AsyncEngine) -> None:
     factory = build_session_factory(engine)
     created = await bootstrap_superadmin(
-        factory, email="root@x.com", password="rootpw12345"  # noqa: S106
+        factory, email="root@x.com", password="rootpw123456"  # noqa: S106
     )
     assert created is True
     created_again = await bootstrap_superadmin(
-        factory, email="root@x.com", password="rootpw12345"  # noqa: S106
+        factory, email="root@x.com", password="rootpw123456"  # noqa: S106
     )
     assert created_again is False
     async with factory() as s:

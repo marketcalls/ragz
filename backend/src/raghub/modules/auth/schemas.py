@@ -1,7 +1,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
@@ -25,7 +25,7 @@ class InvitationOut(BaseModel):
 
 class InvitationAccept(BaseModel):
     token: str
-    password: str
+    password: str = Field(min_length=12)
 
 
 class UserOut(BaseModel):

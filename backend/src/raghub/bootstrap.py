@@ -62,6 +62,9 @@ def main() -> None:
     except Exception as exc:
         print(f"Invalid bootstrap email: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
+    if len(password) < 12:
+        print("RAGHUB_BOOTSTRAP_PASSWORD must be at least 12 characters", file=sys.stderr)
+        raise SystemExit(2)
     factory = build_session_factory(build_engine(get_settings().database_url))
     created = asyncio.run(bootstrap_superadmin(factory, email=email, password=password))
     print("superadmin created" if created else "superadmin already exists")
