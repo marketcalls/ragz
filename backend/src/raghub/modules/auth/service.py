@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.app_settings import get_or_create_signing_key
 from raghub.core.config import Settings
+from raghub.core.db import naive_utc
 from raghub.core.errors import AuthenticationError, ConflictError, NotFoundError
 from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import Invitation, RefreshToken, User
@@ -107,7 +108,7 @@ async def logout(session: AsyncSession, *, raw_refresh: str) -> None:
     await session.execute(
         update(RefreshToken)
         .where(RefreshToken.token_hash == _hash(raw_refresh))
-        .values(revoked_at=datetime.now(UTC).replace(tzinfo=None))
+        .values(revoked_at=naive_utc())
     )
     await session.commit()
 

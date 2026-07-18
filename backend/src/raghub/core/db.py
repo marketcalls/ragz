@@ -16,13 +16,16 @@ class Base(DeclarativeBase):
     pass
 
 
+def naive_utc() -> datetime:
+    """Naive-UTC now, the single write-path idiom (see ADR-0003)."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 class UUIDPk:
     """Mixin: uuid4 primary key + created_at."""
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(UTC).replace(tzinfo=None)
-    )
+    created_at: Mapped[datetime] = mapped_column(default=naive_utc)
 
 
 def build_engine(url: str) -> AsyncEngine:
