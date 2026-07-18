@@ -88,6 +88,9 @@ async def update_user_budget(
         ) as client:
             resp = await client.post(
                 "/key/update",
+                # LiteLLM's /key/update treats an explicit `max_budget: null` as
+                # "clear the cap" (not "leave unchanged" -- that's an omitted
+                # field), so unmetered users intentionally serialize `None` here.
                 json={"key": key, "max_budget": _max_budget(monthly_tokens, settings)},
             )
             resp.raise_for_status()

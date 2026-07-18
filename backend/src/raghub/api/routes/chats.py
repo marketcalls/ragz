@@ -53,7 +53,8 @@ async def _streamer(
         transport=request.app.state.litellm_transport,
     )
     return LiteLLMStreamer(
-        base_url=settings.litellm_url, master_key=vkey or settings.litellm_master_key
+        base_url=settings.litellm_url, master_key=vkey or settings.litellm_master_key,
+        transport=request.app.state.litellm_transport,
     )
 
 
