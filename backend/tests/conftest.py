@@ -4,11 +4,13 @@ import httpx
 import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from testcontainers.minio import MinioContainer
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from raghub.api.app import create_app
 from raghub.core.db import Base, build_engine, build_session_factory
+from raghub.core.storage import ObjectStorage
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.tenancy.models import Organization
@@ -32,6 +34,29 @@ async def redis_client(redis_url: str) -> AsyncIterator[Redis]:
     await r.flushdb()  # rate-limit counters must not leak across tests
     yield r
     await r.aclose()
+
+
+@pytest.fixture(scope="session")
+def minio_config() -> Iterator[dict[str, str]]:
+    with MinioContainer() as m:
+        cfg = m.get_config()
+        yield {
+            "endpoint": f"http://{cfg['endpoint']}",
+            "access_key": cfg["access_key"],
+            "secret_key": cfg["secret_key"],
+        }
+
+
+@pytest.fixture
+async def storage(minio_config: dict[str, str]) -> ObjectStorage:
+    s = ObjectStorage(
+        endpoint_url=minio_config["endpoint"],
+        access_key=minio_config["access_key"],
+        secret_key=minio_config["secret_key"],
+        bucket="raghub-test",
+    )
+    await s.ensure_bucket()
+    return s
 
 
 @pytest.fixture
