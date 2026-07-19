@@ -45,6 +45,29 @@ test('a stream that starts with token (no retrieval_started/sources) still rende
   expect(result.current.sources).toEqual([]);
 });
 
+test('an error before any token leaves status=error with the detail and the pending user message', async () => {
+  // Pre-stream failure (e.g. the refresh session died -> 401 on the POST):
+  // streamChatSse emits a single error event and no token. The state must
+  // land on 'error' (not stick at 'retrieving') so StreamingMessage shows the
+  // alert instead of the UI silently doing nothing.
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({ type: 'error', detail: 'request failed (401)' });
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('Hi');
+  });
+
+  expect(result.current.status).toBe('error');
+  expect(result.current.errorDetail).toBe('request failed (401)');
+  expect(result.current.text).toBe('');
+  expect(result.current.pendingUserContent).toBe('Hi'); // optimistic message stays visible
+});
+
 test('stop() aborts the in-flight request, resets state, and refetches the tree', async () => {
   // The mocked streamChatSse never resolves on its own (mirrors an in-flight
   // SSE connection) - it only settles once the captured signal aborts, and it

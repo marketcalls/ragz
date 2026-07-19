@@ -1,3 +1,6 @@
+import hashlib
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +13,15 @@ from raghub.modules.auth.service import login, login_oidc, logout, rotate_refres
 from raghub.modules.tenancy.models import Organization
 
 SETTINGS = Settings(_env_file=None)
+# Grace disabled: reuse of a rotated token is an instant theft signal.
+NO_GRACE = Settings(_env_file=None, refresh_reuse_grace_seconds=0)
+
+
+async def _token_row(session: AsyncSession, raw_refresh: str) -> RefreshToken:
+    token_hash = hashlib.sha256(raw_refresh.encode()).hexdigest()
+    return (
+        await session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    ).scalar_one()
 
 
 async def make_user(session: AsyncSession, email: str = "u@acme.com") -> User:
@@ -41,13 +53,88 @@ async def test_rotation_and_reuse_revokes_family(session: AsyncSession) -> None:
     pair1 = await login(
         session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
     )
-    pair2 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    pair2 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=NO_GRACE)
     assert pair2.refresh_token != pair1.refresh_token
     # reusing the rotated (old) token is an attack signal -> whole family dies
     with pytest.raises(AuthenticationError):
-        await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+        await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=NO_GRACE)
     with pytest.raises(AuthenticationError):
+        await rotate_refresh(session, raw_refresh=pair2.refresh_token, settings=NO_GRACE)
+
+
+async def test_concurrent_tab_reuse_within_grace_reissues_same_family(
+    session: AsyncSession,
+) -> None:
+    """Two tabs racing on the same refresh cookie: the loser presents the
+    just-rotated token within the grace window and must get a fresh pair
+    chained to the SAME family instead of tripping theft detection.
+
+    Pinned behavior: BOTH descendants stay live — the winner's token (T2) and
+    the grace-issued token (T3) each rotate normally afterwards."""
+    await make_user(session)
+    pair1 = await login(
+        session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
+    )
+    pair2 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    # the losing tab replays T microseconds after the winner rotated it
+    pair3 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    assert pair3.refresh_token not in {pair1.refresh_token, pair2.refresh_token}
+    rows = (await session.execute(select(RefreshToken))).scalars().all()
+    assert len({r.family_id for r in rows}) == 1  # everything chained to one family
+    # family NOT revoked: both live tokens still rotate
+    pair4 = await rotate_refresh(session, raw_refresh=pair2.refresh_token, settings=SETTINGS)
+    pair5 = await rotate_refresh(session, raw_refresh=pair3.refresh_token, settings=SETTINGS)
+    assert pair4.refresh_token and pair5.refresh_token
+
+
+async def test_reuse_after_grace_window_revokes_family(session: AsyncSession) -> None:
+    await make_user(session)
+    pair1 = await login(
+        session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
+    )
+    pair2 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    # push the original rotation outside the grace window
+    row1 = await _token_row(session, pair1.refresh_token)
+    assert row1.revoked_at is not None
+    row1.revoked_at -= timedelta(seconds=SETTINGS.refresh_reuse_grace_seconds + 5)
+    await session.commit()
+    with pytest.raises(AuthenticationError, match="invalid refresh token"):
+        await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    # theft response unchanged: the whole family is dead, current token included
+    with pytest.raises(AuthenticationError, match="invalid refresh token"):
         await rotate_refresh(session, raw_refresh=pair2.refresh_token, settings=SETTINGS)
+
+
+async def test_expired_revoked_token_inside_grace_still_rejected(
+    session: AsyncSession,
+) -> None:
+    """Expiry wins over the grace window: a revoked-and-expired token never
+    reissues, even when presented inside the grace window."""
+    await make_user(session)
+    pair1 = await login(
+        session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
+    )
+    pair2 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    row1 = await _token_row(session, pair1.refresh_token)
+    row1.expires_at = (datetime.now(UTC) - timedelta(seconds=60)).replace(tzinfo=None)
+    await session.commit()
+    with pytest.raises(AuthenticationError, match="invalid refresh token"):
+        await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    # benign rejection (not a theft signal): the winner's session survives
+    pair3 = await rotate_refresh(session, raw_refresh=pair2.refresh_token, settings=SETTINGS)
+    assert pair3.refresh_token
+
+
+async def test_logout_revoked_token_gets_no_grace(session: AsyncSession) -> None:
+    """A token revoked by logout has no rotation successor; replaying it within
+    seconds of logout must NOT resurrect the session via the grace window."""
+    await make_user(session)
+    pair = await login(
+        session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
+    )
+    await logout(session, raw_refresh=pair.refresh_token)
+    with pytest.raises(AuthenticationError, match="invalid refresh token"):
+        await rotate_refresh(session, raw_refresh=pair.refresh_token, settings=SETTINGS)
 
 
 async def test_rotate_refresh_inactive_user_leaves_token_untouched(

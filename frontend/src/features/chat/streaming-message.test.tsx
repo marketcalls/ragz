@@ -1,0 +1,38 @@
+import { render, screen } from '@testing-library/react';
+
+import { StreamingMessage } from './streaming-message';
+import type { ChatStreamState } from './use-chat-stream';
+
+const base: ChatStreamState = {
+  status: 'idle',
+  text: '',
+  sources: [],
+  citations: [],
+  noAnswer: false,
+  errorDetail: null,
+  pendingUserContent: null,
+  doneMessageId: null,
+};
+
+test('a pre-stream error (no token ever streamed) renders as a visible alert', () => {
+  // New-thread flow: send failed before any token (e.g. dead session -> 401),
+  // so text is empty and only the optimistic user message exists. "Nothing
+  // happens" must never be silent.
+  render(
+    <StreamingMessage
+      stream={{
+        ...base,
+        status: 'error',
+        errorDetail: 'invalid refresh token',
+        pendingUserContent: 'What is our leave policy?',
+      }}
+    />,
+  );
+  expect(screen.getByText('What is our leave policy?')).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent('invalid refresh token');
+});
+
+test('an error without detail still renders a fallback alert message', () => {
+  render(<StreamingMessage stream={{ ...base, status: 'error' }} />);
+  expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong.');
+});
