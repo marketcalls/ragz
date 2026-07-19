@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     ocr_enabled: bool = True  # kill-switch; detection itself is automatic
     ocr_min_chars_per_page: int = 200
 
+    # Phase 3 Plan I (D7): Tavily web search. The API KEY is a stored secret
+    # ("tavily", iron rule 3) — only the endpoint URL lives in config.
+    tavily_url: str = "https://api.tavily.com"
+
 
 @lru_cache
 def get_settings() -> Settings:
