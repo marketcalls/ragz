@@ -39,3 +39,27 @@ def test_empty_file_fails_with_reason() -> None:
 def test_unsupported_format_fails_with_reason() -> None:
     with pytest.raises(IngestFailure):
         parse_bytes(b"\x00\x01garbage", "weird.xyz")
+
+
+def _pptx_bytes() -> bytes:
+    from pptx import Presentation
+
+    prs = Presentation()
+    for i in (1, 2):
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = f"Safety Briefing Part {i}"
+        slide.placeholders[1].text = (
+            f"Slide {i} body: always wear certified PPE inside zone {i}."
+        )
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def test_parse_pptx_slides_become_pages() -> None:
+    blocks = parse_bytes(_pptx_bytes(), "briefing.pptx")
+    assert {b.page for b in blocks} == {1, 2}  # slide number = page number
+    joined = " ".join(b.text for b in blocks)
+    assert "certified PPE" in joined
+    # Slide titles surface as headings (feeds Task 3's section trail).
+    assert any(b.kind == "heading" and "Safety Briefing" in b.text for b in blocks)

@@ -3769,6 +3769,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "python-docx" },
+    { name = "python-pptx" },
     { name = "ruff" },
     { name = "testcontainers", extra = ["minio", "qdrant", "redis"] },
 ]
@@ -3813,6 +3814,7 @@ dev = [
     { name = "pytest", specifier = ">=8.2" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-pptx", specifier = ">=1.0" },
     { name = "ruff", specifier = ">=0.4" },
     { name = "testcontainers", extras = ["postgres", "redis", "qdrant", "minio"], specifier = ">=4.5" },
 ]
