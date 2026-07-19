@@ -10,7 +10,15 @@ from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
 from raghub.modules.models import service as models_service
 from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
+from raghub.modules.tenancy.models import (
+    Group,
+    Organization,
+    RoleTemplate,
+    UserGroup,
+    Workspace,
+    WorkspaceMember,
+)
+from raghub.modules.tenancy.permissions import PERMISSIONS
 
 
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
@@ -249,3 +257,109 @@ async def set_org_sso_domains(
                        target_id=str(org.id))
     await session.commit()
     return org
+
+
+def _check_known_permissions(permissions: list[str]) -> None:
+    unknown = sorted(set(permissions) - PERMISSIONS)
+    if unknown:
+        raise ConflictError(f"unknown permission flag(s): {', '.join(unknown)}")
+
+
+async def list_role_templates(session: AsyncSession) -> list[RoleTemplate]:
+    """Role templates are GLOBAL (no org_id, superadmin-built) -- every org
+    admin sees the same list to assign from."""
+    return list(
+        (await session.execute(select(RoleTemplate).order_by(RoleTemplate.name))).scalars()
+    )
+
+
+async def create_role_template(
+    session: AsyncSession, ctx: TenantContext, *, name: str, description: str,
+    permissions: list[str],
+) -> RoleTemplate:
+    _check_known_permissions(permissions)
+    template = RoleTemplate(name=name, description=description, permissions=permissions)
+    session.add(template)
+    await session.flush()
+    await record_audit(session, org_id=None, actor_id=ctx.user_id,
+                       action="role_template.created", target_type="role_template",
+                       target_id=str(template.id))
+    await session.commit()
+    return template
+
+
+async def _get_role_template(session: AsyncSession, role_template_id: UUID) -> RoleTemplate:
+    template = (
+        await session.execute(
+            select(RoleTemplate).where(RoleTemplate.id == role_template_id)
+        )
+    ).scalar_one_or_none()
+    if template is None:
+        raise NotFoundError("role template not found")
+    return template
+
+
+async def update_role_template(
+    session: AsyncSession, ctx: TenantContext, role_template_id: UUID, *,
+    name: str | None = None, description: str | None = None,
+    permissions: list[str] | None = None,
+) -> RoleTemplate:
+    template = await _get_role_template(session, role_template_id)
+    if permissions is not None:
+        _check_known_permissions(permissions)
+        template.permissions = permissions
+    if name is not None:
+        template.name = name
+    if description is not None:
+        template.description = description
+    await record_audit(session, org_id=None, actor_id=ctx.user_id,
+                       action="role_template.updated", target_type="role_template",
+                       target_id=str(template.id))
+    await session.commit()
+    return template
+
+
+async def delete_role_template(
+    session: AsyncSession, ctx: TenantContext, role_template_id: UUID
+) -> None:
+    template = await _get_role_template(session, role_template_id)
+    assigned = (
+        await session.execute(
+            select(User.id).where(User.custom_role_id == role_template_id).limit(1)
+        )
+    ).first()
+    if assigned is not None:
+        raise ConflictError("role template is assigned to at least one user")
+    await session.delete(template)
+    await record_audit(session, org_id=None, actor_id=ctx.user_id,
+                       action="role_template.deleted", target_type="role_template",
+                       target_id=str(role_template_id))
+    await session.commit()
+
+
+async def assign_custom_role(
+    session: AsyncSession, ctx: TenantContext, user_id: UUID, role_template_id: UUID | None
+) -> User:
+    """AdminDep-gated (RBAC-2): target must be same-org and role == "user" --
+    assigning a custom role to an admin/superadmin is meaningless (they already
+    hold every permission), so that's a 409, not silently accepted. Cross-org
+    targets 404 (existence never leaks, matching _org_user elsewhere)."""
+    user = (
+        await session.execute(
+            select(User).where(User.id == user_id, User.org_id == ctx.org_id)
+        )
+    ).scalar_one_or_none()
+    if user is None or user.role == "superadmin":
+        raise NotFoundError("user not found")
+    if user.role != "user":
+        raise ConflictError("custom roles apply to 'user'-tier accounts only")
+    if role_template_id is not None:
+        await _get_role_template(session, role_template_id)  # NotFoundError if unknown
+    user.custom_role_id = role_template_id
+    action = (
+        "user.custom_role_assigned" if role_template_id is not None else "user.custom_role_cleared"
+    )
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action=action, target_type="user", target_id=str(user_id))
+    await session.commit()
+    return user

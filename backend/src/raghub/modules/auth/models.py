@@ -15,6 +15,10 @@ class User(UUIDPk, Base):
     password_hash: Mapped[str]
     role: Mapped[str]  # superadmin | admin | user
     active: Mapped[bool] = mapped_column(default=True)
+    # Plan H (RBAC-2): custom role template for "user"-tier accounts only.
+    custom_role_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("role_templates.id", ondelete="SET NULL"), default=None
+    )
 
 
 class RefreshToken(UUIDPk, Base):

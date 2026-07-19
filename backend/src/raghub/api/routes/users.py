@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.modules.auth import service
 from raghub.modules.auth.schemas import UserOut, UserPatch
+from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext, require_role
+from raghub.modules.tenancy.schemas import CustomRoleAssign
 
 router = APIRouter(prefix="/users", tags=["users"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -31,3 +33,10 @@ async def patch_user(
     if user is None:
         user = await service.get_org_user(session, ctx, user_id)
     return UserOut.model_validate(user)
+
+
+@router.put("/{user_id}/custom-role", status_code=204)
+async def assign_custom_role(
+    user_id: UUID, body: CustomRoleAssign, session: SessionDep, ctx: AdminDep
+) -> None:
+    await tenancy_service.assign_custom_role(session, ctx, user_id, body.role_template_id)

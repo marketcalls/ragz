@@ -56,3 +56,15 @@ class UserGroup(Base):
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class RoleTemplate(UUIDPk, Base):
+    """Plan H (RBAC-2): superadmin-built, GLOBAL (no org_id per the owner's
+    requirement) named bundle of permission flags that org admins assign to
+    role="user" accounts."""
+
+    __tablename__ = "role_templates"
+
+    name: Mapped[str] = mapped_column(unique=True)
+    description: Mapped[str] = mapped_column(default="")
+    permissions: Mapped[list[str]] = mapped_column(ARRAY(String))

@@ -41,3 +41,28 @@ class GroupOut(BaseModel):
     id: UUID
     name: str
     member_ids: list[UUID]
+
+
+class RoleTemplateCreate(BaseModel):
+    name: str
+    description: str = ""
+    permissions: list[str]
+
+
+class RoleTemplatePatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    permissions: list[str] | None = None
+
+
+class RoleTemplateOut(BaseModel):
+    id: UUID
+    name: str
+    description: str
+    permissions: list[str]
+
+    model_config = {"from_attributes": True}
+
+
+class CustomRoleAssign(BaseModel):
+    role_template_id: UUID | None
