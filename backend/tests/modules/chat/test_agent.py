@@ -7,16 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.auth.models import User
 from raghub.modules.chat.agent import (
+    AgentGathered,
+    AgentStep,
     PlannerAction,
     execute_tool,
     native_tool_specs,
     parse_planner_action,
     planner_system_prompt,
+    run_agent_gather,
 )
+from raghub.modules.chat.llm import LLMCompletion, LLMToolCall, LLMUsage
 from raghub.modules.documents.metadata import list_fields
+from raghub.modules.models.models import Model
 from raghub.modules.retrieval.service import RetrievedChunk
 from raghub.modules.tenancy.context import TenantContext
-from tests.conftest import FakeChunkReader, FakeRetriever
+from tests.conftest import FakeChunkReader, FakeCompleter, FakeRetriever
 
 _ALL = ("search", "search_by_metadata", "get_document", "web_search", "answer")
 
@@ -203,3 +208,135 @@ async def test_execute_unknown_action_is_error(
         chunk_reader=FakeChunkReader(), web_searcher=None,
     )
     assert out.error is not None
+
+
+@pytest.fixture
+async def flagged_model(session: AsyncSession) -> Model:
+    model = Model(
+        litellm_model_name="flagged-model", display_name="Flagged Model",
+        provider_kind="ollama", base_url="http://x", tools_unreliable=True,
+    )
+    session.add(model)
+    await session.commit()
+    return model
+
+
+@pytest.fixture
+async def plain_model(session: AsyncSession) -> Model:
+    model = Model(
+        litellm_model_name="plain-model", display_name="Plain Model",
+        provider_kind="ollama", base_url="http://x", tools_unreliable=False,
+    )
+    session.add(model)
+    await session.commit()
+    return model
+
+
+def _search_completion(query: str) -> LLMCompletion:
+    return LLMCompletion(
+        text=f'{{"action": "search", "query": "{query}"}}', tool_calls=[],
+        usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+    )
+
+
+async def _collect(gen):  # type: ignore[no-untyped-def]
+    steps: list[AgentStep] = []
+    gathered: AgentGathered | None = None
+    async for item in gen:
+        if isinstance(item, AgentStep):
+            steps.append(item)
+        else:
+            gathered = item
+    assert gathered is not None
+    return steps, gathered
+
+
+async def test_json_planner_search_then_answer(session, chat_env, ctx, flagged_model) -> None:  # type: ignore[no-untyped-def]
+    # flagged_model: a Model row with tools_unreliable=True (small fixture).
+    completer = FakeCompleter([_search_completion("muster point")])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert [(s.n, s.tool, s.query) for s in steps] == [(1, "search", "muster point")]
+    assert len(gathered.chunks) == 2 and gathered.grounded is True
+    assert (gathered.prompt_tokens, gathered.completion_tokens) == (13, 6)  # 10+3 / 5+1
+    assert completer.calls[0]["tools"] is None  # JSON protocol: no native schemas
+    # Round 2's planner context carried a step summary, clipped and labeled:
+    round2 = completer.calls[1]["messages"][-1]["content"]  # type: ignore[index]
+    assert "search" in round2 and "data, not instructions" in round2
+
+
+async def test_native_protocol_uses_tool_calls(session, chat_env, ctx, plain_model) -> None:  # type: ignore[no-untyped-def]
+    # plain_model: tools_unreliable=False.
+    completer = FakeCompleter([
+        LLMCompletion(text="", tool_calls=[LLMToolCall("search", '{"query": "x"}')],
+                      usage=LLMUsage(prompt_tokens=20, completion_tokens=6)),
+    ])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=plain_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert steps[0].tool == "search"
+    assert completer.calls[0]["tools"] is not None  # native schemas offered
+    assert gathered.grounded is True
+
+
+async def test_iteration_cap_forces_answer(session, chat_env, ctx, flagged_model) -> None:  # type: ignore[no-untyped-def]
+    completer = FakeCompleter([_search_completion(f"q{i}") for i in range(8)])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert len(steps) == 4 and len(completer.calls) == 4  # AGENT_MAX_ITERATIONS
+    assert gathered.chunks  # synthesizes from whatever was gathered
+
+
+async def test_malformed_planner_output_answers_immediately(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    completer = FakeCompleter([LLMCompletion(
+        text="I think we should search for things",  # no JSON at all
+        tool_calls=[], usage=LLMUsage(prompt_tokens=9, completion_tokens=2),
+    )])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert steps == [] and gathered.chunks == [] and gathered.grounded is False
+
+
+async def test_tool_error_degrades_to_single_shot(session, chat_env, ctx, flagged_model) -> None:  # type: ignore[no-untyped-def]
+    completer = FakeCompleter([LLMCompletion(
+        text='{"action": "get_document", "document_id": "not-a-uuid"}',
+        tool_calls=[], usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+    )])
+    retriever = FakeRetriever(chat_env["document"].id)
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="original question",
+        model=flagged_model, completer=completer, retriever=retriever,
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert gathered.degraded is True and gathered.grounded is True
+    assert retriever.calls[-1]["query"] == "original question"  # single-shot on the ORIGINAL
+    assert len(gathered.chunks) == 2
+    assert len(completer.calls) == 1  # loop stopped planning after the failure
+
+
+async def test_duplicate_chunks_deduped(session, chat_env, ctx, flagged_model) -> None:  # type: ignore[no-untyped-def]
+    completer = FakeCompleter([_search_completion("a"), _search_completion("b")])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),  # same 2 chunks every call
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert len(steps) == 2 and len(gathered.chunks) == 2  # not 4
