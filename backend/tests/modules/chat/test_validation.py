@@ -1,17 +1,21 @@
 """Auditor/Gatekeeper/escalation-classifier prompts and lenient parsers
 (Phase 3 §3 + §1's utility tiebreak). Pure — no I/O, no session."""
 
+from raghub.modules.chat.llm import LLMCompletion, LLMUsage
 from raghub.modules.chat.prompting import PromptSource
 from raghub.modules.chat.validation import (
     AuditorScores,
     GatekeeperVerdict,
+    GatekeptAnswer,
     build_auditor_messages,
     build_escalation_messages,
     build_gatekeeper_messages,
     parse_auditor_scores,
     parse_escalation_verdict,
     parse_gatekeeper_verdict,
+    synthesize_with_gatekeeper,
 )
+from tests.conftest import FakeCompleter
 
 _SOURCES = [PromptSource(marker=1, filename="policy.pdf", page=2, text="Muster at gate B.")]
 
@@ -72,3 +76,65 @@ def test_parse_escalation_verdict() -> None:
     assert parse_escalation_verdict('{"escalate": false}') is False
     assert parse_escalation_verdict("garbage") is False
     assert parse_escalation_verdict('{"escalate": "true"}') is False  # must be a JSON bool
+
+
+# --- synthesize_with_gatekeeper (Task 6) ------------------------------------
+
+
+def _rebuild(critique: str | None) -> list[dict]:  # type: ignore[type-arg]
+    return [{"role": "system", "content": f"base + {critique}"}, {"role": "user", "content": "q"}]
+
+
+async def test_passing_candidate_streams_as_is() -> None:
+    completer = FakeCompleter([
+        LLMCompletion(text="[1] Gate B.", tool_calls=[], usage=LLMUsage(50, 10)),  # synth
+        LLMCompletion(text='{"passed": true, "critique": ""}', tool_calls=[],
+                      usage=LLMUsage(20, 5)),  # judge
+    ])
+    out = await synthesize_with_gatekeeper(
+        completer, chat_model_name="chat-m", utility_model_name="util-m",
+        prompt=[{"role": "user", "content": "q"}], question="q?", sources=[],
+        system_prompt_override=None, rebuild_prompt=_rebuild,
+    )
+    assert out == GatekeptAnswer(
+        text="[1] Gate B.", usage=LLMUsage(50, 10), validation_failed=False,
+        extra_prompt_tokens=20, extra_completion_tokens=5,
+    )
+    assert completer.calls[0]["model"] == "chat-m"
+    assert completer.calls[1]["model"] == "util-m"
+    assert len(completer.calls) == 2  # no regeneration spent
+
+
+async def test_failing_candidate_regenerates_once_and_flags() -> None:
+    completer = FakeCompleter([
+        LLMCompletion(text="unsupported claim.", tool_calls=[], usage=LLMUsage(50, 10)),  # synth 1
+        LLMCompletion(text='{"passed": false, "critique": "fabricated"}', tool_calls=[],
+                      usage=LLMUsage(20, 5)),  # judge
+        LLMCompletion(text="[1] Gate B, revised.", tool_calls=[], usage=LLMUsage(60, 12)),  # synth2
+    ])
+    out = await synthesize_with_gatekeeper(
+        completer, chat_model_name="chat-m", utility_model_name="util-m",
+        prompt=[{"role": "user", "content": "q"}], question="q?", sources=[],
+        system_prompt_override="Be terse.", rebuild_prompt=_rebuild,
+    )
+    assert out.text == "[1] Gate B, revised."
+    assert out.validation_failed is True
+    assert out.usage == LLMUsage(60, 12)  # the WINNING (second) attempt's own usage
+    assert out.extra_prompt_tokens == 20 + 50   # judge + discarded first synth
+    assert out.extra_completion_tokens == 5 + 10
+    assert len(completer.calls) == 3
+    retry_system = completer.calls[2]["messages"][0]["content"]  # type: ignore[index]
+    assert "Be terse." in retry_system and "fabricated" in retry_system
+
+
+async def test_malformed_judge_output_fails_open_no_regeneration() -> None:
+    completer = FakeCompleter([
+        LLMCompletion(text="[1] Gate B.", tool_calls=[], usage=LLMUsage(50, 10)),
+        LLMCompletion(text="garbage, not json", tool_calls=[], usage=LLMUsage(20, 5)),
+    ])
+    out = await synthesize_with_gatekeeper(
+        completer, chat_model_name="chat-m", utility_model_name="util-m",
+        prompt=[{"role": "user", "content": "q"}], question="q?", sources=[],
+        system_prompt_override=None, rebuild_prompt=_rebuild,
+    )
+    assert out.validation_failed is False and len(completer.calls) == 2

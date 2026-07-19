@@ -14,9 +14,10 @@ outputs are scores, never surfaced as model-authored text to end users").
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from raghub.modules.chat.llm import LLMCompleter, LLMUsage
 from raghub.modules.chat.prompting import PromptSource, render_data_blocks, wrap_untrusted_block
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -147,6 +148,63 @@ def parse_gatekeeper_verdict(text: str) -> GatekeeperVerdict:
                 passed=raw["passed"], critique=str(raw.get("critique", ""))[:500]
             )
     return GatekeeperVerdict(passed=True, critique="")
+
+
+@dataclass(frozen=True)
+class GatekeptAnswer:
+    text: str
+    usage: LLMUsage
+    validation_failed: bool
+    extra_prompt_tokens: int
+    extra_completion_tokens: int
+
+
+async def synthesize_with_gatekeeper(
+    completer: LLMCompleter,
+    *,
+    chat_model_name: str,
+    utility_model_name: str,
+    prompt: list[dict[str, str]],
+    question: str,
+    sources: Sequence[PromptSource],
+    system_prompt_override: str | None,
+    rebuild_prompt: Callable[[str | None], list[dict[str, str]]],
+) -> GatekeptAnswer:
+    """Gatekeeper (design §3): one non-streaming synth, one utility-model
+    judge call. On failure, ONE critique-guided regeneration via
+    `rebuild_prompt` (the caller's own build_messages closure - no second
+    rendering path) with the critique folded into the system-prompt override.
+    The second attempt (when reached) is ALWAYS flagged validation_failed,
+    win or lose: this function spends at most one extra synth, never a
+    second judge call, so there is no way to know if the retry actually
+    passed - the UI badge communicates "this answer wasn't re-verified", not
+    "this answer is wrong"."""
+    attempt = await completer.complete(model=chat_model_name, messages=prompt)
+    verdict_completion = await completer.complete(
+        model=utility_model_name,
+        messages=build_gatekeeper_messages(question=question, answer=attempt.text, sources=sources),
+    )
+    verdict = parse_gatekeeper_verdict(verdict_completion.text)
+    extra_prompt = verdict_completion.usage.prompt_tokens
+    extra_completion = verdict_completion.usage.completion_tokens
+    if verdict.passed:
+        return GatekeptAnswer(
+            text=attempt.text, usage=attempt.usage, validation_failed=False,
+            extra_prompt_tokens=extra_prompt, extra_completion_tokens=extra_completion,
+        )
+    reason = verdict.critique or "it was not sufficiently grounded in the source excerpts"
+    critique_note = (
+        (f"{system_prompt_override.strip()}\n\n" if system_prompt_override else "")
+        + f"An internal reviewer rejected your previous answer: {reason}. Revise the answer so "
+        "every claim is directly supported by the numbered excerpts and it directly addresses "
+        "the question."
+    )
+    retry = await completer.complete(model=chat_model_name, messages=rebuild_prompt(critique_note))
+    return GatekeptAnswer(
+        text=retry.text, usage=retry.usage, validation_failed=True,
+        extra_prompt_tokens=extra_prompt + attempt.usage.prompt_tokens,
+        extra_completion_tokens=extra_completion + attempt.usage.completion_tokens,
+    )
 
 
 # --- Escalation tiebreak (§1's utility-model hook) --------------------------
