@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
 import type { DocumentOut } from '@/api/types';
+import { problemDetail } from '@/features/auth/mutations';
 
 import { shouldPoll } from './status';
 
@@ -102,7 +103,7 @@ export function useCreateMetadataField(workspaceId: string | null) {
           body: input,
         },
       );
-      if (error) throw new Error('failed to create metadata field');
+      if (error) throw new Error(problemDetail(error));
       return data;
     },
     onSuccess: () =>
@@ -141,7 +142,7 @@ export function useSetDocumentMetadata(workspaceId: string | null) {
         params: { path: { document_id: documentId } },
         body: { values },
       });
-      if (error) throw new Error('failed to update document metadata');
+      if (error) throw new Error(problemDetail(error));
       return data;
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),

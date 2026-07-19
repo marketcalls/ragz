@@ -41,7 +41,7 @@ async def test_admin_field_crud_lifecycle(
     assert {f["name"] for f in r.json()} == {"department", "doc_type", "revision_date"}
 
 
-async def test_non_admin_cannot_create_field(
+async def test_member_can_list_fields_but_not_create(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
     chat_env: dict, stack_env: None,  # type: ignore[type-arg]
 ) -> None:
@@ -54,6 +54,14 @@ async def test_non_admin_cannot_create_field(
     await session.commit()
 
     h = await auth(client, "p@acme.com")
+
+    # GET is member-gated: the filter bar and per-doc Tags dialog need the
+    # field list for any workspace member, not just admins.
+    r = await client.get(f"/api/v1/workspaces/{ws.id}/metadata-fields", headers=h)
+    assert r.status_code == 200
+    assert {f["name"] for f in r.json()} == {"department", "doc_type", "revision_date"}
+
+    # POST/DELETE stay admin-only.
     r = await client.post(
         f"/api/v1/workspaces/{ws.id}/metadata-fields", headers=h,
         json={"name": "x", "label": "X", "field_type": "text"},

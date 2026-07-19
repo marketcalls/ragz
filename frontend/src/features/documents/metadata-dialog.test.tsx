@@ -4,6 +4,13 @@ import userEvent from '@testing-library/user-event';
 
 import type { DocumentOut, MetadataFieldOut } from '@/api/types';
 
+vi.mock('@/components/ui/toaster', () => ({
+  toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
+  Toaster: () => null,
+}));
+
+import { toast } from '@/components/ui/toaster';
+
 import { MetadataDialog } from './metadata-dialog';
 
 const doc: DocumentOut = {
@@ -63,7 +70,10 @@ function renderDialog(over: Partial<DocumentOut> = {}) {
   );
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 test('renders one control per field type', () => {
   stubFetch();
@@ -113,6 +123,30 @@ test('save PUTs the edited values as { values } and closes on success', async ()
     values: { department: 'Finance', doc_type: 'policy', revision_date: '2026-01-01' },
   });
   await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+});
+
+test('a 409 validation failure surfaces the server detail, not a generic message', async () => {
+  const fetchMock = vi.fn(
+    async (_req: Request) =>
+      new Response(JSON.stringify({ detail: "'bogus' is not an option of doc_type" }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  const user = userEvent.setup();
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MetadataDialog doc={doc} fields={fields} workspaceId="w1" open onOpenChange={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  await user.type(screen.getByLabelText('Department'), 'Finance');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith("'bogus' is not an option of doc_type"),
+  );
 });
 
 test('an unconfigured workspace shows a placeholder instead of a blank form', () => {

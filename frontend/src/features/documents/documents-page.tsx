@@ -103,7 +103,7 @@ export function DocumentsPage() {
           {documents.data && documents.data.length > 0 && fields.length > 0 ? (
             <MetadataFilterBar fields={fields} value={metadataFilter} onChange={setMetadataFilter} />
           ) : null}
-          {documents.data && documents.data.length > 0 ? (
+          {groups.length > 0 ? (
             <Table>
               <THead>
                 <TR>

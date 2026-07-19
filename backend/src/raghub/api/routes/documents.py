@@ -121,12 +121,15 @@ async def set_document_approved(
     return _serialize_document(doc, ctx)
 
 
-# DOC-6: metadata schema (fields) + values. AdminDep now; Task 13 moves field
-# CRUD to a "workspace.configure" permission and the value PUT to
+# DOC-6: metadata schema (fields) + values. POST/DELETE stay AdminDep; Task 13
+# moves field CRUD to a "workspace.configure" permission and the value PUT to
 # "documents.upload" (declarative permission checks, not inline role checks).
+# GET is member-gated (CtxDep): the filter bar and per-doc Tags dialog need the
+# field list for ANY workspace member, not just admins. list_fields already
+# runs get_workspace_checked, which fences org + membership for role=user.
 @router.get("/workspaces/{workspace_id}/metadata-fields", response_model=list[MetadataFieldOut])
 async def list_metadata_fields(
-    workspace_id: UUID, session: SessionDep, ctx: AdminDep
+    workspace_id: UUID, session: SessionDep, ctx: CtxDep
 ) -> list[MetadataFieldOut]:
     fields = await metadata_service.list_fields(session, ctx, workspace_id)
     return [MetadataFieldOut.model_validate(f) for f in fields]
