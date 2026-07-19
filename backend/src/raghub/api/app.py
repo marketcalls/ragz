@@ -22,6 +22,7 @@ from raghub.api.routes.health import router as health_router
 from raghub.api.routes.models import router as models_router
 from raghub.api.routes.oidc import router as oidc_router
 from raghub.api.routes.search import router as search_router
+from raghub.api.routes.superadmin_ops import router as superadmin_ops_router
 from raghub.api.routes.usage import router as usage_router
 from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
@@ -145,6 +146,7 @@ def create_app(
     app.include_router(chats_router, prefix="/api/v1")
     app.include_router(usage_router, prefix="/api/v1")
     app.include_router(client_errors_router, prefix="/api/v1")
+    app.include_router(superadmin_ops_router, prefix="/api/v1")
 
     app.add_middleware(RequestIDMiddleware)
 
