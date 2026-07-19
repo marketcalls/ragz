@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from raghub.core.errors import UpstreamError
 from raghub.modules.auth.models import User
 from raghub.modules.chat.agent import (
     AgentGathered,
@@ -328,6 +329,40 @@ async def test_tool_error_degrades_to_single_shot(session, chat_env, ctx, flagge
     assert gathered.degraded is True and gathered.grounded is True
     assert retriever.calls[-1]["query"] == "original question"  # single-shot on the ORIGINAL
     assert len(gathered.chunks) == 2
+    assert len(completer.calls) == 1  # loop stopped planning after the failure
+
+
+class _RaisingRetriever:
+    """Simulates the fallback retrieval hitting the SAME infra outage that
+    triggered the degrade in the first place (e.g. embedding service/Qdrant
+    down)."""
+
+    async def __call__(  # type: ignore[no-untyped-def]
+        self, session, ctx, workspace_id, query, top_k=None, metadata_clauses=None
+    ):
+        raise UpstreamError("embedding service unavailable")
+
+
+async def test_fallback_retrieval_failure_does_not_crash(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """Review finding fix: the degrade-to-single-shot fallback call must be
+    guarded the same way execute_tool guards every other retriever call. If
+    the outage that caused the original tool failure also breaks the
+    fallback retrieval, the loop must still degrade gracefully (never a dead
+    end) instead of raising past run_agent_gather."""
+    completer = FakeCompleter([LLMCompletion(
+        text='{"action": "get_document", "document_id": "not-a-uuid"}',
+        tool_calls=[], usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+    )])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="original question",
+        model=flagged_model, completer=completer, retriever=_RaisingRetriever(),
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+    ))
+    assert gathered.degraded is True
+    assert gathered.grounded is False
+    assert gathered.chunks == []
     assert len(completer.calls) == 1  # loop stopped planning after the failure
 
 

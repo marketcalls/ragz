@@ -381,10 +381,21 @@ async def run_agent_gather(
         )
         if outcome.error is not None:
             # Failure posture (design §2): degrade to single-shot RAG on the
-            # ORIGINAL question — never a dead end — and stop planning.
+            # ORIGINAL question — never a dead end — and stop planning. The
+            # tool failure that triggered this may itself be an infra outage
+            # (e.g. embedding service/Qdrant down); the fallback retrieval
+            # can hit the SAME outage, so it gets the same typed-exception
+            # guard execute_tool uses. On failure here we degrade further, to
+            # an empty/ungrounded result, rather than propagate — still never
+            # a dead end.
             degraded = True
-            result = await retriever(session, ctx, workspace.id, question)
-            outcome = ToolOutcome(chunks=result.chunks, grounded=not result.no_answer)
+            try:
+                result = await retriever(session, ctx, workspace.id, question)
+                outcome = ToolOutcome(chunks=result.chunks, grounded=not result.no_answer)
+            except (
+                ConflictError, NotFoundError, WorkspaceAccessDenied, UpstreamError, ValueError,
+            ):
+                outcome = ToolOutcome(error="fallback retrieval also failed")
         for c in outcome.chunks:
             key = (c.document_id, c.page, c.chunk_index)
             if key not in seen:  # first occurrence wins (merge_chunks semantics)
