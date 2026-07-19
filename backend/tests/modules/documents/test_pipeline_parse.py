@@ -66,6 +66,15 @@ def test_parse_pptx_slides_become_pages() -> None:
     assert any(b.kind == "heading" and "Safety Briefing" in b.text for b in blocks)
 
 
+def test_headings_carry_level() -> None:
+    # .txt path emits no headings; use the pptx fixture from Task 1 for a real doc.
+    blocks = parse_bytes(_pptx_bytes(), "briefing.pptx")
+    heading = next(b for b in blocks if b.kind == "heading")
+    assert heading.level is not None
+    text_block = next(b for b in blocks if b.kind == "text")
+    assert text_block.level is None
+
+
 def test_needs_ocr_low_density() -> None:
     sparse = [PageBlock(page=3, text="p3", kind="text")]  # 2 chars over 3 pages
     assert needs_ocr(sparse, min_chars_per_page=200)

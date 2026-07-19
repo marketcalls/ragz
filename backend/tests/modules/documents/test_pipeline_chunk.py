@@ -43,3 +43,40 @@ def test_indices_sequential_and_pages_tracked() -> None:
                            blk("c", page=3)])
     assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
     assert chunks[0].page == 1
+
+
+def test_chunks_carry_heading_trail() -> None:
+    blocks = [
+        PageBlock(page=1, text="Fire Safety Manual", kind="heading", level=0),
+        PageBlock(page=1, text="Evacuation", kind="heading", level=1),
+        PageBlock(page=1, text="Assembly points are listed below.", kind="text"),
+        PageBlock(page=2, text="Alarms", kind="heading", level=1),
+        PageBlock(page=2, text="Test alarms weekly.", kind="text"),
+    ]
+    chunks = chunk_blocks(blocks)
+    evac = next(c for c in chunks if "Assembly points" in c.text)
+    assert evac.section == "Fire Safety Manual > Evacuation"
+    alarm = next(c for c in chunks if "Test alarms" in c.text)
+    assert alarm.section == "Fire Safety Manual > Alarms"  # sibling replaced, root kept
+
+
+def test_sibling_heading_replaces_same_level() -> None:
+    blocks = [
+        PageBlock(page=1, text="A", kind="heading", level=1),
+        PageBlock(page=1, text="a-body", kind="text"),
+        PageBlock(page=1, text="B", kind="heading", level=1),
+        PageBlock(page=1, text="b-body", kind="text"),
+    ]
+    sections = {c.section for c in chunk_blocks(blocks)}
+    assert sections == {"A", "B"}
+
+
+def test_no_headings_means_no_section() -> None:
+    chunks = chunk_blocks([PageBlock(page=1, text="plain text", kind="text")])
+    assert chunks[0].section is None
+
+
+def test_old_artifacts_rehydrate_without_new_fields() -> None:
+    # Pre-H blocks.json/chunks.json lack level/section — defaults must cover them.
+    assert PageBlock(page=1, text="x", kind="text").level is None
+    assert Chunk(text="x", page=1, chunk_index=0).section is None

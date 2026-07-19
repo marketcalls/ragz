@@ -29,6 +29,7 @@ class PageBlock:
     page: int
     text: str
     kind: str  # "text" | "heading" | "table"
+    level: int | None = None  # heading depth; None for non-headings
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class Chunk:
     text: str
     page: int
     chunk_index: int
+    section: str | None = None  # "H1 > H2 > H3" heading trail (CHAT-4)
 
 
 def needs_ocr(blocks: list["PageBlock"], *, min_chars_per_page: int) -> bool:
@@ -54,9 +56,10 @@ def _convert_blocks(tmp_path: Path, suffix: str, *, ocr: bool) -> list["PageBloc
     # Deferred heavy imports: keep docling out of the API process entirely.
     from docling.document_converter import DocumentConverter
     from docling_core.types.doc import (  # type: ignore[attr-defined]
-        DocItemLabel,
+        SectionHeaderItem,
         TableItem,
         TextItem,
+        TitleItem,
     )
 
     if ocr:
@@ -77,20 +80,22 @@ def _convert_blocks(tmp_path: Path, suffix: str, *, ocr: bool) -> list["PageBloc
     except Exception as exc:  # docling raises assorted types for bad input
         raise IngestFailure(f"unsupported or unparsable document: {exc}") from exc
 
-    heading_labels = {DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER}
     blocks: list[PageBlock] = []
     for item, _level in result.document.iterate_items():
         prov = getattr(item, "prov", None)
         page = prov[0].page_no if prov else 1
         if isinstance(item, TableItem):
-            text, kind = item.export_to_markdown(result.document), "table"
+            text, kind, level = item.export_to_markdown(result.document), "table", None
+        elif isinstance(item, TitleItem):
+            text, kind, level = item.text, "heading", 0
+        elif isinstance(item, SectionHeaderItem):
+            text, kind, level = item.text, "heading", int(item.level)
         elif isinstance(item, TextItem):
-            text = item.text
-            kind = "heading" if item.label in heading_labels else "text"
+            text, kind, level = item.text, "text", None
         else:
             continue
         if text.strip():
-            blocks.append(PageBlock(page=page, text=text.strip(), kind=kind))
+            blocks.append(PageBlock(page=page, text=text.strip(), kind=kind, level=level))
     return blocks
 
 
@@ -153,6 +158,23 @@ def _split_text(text: str, limit: int) -> list[str]:
     return pieces
 
 
+_SECTION_LEVELS = 3
+_SECTION_PART_CHARS = 80
+
+
+def _trail_push(trail: list[tuple[int, str]], level: int, text: str) -> None:
+    """A heading at level N closes every open heading at level >= N."""
+    while trail and trail[-1][0] >= level:
+        trail.pop()
+    trail.append((level, text[:_SECTION_PART_CHARS]))
+
+
+def _trail_section(trail: list[tuple[int, str]]) -> str | None:
+    if not trail:
+        return None
+    return " > ".join(t for _, t in trail[-_SECTION_LEVELS:])
+
+
 def chunk_blocks(
     blocks: list[PageBlock], *, target_chars: int = 2000, overlap_ratio: float = 0.15
 ) -> list[Chunk]:
@@ -161,29 +183,44 @@ def chunk_blocks(
     chunks: list[Chunk] = []
     buf: list[str] = []
     buf_page: int | None = None
+    buf_section: str | None = None
+    trail: list[tuple[int, str]] = []
     overlap_chars = int(target_chars * overlap_ratio)
 
     def flush(carry_overlap: bool) -> None:
-        nonlocal buf, buf_page
+        nonlocal buf, buf_page, buf_section
         if not buf:
             return
         text = "\n\n".join(buf)
-        chunks.append(Chunk(text=text, page=buf_page or 1, chunk_index=len(chunks)))
+        chunks.append(
+            Chunk(text=text, page=buf_page or 1, chunk_index=len(chunks), section=buf_section)
+        )
         if carry_overlap and overlap_chars > 0:
             tail = text[-overlap_chars:]
             cut = tail.find(" ")  # start the overlap on a word boundary
             buf = [tail[cut + 1 :] if 0 <= cut < len(tail) - 1 else tail]
-            # buf_page intentionally kept: the overlap belongs to the same region
+            # buf_page/buf_section intentionally kept: the overlap belongs to the same region
         else:
-            buf, buf_page = [], None
+            buf, buf_page, buf_section = [], None, None
 
     for block in blocks:
         if block.kind == "table":
             flush(carry_overlap=False)
-            chunks.append(Chunk(text=block.text, page=block.page, chunk_index=len(chunks)))
+            chunks.append(
+                Chunk(
+                    text=block.text,
+                    page=block.page,
+                    chunk_index=len(chunks),
+                    section=_trail_section(trail),
+                )
+            )
             continue
-        if block.kind == "heading" and buf and len("\n\n".join(buf)) >= target_chars // 2:
-            flush(carry_overlap=False)
+        if block.kind == "heading":
+            _trail_push(trail, block.level if block.level is not None else 1, block.text)
+            # A heading is a new section: never merge its text into the prior
+            # buffer, so each chunk's single `section` trail stays accurate.
+            if buf:
+                flush(carry_overlap=False)
         for piece in _split_text(block.text, target_chars):
             # Flush BEFORE appending a piece that would overflow the target, so a
             # chunk never exceeds ~target + overlap chars (pieces are <= target).
@@ -191,6 +228,7 @@ def chunk_blocks(
                 flush(carry_overlap=True)
             if buf_page is None:
                 buf_page = block.page
+                buf_section = _trail_section(trail)
             buf.append(piece)
     flush(carry_overlap=False)
     return chunks
