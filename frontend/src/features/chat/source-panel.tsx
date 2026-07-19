@@ -2,6 +2,14 @@ import { FileText, Globe } from 'lucide-react';
 
 import { cn } from '@/lib/cn';
 
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 /** Minimal chip shape: SSE SourceRef[] is assignable; persisted CitationOut[]
  *  gets mapped to it (filename resolved via the documents list, Task 10).
  *  Task 11 (D7): `url` set only for web-search hits -- the chip then renders
@@ -49,7 +57,7 @@ export function SourcePanel({
               <>
                 <Globe className="h-3 w-3 shrink-0 text-muted" aria-hidden />
                 <span className="max-w-[220px] truncate">{source.filename}</span>
-                <span className="text-muted">· {new URL(source.url).hostname}</span>
+                <span className="text-muted">· {safeHostname(source.url)}</span>
               </>
             ) : (
               <>
