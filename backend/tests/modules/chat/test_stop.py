@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -140,3 +141,52 @@ async def test_abort_before_first_token_persists_nothing(
         )
     ).scalars().all()
     assert count == []  # user message retry-sibling semantics already cover this
+
+
+async def test_late_cancel_after_persist_does_not_duplicate_row(
+    session: AsyncSession, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 1, finding 1: a cancellation that lands AFTER
+    _persist_assistant has already committed the row (but before the
+    subsequent record_usage/citations_event/done_event awaits/yields) must
+    NOT persist a second assistant row via persist_stopped_detached. Forces
+    that exact window by making quota_service.record_usage raise
+    CancelledError once the stream has completed normally and the row is
+    already committed.
+
+    This is the regression test for the bug: without `streamed_parts.clear()`
+    immediately after the successful persist, `streamed_parts` is still
+    truthy when the CancelledError handler runs, so a second (stopped) row
+    would be inserted under the same parent alongside the first (non-stopped)
+    row.
+    """
+    ctx, chat, user_msg, chat_ws = await _seed(session)
+    factory = build_session_factory(engine)
+    streamer = SlowStreamer(["Hi"])
+
+    async def _boom_after_completed_stream(*args: object, **kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(service.quota_service, "record_usage", _boom_after_completed_stream)
+
+    agen = service.stream_reply(
+        session, ctx, chat=chat, workspace=chat_ws, user_message=user_msg,
+        model=_FakeModel(),  # type: ignore[arg-type]
+        streamer=streamer, retriever=_never_retrieve,  # type: ignore[arg-type]
+        chunk_reader=_NeverChunkReader(),  # type: ignore[arg-type]
+        settings=SETTINGS, session_factory=factory,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        async for _event in agen:
+            pass
+
+    await asyncio.gather(*service._STOP_PERSISTS)
+    rows = (
+        await session.execute(
+            select(Message).where(Message.chat_id == chat.id,
+                                  Message.role == service.ROLE_ASSISTANT)
+        )
+    ).scalars().all()
+    assert len(rows) == 1  # no duplicate row from persist_stopped_detached
+    assert rows[0].stopped is False  # it's the normally-persisted row
+    assert rows[0].content == "Hi"

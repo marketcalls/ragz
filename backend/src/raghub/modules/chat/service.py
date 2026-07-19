@@ -574,6 +574,11 @@ async def stream_reply(
                 session, ctx, chat, parent=user_message, content=convo_answer,
                 model_id=model.id, usage=convo_usage, citations=[],
             )
+            # Persist succeeded: clear the buffer BEFORE any further
+            # await/yield point (record_usage, citations_event, done_event)
+            # so a late abort in that window can't re-persist the same
+            # content as a second assistant row (review round 1, finding 1).
+            streamed_parts.clear()
             if convo_usage is not None:
                 await quota_service.record_usage(
                     session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
@@ -695,6 +700,9 @@ async def stream_reply(
             session, ctx, chat, parent=user_message, content=answer, model_id=model.id,
             usage=usage, citations=citation_refs,
         )
+        # Same rationale as the conversational branch above: clear before the
+        # next await/yield point so a late abort can't duplicate this row.
+        streamed_parts.clear()
         if usage is not None:
             await quota_service.record_usage(
                 session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
@@ -722,10 +730,16 @@ async def stream_reply(
         # Client aborted the SSE request (stop button / navigation). The
         # async-for over streamer.stream() has already been unwound, which
         # closes the upstream LLM stream. Persist what streamed so far.
-        if session_factory is not None and streamed_parts:
+        # Guard on the joined text, not list truthiness: streamed_parts can
+        # contain only empty strings (e.g. [""]) without being empty itself,
+        # and both success paths above `.clear()` the buffer immediately
+        # after persisting, so a late abort here reliably sees an empty
+        # buffer instead of duplicating the already-persisted row.
+        partial = "".join(streamed_parts)
+        if session_factory is not None and partial:
             persist_stopped_detached(
                 session_factory, ctx, chat_id=chat.id,
                 user_message_id=user_message.id,
-                content="".join(streamed_parts), model_id=model.id,
+                content=partial, model_id=model.id,
             )
         raise
