@@ -49,3 +49,18 @@ export function usePinDocument(workspaceId: string | null) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
   });
 }
+
+export function useSetApproved(workspaceId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ documentId, approved }: { documentId: string; approved: boolean }) => {
+      const { data, error } = await api.PUT('/api/v1/documents/{document_id}/approved', {
+        params: { path: { document_id: documentId } },
+        body: { approved },
+      });
+      if (error) throw new Error('failed to update approval');
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
+  });
+}

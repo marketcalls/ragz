@@ -1,10 +1,11 @@
-import { SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { Fragment, useState } from 'react';
 
+import type { DocumentOut } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { Table, TBody, TH, THead, TR } from '@/components/ui/table';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
 import { useWorkspace } from '@/features/workspaces/workspace-context';
@@ -17,6 +18,7 @@ import { DocumentRow } from './document-row';
 import { Dropzone } from './dropzone';
 import { useDeleteDocument, useDocuments, usePinDocument } from './queries';
 import { uploadDocuments } from './upload';
+import { groupByLineage } from './versions';
 
 interface UploadItem {
   key: string;
@@ -30,6 +32,7 @@ export function DocumentsPage() {
   const deleteDocument = useDeleteDocument(workspaceId);
   const pinDocument = usePinDocument(workspaceId);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const claims = useClaims();
   const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
   const { data: workspaces } = useWorkspaces();
@@ -100,23 +103,64 @@ export function DocumentsPage() {
                 </TR>
               </THead>
               <TBody>
-                {documents.data.map((doc) => (
-                  <DocumentRow
-                    key={doc.id}
-                    doc={doc}
-                    deleting={deleteDocument.isPending}
-                    onDelete={() =>
-                      deleteDocument.mutate(doc.id, { onError: (err) => toast.error(err.message) })
-                    }
-                    pinning={pinDocument.isPending}
-                    onTogglePin={() =>
-                      pinDocument.mutate(
-                        { documentId: doc.id, pinned: !doc.pinned },
-                        { onError: (err) => toast.error(err.message) },
-                      )
-                    }
-                  />
-                ))}
+                {groupByLineage(documents.data).map(({ current, older }) => {
+                  const isExpanded = expanded.has(current.lineage_id);
+                  const renderRow = (doc: DocumentOut, dimmed: boolean) => (
+                    <DocumentRow
+                      key={doc.id}
+                      doc={doc}
+                      workspaceId={workspaceId}
+                      dimmed={dimmed}
+                      deleting={deleteDocument.isPending}
+                      onDelete={() =>
+                        deleteDocument.mutate(doc.id, {
+                          onError: (err) => toast.error(err.message),
+                        })
+                      }
+                      pinning={pinDocument.isPending}
+                      onTogglePin={() =>
+                        pinDocument.mutate(
+                          { documentId: doc.id, pinned: !doc.pinned },
+                          { onError: (err) => toast.error(err.message) },
+                        )
+                      }
+                    />
+                  );
+                  return (
+                    <Fragment key={current.lineage_id}>
+                      {renderRow(current, false)}
+                      {older.length > 0 ? (
+                        <TR>
+                          <TD colSpan={6} className="py-1.5">
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 text-[12px] text-secondary hover:text-ink"
+                              onClick={() =>
+                                setExpanded((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(current.lineage_id)) {
+                                    next.delete(current.lineage_id);
+                                  } else {
+                                    next.add(current.lineage_id);
+                                  }
+                                  return next;
+                                })
+                              }
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                              )}
+                              {older.length} older version{older.length === 1 ? '' : 's'}
+                            </button>
+                          </TD>
+                        </TR>
+                      ) : null}
+                      {isExpanded ? older.map((doc) => renderRow(doc, true)) : null}
+                    </Fragment>
+                  );
+                })}
               </TBody>
             </Table>
           ) : null}
