@@ -35,6 +35,7 @@ EXPECTED_TABLES = {
     "model_catalog",
     "metadata_fields",
     "role_templates",
+    "golden_queries",
     "alembic_version",
 }
 

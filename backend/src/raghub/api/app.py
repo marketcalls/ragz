@@ -18,6 +18,7 @@ from raghub.api.routes.auth import router as auth_router
 from raghub.api.routes.chats import router as chats_router
 from raghub.api.routes.client_errors import router as client_errors_router
 from raghub.api.routes.documents import router as documents_router
+from raghub.api.routes.evals import router as evals_router
 from raghub.api.routes.groups import router as groups_router
 from raghub.api.routes.health import router as health_router
 from raghub.api.routes.models import router as models_router
@@ -145,6 +146,7 @@ def create_app(
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(workspaces_router, prefix="/api/v1")
     app.include_router(documents_router, prefix="/api/v1")
+    app.include_router(evals_router, prefix="/api/v1")
     app.include_router(groups_router, prefix="/api/v1")
     app.include_router(search_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
