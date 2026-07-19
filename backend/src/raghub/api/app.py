@@ -28,6 +28,7 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
+from raghub.core.middleware import RequestIDMiddleware
 from raghub.modules.chat.llm import LLMStreamer
 from raghub.modules.chat.prompting import warm_token_encoder
 from raghub.modules.chat.service import ChunkReader, Retriever
@@ -142,4 +143,18 @@ def create_app(
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(chats_router, prefix="/api/v1")
     app.include_router(usage_router, prefix="/api/v1")
+
+    app.add_middleware(RequestIDMiddleware)
+
+    if settings.sentry_dsn:
+        try:
+            import sentry_sdk
+
+            sentry_sdk.init(
+                dsn=settings.sentry_dsn, environment=settings.environment,
+                traces_sample_rate=0.0, send_default_pii=False,
+            )
+        except ImportError:
+            structlog.get_logger().warning("sentry_dsn set but sentry-sdk not installed")
+
     return app

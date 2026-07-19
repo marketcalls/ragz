@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     httpx_max_connections: int = 100
     httpx_max_keepalive: int = 20
 
+    # Plan G Task 5: optional Sentry error reporting. Empty string = off (zero
+    # dependency cost unless sentry-sdk is also installed via the observability group).
+    sentry_dsn: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
