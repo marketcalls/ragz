@@ -20,6 +20,7 @@ dependencies = [
     "qdrant-client>=1.17,<1.19",
     "fastembed>=0.6",
     "docling>=2.15",
+    "easyocr>=1.7",
     "aioboto3>=13.0",
     "python-multipart>=0.0.9",
     "cryptography>=42.0",
@@ -38,6 +39,7 @@ dev = [
     "mypy>=1.10",
     "import-linter>=2.0",
     "psycopg2-binary>=2.9",
+    "pillow>=10.1",
 ]
 loadtest = ["locust>=2.29"]
 observability = ["sentry-sdk>=2.8"]

@@ -22,7 +22,16 @@ uv run celery -A raghub.worker.celery_app:celery_app worker -Q interactive,defau
 # prefork pool (fork-safety); Linux deployments can keep prefork.
 # beat (third terminal, from backend/) — scheduled jobs (model catalog sync):
 uv run celery -A raghub.worker.celery_app:celery_app beat -l info
+```
 
+**OCR (scanned PDFs).** The ingestion worker OCRs low-text PDFs automatically via EasyOCR.
+First use downloads ~90 MB of models to `~/.EasyOCR` **on the machine running the worker** —
+pre-fetch with `uv run python -c "import easyocr; easyocr.Reader(['en'])"`. Air-gapped
+installs: copy a populated `~/.EasyOCR` directory into the worker's home. arm64 (Apple
+Silicon / Graviton): EasyOCR runs on standard PyTorch CPU wheels — no extra system packages
+(this is why EasyOCR over Tesseract). Disable globally with `RAGHUB_OCR_ENABLED=false`.
+
+```bash
 # 3. Frontend (from frontend/)
 cd frontend && pnpm install
 pnpm generate:api   # regenerates src/api/schema.d.ts from the running backend

@@ -89,7 +89,12 @@ async def run_parse(document_id: UUID) -> None:
         storage = _storage()
         try:
             data = await storage.get(doc.storage_key)
-            blocks = await asyncio.to_thread(parse_bytes, data, doc.filename)
+            settings = get_settings()
+            blocks = await asyncio.to_thread(
+                parse_bytes, data, doc.filename,
+                ocr_enabled=settings.ocr_enabled,
+                ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+            )
         except IngestFailure as exc:
             await _fail(session, doc, job, str(exc))
             raise

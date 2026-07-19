@@ -38,7 +38,69 @@ class Chunk:
     chunk_index: int
 
 
-def parse_bytes(data: bytes, filename: str) -> list[PageBlock]:
+def needs_ocr(blocks: list["PageBlock"], *, min_chars_per_page: int) -> bool:
+    """DOC-3 auto-detection: a PDF is 'scanned' when average extracted text per
+    page falls below the threshold. Zero blocks is trivially below it."""
+    if not blocks:
+        return True
+    page_count = max(b.page for b in blocks)
+    total_chars = sum(len(b.text) for b in blocks)
+    return total_chars / max(page_count, 1) < min_chars_per_page
+
+
+def _convert_blocks(tmp_path: Path, suffix: str, *, ocr: bool) -> list["PageBlock"]:
+    """One Docling conversion → PageBlocks. ocr=False keeps today's default
+    converter; ocr=True forces full-page EasyOCR (scanned-PDF rescue pass)."""
+    # Deferred heavy imports: keep docling out of the API process entirely.
+    from docling.document_converter import DocumentConverter
+    from docling_core.types.doc import (  # type: ignore[attr-defined]
+        DocItemLabel,
+        TableItem,
+        TextItem,
+    )
+
+    if ocr:
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
+        from docling.document_converter import PdfFormatOption
+
+        opts = PdfPipelineOptions(do_ocr=True)
+        opts.ocr_options = EasyOcrOptions(force_full_page_ocr=True)
+        converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        )
+    else:
+        converter = DocumentConverter()
+
+    try:
+        result = converter.convert(tmp_path, raises_on_error=True)
+    except Exception as exc:  # docling raises assorted types for bad input
+        raise IngestFailure(f"unsupported or unparsable document: {exc}") from exc
+
+    heading_labels = {DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER}
+    blocks: list[PageBlock] = []
+    for item, _level in result.document.iterate_items():
+        prov = getattr(item, "prov", None)
+        page = prov[0].page_no if prov else 1
+        if isinstance(item, TableItem):
+            text, kind = item.export_to_markdown(result.document), "table"
+        elif isinstance(item, TextItem):
+            text = item.text
+            kind = "heading" if item.label in heading_labels else "text"
+        else:
+            continue
+        if text.strip():
+            blocks.append(PageBlock(page=page, text=text.strip(), kind=kind))
+    return blocks
+
+
+def parse_bytes(
+    data: bytes,
+    filename: str,
+    *,
+    ocr_enabled: bool = True,
+    ocr_min_chars_per_page: int = 200,
+) -> list[PageBlock]:
     """Docling parse to page-aware blocks. Sync/CPU — call via asyncio.to_thread."""
     if not data:
         raise IngestFailure("file is empty")
@@ -56,39 +118,19 @@ def parse_bytes(data: bytes, filename: str) -> list[PageBlock]:
             raise IngestFailure("document contains no extractable text")
         return txt_blocks
 
-    # Deferred heavy imports: keep docling out of the API process entirely.
-    from docling.document_converter import DocumentConverter
-    from docling_core.types.doc import (  # type: ignore[attr-defined]
-        DocItemLabel,
-        TableItem,
-        TextItem,
-    )
-
-    heading_labels = {DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER}
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(data)
         tmp_path = Path(tmp.name)
     try:
-        try:
-            result = DocumentConverter().convert(tmp_path, raises_on_error=True)
-        except Exception as exc:  # docling raises assorted types for bad input
-            raise IngestFailure(f"unsupported or unparsable document: {exc}") from exc
+        blocks = _convert_blocks(tmp_path, suffix, ocr=False)
+        if (
+            suffix == ".pdf"
+            and ocr_enabled
+            and needs_ocr(blocks, min_chars_per_page=ocr_min_chars_per_page)
+        ):
+            blocks = _convert_blocks(tmp_path, suffix, ocr=True)
     finally:
         tmp_path.unlink(missing_ok=True)
-
-    blocks: list[PageBlock] = []
-    for item, _level in result.document.iterate_items():
-        prov = getattr(item, "prov", None)
-        page = prov[0].page_no if prov else 1
-        if isinstance(item, TableItem):
-            text, kind = item.export_to_markdown(result.document), "table"
-        elif isinstance(item, TextItem):
-            text = item.text
-            kind = "heading" if item.label in heading_labels else "text"
-        else:
-            continue
-        if text.strip():
-            blocks.append(PageBlock(page=page, text=text.strip(), kind=kind))
     if not blocks:
         raise IngestFailure("document contains no extractable text")
     return blocks
