@@ -20,3 +20,4 @@ backend/data/
 
 # Loadtest pre-provisioned tokens — throwaway local artifact, never commit
 deploy/loadtest/.tokens.json
+backend/celerybeat-schedule*

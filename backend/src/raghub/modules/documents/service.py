@@ -176,26 +176,44 @@ async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID)
     (momentary double-serve beats momentary blackout). A winner whose points
     were deleted earlier (approval flipped back to an old version) is
     re-indexed from its stored chunks.json; promotion re-runs on completion.
+
+    Locking: the row select uses FOR UPDATE so concurrent promotions of the
+    same lineage serialize -- a second caller blocks until the first commits
+    its is_current flip, then re-reads the now-committed state here and
+    re-converges from there. Without this, two versions promoting at once
+    could each compute a stale "effective" row and both end up is_current
+    (pattern precedent: chat/service.py's add_message, auth/service.py's
+    rotate_refresh).
     """
     rows = list(
         (
             await session.execute(
-                select(Document).where(
-                    Document.lineage_id == lineage_id, Document.status == "indexed"
-                )
+                select(Document)
+                .where(Document.lineage_id == lineage_id, Document.status == "indexed")
+                .with_for_update()
             )
         ).scalars()
     )
     if not rows:
+        await session.commit()  # release the (empty) lock scope
         return
     approved_rows = [r for r in rows if r.approved]
     effective = max(approved_rows or rows, key=lambda d: d.version)
 
     if not effective.vectors_present:
         # Points were deleted when this version was demoted. Rebuild first;
-        # the reindex task ends by calling promote_lineage again.
-        # local: avoids the real ingest<->service circular import; explicitly
-        # allow-listed in pyproject.toml's import-linter ignore_imports.
+        # the reindex task ends by calling promote_lineage again. Commit BEFORE
+        # enqueueing: it releases the FOR UPDATE locks (the reindex task opens
+        # its own session and re-runs promotion -- holding the locks here would
+        # deadlock an eager worker) and makes the enqueue-after-state durable.
+        # local import: avoids the real ingest<->service circular import;
+        # explicitly allow-listed in pyproject.toml's import-linter
+        # ignore_imports.
+        # TODO(plan-h-followup): invert to remove ignore_imports exception --
+        # have promote_lineage return the needs-reindex document id and let
+        # the entrypoints (ingest tail / route) enqueue, so modules/ never
+        # imports worker/.
+        await session.commit()
         from raghub.worker.tasks import enqueue_reindex
 
         enqueue_reindex(effective.id)
