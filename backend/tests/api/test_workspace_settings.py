@@ -126,6 +126,21 @@ async def test_fallback_policy_null_is_409(
     assert r.status_code == 409
 
 
+async def test_web_search_enabled_defaults_off_and_round_trips(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    ws = next(w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+              if w["id"] == ws_id)
+    assert ws["web_search_enabled"] is False
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"web_search_enabled": True}, headers=h
+    )
+    assert r.status_code == 200
+    assert r.json()["web_search_enabled"] is True
+
+
 async def test_patch_atomicity_with_mixed_valid_invalid_fields(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

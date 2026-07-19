@@ -47,7 +47,8 @@ async def add_member(
 
 
 _SETTINGS_FIELDS = (
-    "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy"
+    "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
+    "web_search_enabled",
 )
 
 

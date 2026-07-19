@@ -22,6 +22,7 @@ from raghub.modules.chat.schemas import (
     MessageSend,
     RegenerateRequest,
 )
+from raghub.modules.chat.web import TavilySearcher
 from raghub.modules.models import keys
 from raghub.modules.models import service as models_service
 from raghub.modules.models.models import Model
@@ -163,6 +164,7 @@ async def send_message(
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
+        web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
     ))
 
 
@@ -192,4 +194,5 @@ async def regenerate(
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
+        web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
     ))

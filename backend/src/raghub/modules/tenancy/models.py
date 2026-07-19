@@ -31,6 +31,10 @@ class Workspace(UUIDPk, Base):
     fallback_policy: Mapped[str] = mapped_column(
         default="general_knowledge", server_default="general_knowledge"
     )
+    # Phase 3 Plan I Task 11 (D7): gates the agent loop's web_search tool. Default
+    # OFF -- also requires fallback_policy != "decline" and a stored tavily secret
+    # (chat/service.py's use_web gate), so this column alone never exposes the web.
+    web_search_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class WorkspaceMember(Base):

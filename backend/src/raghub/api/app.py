@@ -35,6 +35,7 @@ from raghub.core.middleware import RequestIDMiddleware
 from raghub.modules.chat.llm import LLMCompleter, LLMStreamer
 from raghub.modules.chat.prompting import warm_token_encoder
 from raghub.modules.chat.service import ChunkReader, Retriever
+from raghub.modules.chat.web import WebSearcher
 from raghub.modules.models.sync import sync_models_to_litellm
 from raghub.modules.retrieval.service import RetrievalChunkReader, retrieve
 
@@ -68,6 +69,7 @@ def create_app(
     chunk_reader: ChunkReader | None = None,
     oidc_transport: httpx.AsyncBaseTransport | None = None,
     llm_completer: LLMCompleter | None = None,
+    web_searcher: WebSearcher | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -95,6 +97,9 @@ def create_app(
     app.state.chunk_reader = chunk_reader if chunk_reader is not None else RetrievalChunkReader()
     app.state.oidc_transport = oidc_transport
     app.state.llm_completer = llm_completer
+    # None here means "construct a real TavilySearcher at the route" (chats.py) --
+    # tests inject a fake directly; production leaves this None.
+    app.state.web_searcher = web_searcher
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:

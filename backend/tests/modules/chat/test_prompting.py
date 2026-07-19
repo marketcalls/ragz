@@ -2,6 +2,7 @@ from raghub.modules.chat.prompting import (
     GENERAL_KNOWLEDGE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     PromptSource,
+    _render_block,
     build_general_knowledge_messages,
     build_messages,
     count_tokens,
@@ -97,6 +98,14 @@ def test_everything_dropped_when_budget_tiny() -> None:
         user_query="q", budget=1,
     )
     assert any("2 older messages omitted" in m["content"] for m in msgs)
+
+
+def test_data_block_renders_escaped_url_attribute() -> None:
+    s = PromptSource(marker=1, filename="ISO overview", page=0,
+                     text="body", url='https://x.test/a?b=1" injected="y')
+    block = _render_block(s)
+    assert 'url="https://x.test/a?b=1&quot; injected=&quot;y"' in block
+    assert PromptSource(marker=1, filename="f", page=1, text="t").url is None  # default
 
 
 def test_parse_citation_markers() -> None:

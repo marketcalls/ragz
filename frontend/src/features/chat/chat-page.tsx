@@ -48,11 +48,16 @@ export function ChatPage() {
   const chipsFor = (message: MessageNode): SourceChipData[] =>
     message.citations.map((c) => ({
       marker: c.marker,
-      document_id: c.document_id,
-      filename: documentNameById.get(c.document_id) ?? 'Document',
+      document_id: c.document_id ?? '',
+      // Task 11 (D7): a web citation has no document row -- its filename is
+      // derived from the URL's hostname instead of the documents lookup.
+      filename: c.url
+        ? new URL(c.url).hostname
+        : (documentNameById.get(c.document_id ?? '') ?? 'Document'),
       page: c.page,
       section: c.section,
       version: c.version,
+      url: c.url,
     }));
 
   const workspace = workspaces?.find((w) => w.id === workspaceId);

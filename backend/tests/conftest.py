@@ -17,6 +17,7 @@ from raghub.core.storage import ObjectStorage
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.chat.llm import LLMCompletion, LLMDelta, LLMUsage
+from raghub.modules.chat.web import WebResult
 from raghub.modules.documents.models import Document
 from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
@@ -258,6 +259,23 @@ class FakeChunkReader:
     async def get_chunks_by_refs(self, ctx, workspace_id, refs):  # type: ignore[no-untyped-def]
         self.ref_calls.append(list(refs))
         return [self.chunks_by_ref[r] for r in refs if r in self.chunks_by_ref]
+
+
+class FakeWebSearcher:
+    """Scriptable WebSearcher (Task 11): default script returns one ISO 45001
+    hit so a scripted {"action":"web_search",...} planner step always finds
+    something to cite."""
+
+    def __init__(self, results: list[WebResult] | None = None) -> None:
+        self.results = results if results is not None else [
+            WebResult(title="ISO 45001 overview", url="https://example.test/iso",
+                      snippet="ISO 45001 is an OHS standard."),
+        ]
+        self.queries: list[str] = []
+
+    async def __call__(self, session, query):  # type: ignore[no-untyped-def]
+        self.queries.append(query)
+        return list(self.results)
 
 
 class FakeRetriever:

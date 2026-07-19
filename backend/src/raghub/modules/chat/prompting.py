@@ -62,6 +62,8 @@ class PromptSource:
     page: int
     text: str
     section: str | None = None
+    # Phase 3 Plan I Task 11 (D7): set for web-search hits only.
+    url: str | None = None
 
 
 def _attr(value: str) -> str:
@@ -93,8 +95,14 @@ def _render_block(s: PromptSource) -> str:
     # filename, so it goes through the same _attr escaping - iron rule 5's
     # delimiter defense applies to it too.
     section_attr = f' section="{_attr(s.section)}"' if s.section else ""
+    # url is a web-search result (D7): attacker-influenced (the search
+    # provider's response), so it gets the SAME _attr escaping as filename/
+    # section before landing in the attribute - iron rule 5's delimiter
+    # defense applies here too.
+    url_attr = f' url="{_attr(s.url)}"' if s.url else ""
     return (
-        f'<data id="{s.marker}" source="{_attr(s.filename)}" page="{s.page}"{section_attr}>\n'
+        f'<data id="{s.marker}" source="{_attr(s.filename)}" page="{s.page}"'
+        f"{section_attr}{url_attr}>\n"
         f"{safe}\n</data>"
     )
 

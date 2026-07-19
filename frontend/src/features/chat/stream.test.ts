@@ -25,7 +25,7 @@ test('emits typed events in order, tokens split across chunks', async () => {
     vi.fn(async () =>
       sseResponse([
         'event: retrieval_started\ndata: {}\n\n',
-        'event: sources\ndata: {"sources":[{"marker":1,"document_id":"d1","filename":"a.pdf","page":3,"chunk_index":12,"score":0.7,"snippet":"…the payroll codename is…","section":"Fire Safety > Evacuation","version":2}]}\n\n',
+        'event: sources\ndata: {"sources":[{"marker":1,"document_id":"d1","filename":"a.pdf","page":3,"chunk_index":12,"score":0.7,"snippet":"…the payroll codename is…","section":"Fire Safety > Evacuation","version":2,"url":null}]}\n\n',
         'event: token\ndata: {"del',
         'ta":"Hel"}\n\nevent: token\ndata: {"delta":"lo"}\n\n',
         'event: citations\ndata: {"citations":[{"marker":1,"document_id":"d1","chunk_ref":"d1:12","page":3,"score":0.7,"section":"Fire Safety > Evacuation","version":2}]}\n\n',
@@ -48,7 +48,7 @@ test('emits typed events in order, tokens split across chunks', async () => {
 
   // CHAT-4: section + version parse through toEvent additively.
   const sourcesEvent = events.find((e): e is Extract<ChatSseEvent, { type: 'sources' }> => e.type === 'sources');
-  expect(sourcesEvent?.sources[0]).toMatchObject({ section: 'Fire Safety > Evacuation', version: 2 });
+  expect(sourcesEvent?.sources[0]).toMatchObject({ section: 'Fire Safety > Evacuation', version: 2, url: null });
   const citationsEvent = events.find(
     (e): e is Extract<ChatSseEvent, { type: 'citations' }> => e.type === 'citations',
   );
@@ -108,6 +108,29 @@ test('an agent_step frame parses to the typed event', async () => {
     (e): e is Extract<ChatSseEvent, { type: 'agent_step' }> => e.type === 'agent_step',
   );
   expect(stepEvent?.step).toEqual({ n: 1, tool: 'search', query: 'muster point' });
+});
+
+test('a sources frame entry with a url (web citation, Task 11/D7) parses through', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      sseResponse([
+        'event: sources\ndata: {"sources":[{"marker":1,"document_id":"","filename":"ISO 45001 overview","page":0,"chunk_index":0,"score":0,"snippet":"…","section":null,"version":0,"url":"https://example.test/iso"}]}\n\n',
+        'event: citations\ndata: {"citations":[{"marker":1,"document_id":"","chunk_ref":"web:https://example.test/iso","page":0,"score":0,"section":null,"version":0,"url":"https://example.test/iso"}]}\n\n',
+        'event: done\ndata: {"message_id":"m3","prompt_tokens":1,"completion_tokens":1,"no_answer":false,"grounding":"documents"}\n\n',
+      ]),
+    ),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', { content: 'hi' }, (e) => events.push(e), new AbortController().signal);
+  const sourcesEvent = events.find(
+    (e): e is Extract<ChatSseEvent, { type: 'sources' }> => e.type === 'sources',
+  );
+  expect(sourcesEvent?.sources[0]).toMatchObject({ url: 'https://example.test/iso', document_id: '' });
+  const citationsEvent = events.find(
+    (e): e is Extract<ChatSseEvent, { type: 'citations' }> => e.type === 'citations',
+  );
+  expect(citationsEvent?.citations[0]).toMatchObject({ url: 'https://example.test/iso' });
 });
 
 test('an unknown event name (not agent_step) still surfaces as a typed error', async () => {

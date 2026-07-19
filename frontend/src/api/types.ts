@@ -51,6 +51,9 @@ export interface SourceRef {
   snippet: string;
   section: string | null;
   version: number;
+  // Phase 3 Plan I Task 11 (D7): set for web-search hits only; document_id
+  // stays "" (not null) for those so wire strings never go null.
+  url: string | null;
 }
 
 export interface CitationRef {
@@ -61,6 +64,7 @@ export interface CitationRef {
   score: number;
   section: string | null;
   version: number;
+  url: string | null;
 }
 
 export interface DoneInfo {

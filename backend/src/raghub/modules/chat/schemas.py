@@ -50,12 +50,13 @@ class ChatPatch(BaseModel):
 
 class CitationOut(BaseModel):
     marker: int
-    document_id: UUID
+    document_id: UUID | None
     chunk_ref: str
     page: int
     score: float
     section: str | None
     version: int
+    url: str | None
 
     model_config = {"from_attributes": True}
 

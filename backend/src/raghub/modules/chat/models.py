@@ -61,11 +61,14 @@ class Citation(UUIDPk, Base):
         ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
     # Deliberately NOT an FK: document deletion must never touch chat history.
-    document_id: Mapped[UUID]
-    chunk_ref: Mapped[str]  # "{document_id}:{page}:{chunk_index}"
+    # Phase 3 Plan I Task 11 (D7): nullable -- a web citation has no document row.
+    document_id: Mapped[UUID | None]
+    chunk_ref: Mapped[str]  # "{document_id}:{page}:{chunk_index}" | "web:{url}"
     page: Mapped[int]
     score: Mapped[float]
     marker: Mapped[int]  # the [n] number used in the answer text
     # Plan H (CHAT-4): section path + the document's version at citation time.
     section: Mapped[str | None] = mapped_column(Text(), default=None)
     version: Mapped[int] = mapped_column(default=1)
+    # Phase 3 Plan I Task 11 (D7): set only for web citations; None for document ones.
+    url: Mapped[str | None] = mapped_column(Text(), default=None)

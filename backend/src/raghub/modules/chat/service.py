@@ -45,11 +45,13 @@ from raghub.modules.chat.prompting import (
 )
 from raghub.modules.chat.router import classify_query, should_escalate
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
+from raghub.modules.chat.web import TAVILY_SECRET_NAME, WebResult, WebSearcher
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
 from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
+from raghub.modules.secrets import service as secrets_service
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
@@ -424,6 +426,7 @@ async def _source_refs(
                 snippet=chunk.text[:_SNIPPET_CHARS],
                 section=chunk.section,
                 version=doc_version,
+                url=None,
             )
         )
     return refs
@@ -436,16 +439,33 @@ async def _prepare_sources(
     *,
     max_tokens: int,
     model_hint: str | None,
+    web_results: Sequence[WebResult] = (),
 ) -> tuple[list[SourceRef], list[PromptSource]]:
     """Marker assignment + budget fitting in one place, so the `sources` SSE
     frame lists exactly the blocks the model receives (markers stay dense:
-    fit_sources keeps a prefix)."""
+    fit_sources keeps a prefix). Web hits (D7/Task 11) are appended AFTER the
+    document chunks with continuing markers -- documents outrank the web in
+    the budget fit (fit_sources keeps a PREFIX, so a web source only survives
+    once every document source already fits)."""
     refs = await _source_refs(session, ctx, chunks)
     prompt_sources = [
         PromptSource(marker=r.marker, filename=r.filename, page=r.page,
                      text=chunks[i].text, section=r.section)
         for i, r in enumerate(refs)
     ]
+    next_marker = len(refs) + 1
+    for i, w in enumerate(web_results):
+        marker = next_marker + i
+        refs.append(
+            SourceRef(
+                marker=marker, document_id="", filename=w.title, page=0,
+                chunk_index=0, score=0.0, snippet=w.snippet[:_SNIPPET_CHARS],
+                section=None, version=0, url=w.url,
+            )
+        )
+        prompt_sources.append(
+            PromptSource(marker=marker, filename=w.title, page=0, text=w.snippet, url=w.url)
+        )
     kept = fit_sources(prompt_sources, max_tokens, model_hint)
     return refs[: len(kept)], kept
 
@@ -474,9 +494,10 @@ async def _persist_assistant(
     for c in citations:
         session.add(
             Citation(
-                message_id=msg.id, document_id=UUID(c.document_id),
+                message_id=msg.id,
+                document_id=UUID(c.document_id) if c.document_id else None,
                 chunk_ref=c.chunk_ref, page=c.page, score=c.score, marker=c.marker,
-                section=c.section, version=c.version,
+                section=c.section, version=c.version, url=c.url,
             )
         )
     await session.commit()
@@ -538,6 +559,7 @@ async def stream_reply(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     completer: LLMCompleter | None = None,
+    web_searcher: WebSearcher | None = None,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -664,12 +686,24 @@ async def stream_reply(
             and await documents_service.has_indexed_documents(session, ctx, chat.workspace_id)
         )
         agent_prompt_tokens = agent_completion_tokens = 0
+        web_hits: list[WebResult] = []
         if run_loop and completer is not None:
+            # D7/Task 11: the web_search tool is offered to the planner only
+            # when a searcher is injected AND the workspace opted in AND its
+            # policy isn't decline AND the tavily secret is actually stored
+            # (existence-only check -- decryption happens inside the
+            # searcher itself, on actual use).
+            use_web = (
+                web_searcher is not None
+                and workspace.web_search_enabled
+                and workspace.fallback_policy != "decline"
+                and bool(await secrets_service.existing_secret_names(session, [TAVILY_SECRET_NAME]))
+            )
             gathered: AgentGathered | None = None
             async for gather_item in run_agent_gather(
                 session, ctx, workspace=workspace, question=user_message.content,
                 model=model, completer=completer, retriever=retriever,
-                chunk_reader=chunk_reader, web_searcher=None,  # Task 11 enables
+                chunk_reader=chunk_reader, web_searcher=web_searcher if use_web else None,
                 metadata_field_names=field_names,
             ):
                 if isinstance(gather_item, AgentStep):
@@ -681,6 +715,7 @@ async def stream_reply(
             if gathered is not None:
                 agent_prompt_tokens = gathered.prompt_tokens
                 agent_completion_tokens = gathered.completion_tokens
+                web_hits = gathered.web_results
                 result = RetrievalResult(
                     # Loop findings outrank the stale weak single shot for the
                     # budget fit; merge_chunks dedupes on chunk identity.
@@ -700,6 +735,7 @@ async def stream_reply(
 
         sources, kept_sources = await _prepare_sources(
             session, ctx, merged, max_tokens=sources_budget, model_hint=model_hint,
+            web_results=web_hits,
         )
 
         # no_answer is decided AFTER the final fit: pinned/backfilled material
@@ -828,12 +864,17 @@ async def stream_reply(
             CitationRef(
                 marker=n,
                 document_id=by_marker[n].document_id,
-                chunk_ref=f"{by_marker[n].document_id}:{by_marker[n].page}:"
-                          f"{by_marker[n].chunk_index}",
+                chunk_ref=(
+                    f"web:{by_marker[n].url}"
+                    if by_marker[n].url
+                    else f"{by_marker[n].document_id}:{by_marker[n].page}:"
+                         f"{by_marker[n].chunk_index}"
+                ),
                 page=by_marker[n].page,
                 score=by_marker[n].score,
                 section=by_marker[n].section,
                 version=by_marker[n].version,
+                url=by_marker[n].url,
             )
             for n in markers
         ]

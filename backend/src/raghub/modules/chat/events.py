@@ -29,6 +29,9 @@ class SourceRef:
     snippet: str
     section: str | None
     version: int
+    # Phase 3 Plan I Task 11 (D7): set for web-search hits only; wire strings
+    # (document_id etc.) stay non-null — a web source uses document_id="".
+    url: str | None
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,7 @@ class CitationRef:
     score: float
     section: str | None
     version: int
+    url: str | None
 
 
 def retrieval_started_event() -> SSEEvent:

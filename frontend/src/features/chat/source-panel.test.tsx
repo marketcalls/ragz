@@ -54,3 +54,22 @@ test('omits version/section chrome when absent', () => {
   render(<SourcePanel sources={sources} />);
   expect(screen.queryByText(/^· v\d/)).not.toBeInTheDocument();
 });
+
+test('a chip with a url renders the hostname, the globe glyph, and an "open" link (Task 11/D7)', () => {
+  const withUrl: SourceChipData[] = [
+    { marker: 1, document_id: '', filename: 'ISO 45001 overview', page: 0, url: 'https://example.test/iso' },
+  ];
+  render(<SourcePanel sources={withUrl} />);
+  expect(screen.getByText('· example.test')).toBeInTheDocument();
+  expect(screen.getByText('ISO 45001 overview')).toBeInTheDocument();
+  const link = screen.getByRole('link', { name: 'open' });
+  expect(link).toHaveAttribute('href', 'https://example.test/iso');
+  expect(link).toHaveAttribute('target', '_blank');
+  expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+});
+
+test('a doc chip (no url) is rendered unchanged', () => {
+  render(<SourcePanel sources={sources} />);
+  expect(screen.queryByRole('link', { name: 'open' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Source 1: intro.pdf, page 1' })).toBeInTheDocument();
+});

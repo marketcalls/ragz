@@ -16,6 +16,7 @@ const ws: WorkspaceOut = {
   rerank_enabled: false,
   system_prompt_override: null,
   fallback_policy: 'general_knowledge',
+  web_search_enabled: false,
 };
 
 function stubFetch(responseBody: WorkspaceOut) {
@@ -164,6 +165,28 @@ test('leaves fallback_policy out of the PATCH body when untouched', async () => 
   const req = findPatch();
   const body = (await req.clone().json()) as Record<string, unknown>;
   expect('fallback_policy' in body).toBe(false);
+});
+
+test('the web search toggle is visible and submits web_search_enabled when changed (Task 11/D7)', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, web_search_enabled: true });
+  const toggle = screen.getByLabelText('Allow web search');
+  expect(toggle).not.toBeChecked();
+  await user.click(toggle);
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect(body).toStrictEqual({ web_search_enabled: true });
+});
+
+test('the web search toggle is hidden when the fallback policy is decline (spec D7)', () => {
+  renderDialog({ ...ws, fallback_policy: 'decline' });
+  expect(screen.queryByLabelText('Allow web search')).not.toBeInTheDocument();
 });
 
 test('clearing the system prompt override sends an explicit null only when it changed', async () => {

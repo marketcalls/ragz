@@ -1103,7 +1103,7 @@ export interface components {
              * Document Id
              * Format: uuid
              */
-            document_id: string;
+            document_id: string | null;
             /** Chunk Ref */
             chunk_ref: string;
             /** Page */
@@ -1114,6 +1114,8 @@ export interface components {
             section: string | null;
             /** Version */
             version: number;
+            /** Url */
+            url: string | null;
         };
         /** ClientErrorIn */
         ClientErrorIn: {
@@ -1780,6 +1782,8 @@ export interface components {
             system_prompt_override: string | null;
             /** Fallback Policy */
             fallback_policy: string;
+            /** Web Search Enabled */
+            web_search_enabled: boolean;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
@@ -1795,6 +1799,8 @@ export interface components {
             system_prompt_override?: string | null;
             /** Fallback Policy */
             fallback_policy?: ("general_knowledge" | "decline") | null;
+            /** Web Search Enabled */
+            web_search_enabled?: boolean | null;
         };
     };
     responses: never;
