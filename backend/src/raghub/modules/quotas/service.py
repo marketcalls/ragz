@@ -22,6 +22,8 @@ from raghub.core.db import naive_utc
 from raghub.core.errors import NotFoundError, QuotaExceeded
 from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
+from raghub.modules.chat.models import Chat, Message
+from raghub.modules.models.models import Model
 from raghub.modules.quotas.models import OrgQuota, UsageRecord, UserQuota
 from raghub.modules.tenancy.context import TenantContext
 
@@ -210,7 +212,7 @@ async def set_user_quota(
 
 async def org_usage_summary(
     session: AsyncSession, *, org_id: UUID, days: int
-) -> dict[str, list[dict[str, object]]]:
+) -> dict[str, object]:
     """Aggregates for the admin dashboard (ADM-4/QUOTA-7 groundwork; Plan G
     charts these). Straight indexed-ledger group-bys — see module docstring
     for the no-rollup-table decision."""
@@ -231,16 +233,61 @@ async def org_usage_summary(
     ).all()
     by_user = (
         await session.execute(
-            select(UsageRecord.user_id, User.email, func.sum(_TOKENS))
+            select(UsageRecord.user_id, User.email, func.sum(_TOKENS), func.count())
             .join(User, User.id == UsageRecord.user_id)
             .where(*base).group_by(UsageRecord.user_id, User.email)
             .order_by(func.sum(_TOKENS).desc()).limit(10)
         )
     ).all()
+    queries_per_day = (
+        await session.execute(
+            select(day_col, func.count()).where(*base).group_by(day_col).order_by(day_col)
+        )
+    ).all()
+    model_name = func.coalesce(Model.display_name, "unattributed")
+    tokens_by_model_day = (
+        await session.execute(
+            select(day_col, model_name, func.sum(_TOKENS))
+            .join(Model, Model.id == UsageRecord.model_id, isouter=True)
+            .where(*base)
+            .group_by(day_col, model_name)
+            .order_by(day_col)
+        )
+    ).all()
+    kpi_queries, kpi_tokens, kpi_active_users = (
+        await session.execute(
+            select(
+                func.count(), func.coalesce(func.sum(_TOKENS), 0),
+                func.count(func.distinct(UsageRecord.user_id)),
+            ).where(*base)
+        )
+    ).one()
+    no_answer_count = (
+        await session.execute(
+            select(func.count()).select_from(Message)
+            .join(Chat, Chat.id == Message.chat_id)
+            .where(Chat.org_id == org_id, Message.no_answer.is_(True),
+                   Message.created_at >= since)
+        )
+    ).scalar_one()
     return {
         "by_day": [{"day": d.date(), "tokens": int(t)} for d, t in by_day],
         "by_model": [{"model_id": m, "tokens": int(t)} for m, t in by_model],
-        "by_user": [{"user_id": u, "email": e, "tokens": int(t)} for u, e, t in by_user],
+        "by_user": [
+            {"user_id": u, "email": e, "tokens": int(t), "queries": int(q)}
+            for u, e, t, q in by_user
+        ],
+        "kpis": {
+            "queries": int(kpi_queries),
+            "total_tokens": int(kpi_tokens),
+            "active_users": int(kpi_active_users),
+            "no_answer_count": int(no_answer_count),
+        },
+        "queries_per_day": [{"day": d.date(), "count": int(c)} for d, c in queries_per_day],
+        "tokens_by_model_per_day": [
+            {"day": d.date(), "model_name": m, "tokens": int(t)}
+            for d, m, t in tokens_by_model_day
+        ],
     }
 
 
