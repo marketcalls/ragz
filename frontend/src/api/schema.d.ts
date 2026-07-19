@@ -1099,10 +1099,7 @@ export interface components {
         CitationOut: {
             /** Marker */
             marker: number;
-            /**
-             * Document Id
-             * Format: uuid
-             */
+            /** Document Id */
             document_id: string | null;
             /** Chunk Ref */
             chunk_ref: string;
@@ -1419,7 +1416,7 @@ export interface components {
              * Tools Unreliable
              * @default false
              */
-            tools_unreliable?: boolean;
+            tools_unreliable: boolean;
         };
         /** ModelDayTokens */
         ModelDayTokens: {

@@ -301,7 +301,7 @@ export function ModelFormDialog({
       provider_kind: kind,
       ...(NEEDS_BASE_URL.includes(kind) && baseUrl ? { base_url: baseUrl } : {}),
       ...(NEEDS_KEY.includes(kind) && apiKey ? { api_key: apiKey } : {}),
-      ...(toolsUnreliable ? { tools_unreliable: toolsUnreliable } : {}),
+      tools_unreliable: toolsUnreliable,
     };
     create.mutate(body, handleSettled);
   };

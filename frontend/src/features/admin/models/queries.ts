@@ -13,8 +13,10 @@ export interface ModelCreate {
   api_key?: string; // write-only: sent, never read back
   // Phase 3 Plan I (MODEL-3): flag models that silently emit tool-call JSON
   // as content instead of calling tools natively; the agent loop then uses
-  // the JSON-planner protocol for them.
-  tools_unreliable?: boolean;
+  // the JSON-planner protocol for them. Required (not optional): the
+  // generated wire type has no default-implies-optional exemption, so every
+  // caller states it explicitly.
+  tools_unreliable: boolean;
 }
 
 export interface ModelPatchInput {
