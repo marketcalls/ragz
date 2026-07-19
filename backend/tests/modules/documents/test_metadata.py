@@ -218,3 +218,14 @@ async def test_build_clauses_date_range_open_ended(
     open_upper = await build_clauses(session, ctx, ws.id, {"revision_date": "2026-01-01.."})
     assert open_upper[0].gte == "2026-01-01T00:00:00Z"
     assert open_upper[0].lte is None
+
+
+async def test_build_clauses_rejects_malformed_date(session: AsyncSession) -> None:
+    """User-typed date filters must fail as a typed 409, never survive into
+    the Qdrant filter builder to die as a 500 (review round 1)."""
+    ctx, ws = await seed_workspace(session, "metaBadDate")
+    await list_fields(session, ctx, ws.id)  # seed presets (revision_date)
+    with pytest.raises(ConflictError):
+        await build_clauses(session, ctx, ws.id, {"revision_date": "not-a-date"})
+    with pytest.raises(ConflictError):
+        await build_clauses(session, ctx, ws.id, {"revision_date": "2026-01-01..nope"})

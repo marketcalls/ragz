@@ -200,11 +200,21 @@ def _date_bounds(raw: str) -> tuple[str | None, str | None]:
 
     `"YYYY-MM-DD..YYYY-MM-DD"` splits on the literal `..`; either side may be
     empty for an open-ended range (`"..2026-06-30"`, `"2026-01-01.."`). A bare
-    single day (no `..`) is both bounds — the whole day."""
+    single day (no `..`) is both bounds — the whole day. Malformed dates raise
+    ConflictError (409) rather than surviving to blow up inside the filter
+    builder as a 500 — this is user-typed filter input."""
     if ".." in raw:
         from_s, _, to_s = raw.partition("..")
-        return (from_s or None, to_s or None)
-    return (raw, raw)
+        bounds = (from_s or None, to_s or None)
+    else:
+        bounds = (raw, raw)
+    for side in bounds:
+        if side is not None:
+            try:
+                date.fromisoformat(side)
+            except ValueError:
+                raise ConflictError(f"'{raw}' is not a valid date filter") from None
+    return bounds
 
 
 async def build_clauses(
