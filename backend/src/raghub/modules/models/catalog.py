@@ -30,6 +30,9 @@ class ModelCatalogEntry(Base):
     max_input_tokens: Mapped[int | None] = mapped_column(default=None)
     input_cost_per_token: Mapped[float | None] = mapped_column(default=None)
     output_cost_per_token: Mapped[float | None] = mapped_column(default=None)
+    # JSON enumeration order. LiteLLM appends new models at the END of its
+    # JSON, so higher position ~= newer release; the picker sorts on it DESC.
+    position: Mapped[int] = mapped_column(default=0, server_default="0")
     source: Mapped[str] = mapped_column(default="remote")  # remote | snapshot
     fetched_at: Mapped[datetime] = mapped_column(default=naive_utc)
 
@@ -46,7 +49,7 @@ def _load_snapshot() -> dict[str, Any]:
 def _rows(data: Any, source: str) -> list[ModelCatalogEntry]:
     if not isinstance(data, dict):
         return []
-    rows = []
+    rows: list[ModelCatalogEntry] = []
     for name, meta in data.items():
         if not isinstance(meta, dict) or name == "sample_spec":
             continue
@@ -58,6 +61,7 @@ def _rows(data: Any, source: str) -> list[ModelCatalogEntry]:
                 max_input_tokens=meta.get("max_input_tokens"),
                 input_cost_per_token=meta.get("input_cost_per_token"),
                 output_cost_per_token=meta.get("output_cost_per_token"),
+                position=len(rows),  # enumeration order: higher ~= newer
                 source=source,
             )
         )

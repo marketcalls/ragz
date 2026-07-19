@@ -70,6 +70,10 @@ async def test_remote_fetch_upserts(session: AsyncSession, settings: Settings) -
     assert gpt.max_input_tokens == 128000
     assert gpt.input_cost_per_token == 0.00000015
     assert gpt.output_cost_per_token == 0.0000006
+    # Position pins JSON enumeration order (LiteLLM appends new models at the
+    # END of its JSON, so higher position ~= newer release).
+    assert gpt.position == 0
+    assert rows["claude-3-haiku"].position == 1
 
 
 async def test_cache_window_respected(session: AsyncSession, settings: Settings) -> None:
@@ -96,6 +100,8 @@ async def test_snapshot_fallback_on_network_failure(
     assert n > 0
     rows = list((await session.execute(select(ModelCatalogEntry))).scalars())
     assert rows and all(r.source == "snapshot" for r in rows)
+    # Snapshot fallback gets the same position stamping as the remote path.
+    assert sorted(r.position for r in rows) == list(range(len(rows)))
 
 
 async def test_airgap_url_empty_never_fetches(session: AsyncSession, settings: Settings) -> None:

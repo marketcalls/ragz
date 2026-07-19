@@ -6,7 +6,9 @@ import type { CatalogOut, ModelOut } from '@/api/types';
 export interface ModelCreate {
   display_name: string;
   litellm_model_name: string;
-  provider_kind: 'openai' | 'ollama' | 'openai_compatible';
+  // 'litellm' = any LiteLLM-native provider (anthropic, gemini, groq, …):
+  // the model name is passed to the gateway verbatim, no base_url needed.
+  provider_kind: 'openai' | 'ollama' | 'openai_compatible' | 'litellm';
   base_url?: string;
   api_key?: string; // write-only: sent, never read back
 }

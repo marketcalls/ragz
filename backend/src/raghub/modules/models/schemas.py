@@ -3,7 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-ProviderKind = Literal["openai", "ollama", "openai_compatible"]
+# "litellm": any LiteLLM-native provider (anthropic, gemini, groq, ...) —
+# litellm_model_name is passed to the gateway VERBATIM (catalog names for
+# non-openai providers already carry their prefix, e.g. gemini/gemini-2.5-pro);
+# no base_url needed, api_key attached as usual.
+ProviderKind = Literal["openai", "ollama", "openai_compatible", "litellm"]
 
 
 class ModelCreate(BaseModel):

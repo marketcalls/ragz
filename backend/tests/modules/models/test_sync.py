@@ -106,6 +106,26 @@ async def test_proxy_failure_maps_to_upstream_error(
     assert {m.sync_status for m in await list_models(session)} == {"error"}
 
 
+async def test_litellm_kind_passes_catalog_name_verbatim(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """provider_kind="litellm": catalog names for non-openai providers already
+    carry their provider prefix (e.g. gemini/gemini-2.5-pro), so the replay
+    must pass litellm_model_name VERBATIM — no openai/ or ollama/ prefixing,
+    no api_base — with the stored key attached as usual."""
+    ctx = super_ctx(seeded_user)
+    await create_model(session, ctx, litellm_model_name="gemini/gemini-2.5-pro",
+                       display_name="Gemini 2.5 Pro", provider_kind="litellm",
+                       base_url=None, api_key="AIza-live-42", settings=settings)
+    rec = Recorder()
+    assert await sync_models_to_litellm(session, settings, transport=rec.transport) == 1
+    new_payload = json.loads(rec.calls[-1][2])
+    assert new_payload["model_name"] == "gemini/gemini-2.5-pro"
+    assert new_payload["litellm_params"]["model"] == "gemini/gemini-2.5-pro"
+    assert new_payload["litellm_params"]["api_key"] == "AIza-live-42"
+    assert "api_base" not in new_payload["litellm_params"]
+
+
 async def test_sync_tolerates_empty_litellm_proxy_on_first_sync(
     session: AsyncSession, seeded_user: User, settings: Settings
 ) -> None:

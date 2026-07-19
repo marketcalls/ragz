@@ -32,6 +32,10 @@ async def _litellm_params(
     if model.provider_kind == "ollama":
         params["model"] = f"ollama/{model.litellm_model_name}"
         params["api_base"] = model.base_url
+    elif model.provider_kind == "litellm":
+        # Catalog names already carry their provider prefix for non-openai
+        # providers (e.g. gemini/gemini-2.5-pro) — pass VERBATIM, no api_base.
+        params["model"] = model.litellm_model_name
     else:  # openai | openai_compatible both speak the OpenAI protocol
         params["model"] = f"openai/{model.litellm_model_name}"
         if model.provider_kind == "openai_compatible":
