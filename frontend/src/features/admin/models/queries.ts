@@ -11,6 +11,10 @@ export interface ModelCreate {
   provider_kind: 'openai' | 'ollama' | 'openai_compatible' | 'litellm';
   base_url?: string;
   api_key?: string; // write-only: sent, never read back
+  // Phase 3 Plan I (MODEL-3): flag models that silently emit tool-call JSON
+  // as content instead of calling tools natively; the agent loop then uses
+  // the JSON-planner protocol for them.
+  tools_unreliable?: boolean;
 }
 
 export interface ModelPatchInput {
@@ -18,6 +22,7 @@ export interface ModelPatchInput {
   base_url?: string;
   enabled?: boolean;
   api_key?: string; // write-only: sent, never read back
+  tools_unreliable?: boolean;
 }
 
 // A 502 on these routes means the LOCAL write already succeeded and only the

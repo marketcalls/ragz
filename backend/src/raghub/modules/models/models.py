@@ -16,3 +16,6 @@ class Model(UUIDPk, Base):
     # litellm_param streams this canned text without hitting any real provider
     # - useful for load tests, demos, and air-gapped dev.
     mock_response: Mapped[str | None] = mapped_column(default=None)
+    # Phase 3 Plan I (MODEL-3): model can't do native tool calling reliably;
+    # the agent loop uses the JSON-planner protocol for it instead.
+    tools_unreliable: Mapped[bool] = mapped_column(default=False, server_default="false")

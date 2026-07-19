@@ -1413,6 +1413,11 @@ export interface components {
             api_key?: string | null;
             /** Mock Response */
             mock_response?: string | null;
+            /**
+             * Tools Unreliable
+             * @default false
+             */
+            tools_unreliable?: boolean;
         };
         /** ModelDayTokens */
         ModelDayTokens: {
@@ -1458,6 +1463,8 @@ export interface components {
             sync_status: "synced" | "error" | "pending";
             /** Mock Response */
             mock_response: string | null;
+            /** Tools Unreliable */
+            tools_unreliable: boolean;
         };
         /** ModelPatch */
         ModelPatch: {
@@ -1471,6 +1478,8 @@ export interface components {
             api_key?: string | null;
             /** Mock Response */
             mock_response?: string | null;
+            /** Tools Unreliable */
+            tools_unreliable?: boolean | null;
         };
         /**
          * ModelPublic

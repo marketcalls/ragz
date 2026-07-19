@@ -23,6 +23,7 @@ const fixtureModel: ModelOut = {
   key_fingerprint: 'ab12…ef90',
   sync_status: 'synced',
   mock_response: null,
+  tools_unreliable: false,
 };
 
 // Entries as the API returns them: provider ASC, position DESC (newest first).
@@ -223,6 +224,43 @@ test('custom path submits the assembled payload', async () => {
     provider_kind: 'openai',
     api_key: 'sk-test-123',
   });
+});
+
+test('checking "unreliable at native tool calling" includes tools_unreliable in the create payload', async () => {
+  const fetchMock = routedFetch(created());
+  const user = userEvent.setup();
+  renderDialog(fetchMock);
+  const providers = await openProviderList(user);
+  await user.click(providers.getByRole('option', { name: 'Custom / self-hosted' }));
+  await user.type(screen.getByLabelText('Model id'), 'gemma4:e4b');
+  await user.type(screen.getByLabelText('Display name'), 'Gemma');
+  const checkbox = screen.getByLabelText('Unreliable at native tool calling');
+  expect(checkbox).not.toBeChecked();
+  await user.click(checkbox);
+  expect(checkbox).toBeChecked();
+  await user.click(screen.getByRole('button', { name: 'Add model' }));
+  await vi.waitFor(() => expect(mutationCalls(fetchMock)).toHaveLength(1));
+  const body = JSON.parse(await mutationCalls(fetchMock)[0]!.clone().text()) as Record<
+    string,
+    unknown
+  >;
+  expect(body).toMatchObject({ tools_unreliable: true });
+});
+
+test('editing a flagged model shows the checkbox pre-checked and unchecking it PATCHes false', async () => {
+  const fetchMock = routedFetch(created(200));
+  const user = userEvent.setup();
+  renderDialog(fetchMock, { model: { ...fixtureModel, tools_unreliable: true } });
+  const checkbox = screen.getByLabelText('Unreliable at native tool calling');
+  expect(checkbox).toBeChecked();
+  await user.click(checkbox);
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  await vi.waitFor(() => expect(mutationCalls(fetchMock)).toHaveLength(1));
+  const body = JSON.parse(await mutationCalls(fetchMock)[0]!.clone().text()) as Record<
+    string,
+    unknown
+  >;
+  expect(body).toMatchObject({ tools_unreliable: false });
 });
 
 test('a 502 still invalidates the caches and closes the dialog as a partial success', async () => {

@@ -68,7 +68,7 @@ async def create_model(
         session, ctx, litellm_model_name=body.litellm_model_name,
         display_name=body.display_name, provider_kind=body.provider_kind,
         base_url=body.base_url, api_key=body.api_key, settings=settings,
-        mock_response=body.mock_response,
+        mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
     )
     _schedule_sync(background_tasks, request, settings)
     return (await service.to_model_out(session, [model]))[0]
@@ -83,7 +83,7 @@ async def patch_model(
     model = await service.update_model(
         session, ctx, model_id, display_name=body.display_name, base_url=body.base_url,
         enabled=body.enabled, api_key=body.api_key, settings=settings,
-        mock_response=body.mock_response,
+        mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
     )
     _schedule_sync(background_tasks, request, settings)
     return (await service.to_model_out(session, [model]))[0]

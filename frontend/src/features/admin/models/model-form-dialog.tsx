@@ -182,6 +182,7 @@ export function ModelFormDialog({
   const [modelId, setModelId] = useState(model?.litellm_model_name ?? '');
   const [baseUrl, setBaseUrl] = useState(model?.base_url ?? '');
   const [apiKey, setApiKey] = useState(''); // write-only: always starts blank, even editing
+  const [toolsUnreliable, setToolsUnreliable] = useState(model?.tools_unreliable ?? false);
 
   const isCustom = catalogProvider === CUSTOM;
   // null until a provider is chosen in add mode — downstream fields stay hidden.
@@ -234,6 +235,7 @@ export function ModelFormDialog({
       setModelId(model?.litellm_model_name ?? '');
       setBaseUrl(model?.base_url ?? '');
       setApiKey(''); // key never lingers in state after close
+      setToolsUnreliable(model?.tools_unreliable ?? false);
       create.reset();
       patch.reset();
     }
@@ -286,6 +288,9 @@ export function ModelFormDialog({
         body.base_url = baseUrl;
       }
       if (apiKey) body.api_key = apiKey;
+      if (toolsUnreliable !== (model.tools_unreliable ?? false)) {
+        body.tools_unreliable = toolsUnreliable;
+      }
       patch.mutate({ modelId: model.id, body }, handleSettled);
       return;
     }
@@ -296,6 +301,7 @@ export function ModelFormDialog({
       provider_kind: kind,
       ...(NEEDS_BASE_URL.includes(kind) && baseUrl ? { base_url: baseUrl } : {}),
       ...(NEEDS_KEY.includes(kind) && apiKey ? { api_key: apiKey } : {}),
+      ...(toolsUnreliable ? { tools_unreliable: toolsUnreliable } : {}),
     };
     create.mutate(body, handleSettled);
   };
@@ -409,6 +415,17 @@ export function ModelFormDialog({
                 onChange={(e) => setApiKey(e.target.value)}
               />
             </div>
+          ) : null}
+          {kind !== null ? (
+            <label className="flex items-center gap-2 text-[13px] text-secondary">
+              <input
+                type="checkbox"
+                checked={toolsUnreliable}
+                onChange={(e) => setToolsUnreliable(e.target.checked)}
+                aria-label="Unreliable at native tool calling"
+              />
+              Unreliable at native tool calling — agent uses the JSON planner
+            </label>
           ) : null}
           {activeError && !(activeError instanceof PartialSyncError) ? (
             <p role="alert" className="text-[12px] text-danger">

@@ -143,6 +143,35 @@ async def test_catalog_listing_flags_unregistered_models(
                               headers=h_admin)).status_code == 403
 
 
+async def test_tools_unreliable_flag_roundtrip(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h_super = await auth(client, "root@platform.example")
+    r = await client.post(
+        "/api/v1/admin/models",
+        json={"litellm_model_name": "gemma4:e4b", "display_name": "Gemma",
+              "provider_kind": "ollama", "base_url": "http://ollama:11434"},
+        headers=h_super,
+    )
+    assert r.status_code == 201
+    assert r.json()["tools_unreliable"] is False  # default
+    model_id = r.json()["id"]
+    r = await client.patch(
+        f"/api/v1/admin/models/{model_id}",
+        json={"tools_unreliable": True}, headers=h_super,
+    )
+    assert r.status_code == 200 and r.json()["tools_unreliable"] is True
+    # And it can be created flagged from the start:
+    r = await client.post(
+        "/api/v1/admin/models",
+        json={"litellm_model_name": "tiny-local", "display_name": "Tiny",
+              "provider_kind": "ollama", "base_url": "http://ollama:11434",
+              "tools_unreliable": True},
+        headers=h_super,
+    )
+    assert r.json()["tools_unreliable"] is True
+
+
 async def test_catalog_listing_preserves_zero_cost_entries(
     client: httpx.AsyncClient, seeded_superadmin: User, session: AsyncSession,
 ) -> None:
