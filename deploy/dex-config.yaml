@@ -1,0 +1,16 @@
+issuer: http://localhost:55556/dex
+storage: { type: memory }
+web: { http: 0.0.0.0:5556 }
+oauth2: { skipApprovalScreen: true }
+staticClients:
+  - id: raghub
+    secret: raghub-dex-secret
+    name: RagHub
+    redirectURIs: ["http://localhost:8000/api/v1/auth/oidc/callback"]
+enablePasswordDB: true
+staticPasswords:
+  - email: sso-user@acme.com
+    # bcrypt("password") — dex's documented example hash; dev smoke only
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: sso-user
+    userID: 08a8684b-db88-4b73-90a9-3cd1661f5466

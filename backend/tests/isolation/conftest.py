@@ -6,7 +6,7 @@ from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_par
 from raghub.modules.documents.models import Document
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
@@ -49,6 +49,38 @@ async def seed_same_org_two_workspaces(
         user_id=user2.id, org_id=org.id, role="user", workspace_ids=frozenset({ws2.id})
     )
     return ctx1, ws1, ctx2, ws2
+
+
+async def seed_acl_workspace(
+    session: AsyncSession,
+) -> tuple[TenantContext, TenantContext, TenantContext, Workspace, Group]:
+    """ONE org, ONE workspace, both users members of it — so workspace filters
+    alone can never explain a pass. insider is in group 'finance'; outsider is
+    not; admin has no groups at all (bypass must come from role, not data)."""
+    org = Organization(name="aclOrg")
+    session.add(org)
+    await session.flush()
+    ws = Workspace(org_id=org.id, name="aclws")
+    insider = User(org_id=org.id, email="in@aclorg.com", password_hash="x", role="user")  # noqa: S106
+    outsider = User(org_id=org.id, email="out@aclorg.com", password_hash="x", role="user")  # noqa: S106
+    admin = User(org_id=org.id, email="adm@aclorg.com", password_hash="x", role="admin")  # noqa: S106
+    session.add_all([ws, insider, outsider, admin])
+    await session.flush()
+    finance = Group(org_id=org.id, name="finance")
+    session.add(finance)
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=insider.id))
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=outsider.id))
+    await session.flush()
+    session.add(UserGroup(group_id=finance.id, user_id=insider.id))
+    await session.commit()
+    ctx_in = TenantContext(user_id=insider.id, org_id=org.id, role="user",
+                           workspace_ids=frozenset({ws.id}),
+                           group_ids=frozenset({finance.id}))
+    ctx_out = TenantContext(user_id=outsider.id, org_id=org.id, role="user",
+                            workspace_ids=frozenset({ws.id}))
+    ctx_admin = TenantContext(user_id=admin.id, org_id=org.id, role="admin",
+                              workspace_ids=frozenset())
+    return ctx_in, ctx_out, ctx_admin, ws, finance
 
 
 @pytest.fixture

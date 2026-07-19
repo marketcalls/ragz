@@ -6,7 +6,7 @@ from raghub.core.config import Settings
 from raghub.core.errors import AuthenticationError
 from raghub.modules.auth.models import RefreshToken, User
 from raghub.modules.auth.passwords import hash_password
-from raghub.modules.auth.service import login, logout, rotate_refresh
+from raghub.modules.auth.service import login, login_oidc, logout, rotate_refresh
 from raghub.modules.tenancy.models import Organization
 
 SETTINGS = Settings(_env_file=None)
@@ -65,6 +65,28 @@ async def test_rotate_refresh_inactive_user_leaves_token_untouched(
         await session.execute(select(RefreshToken).where(RefreshToken.user_id == user.id))
     ).scalar_one()
     assert row.revoked_at is None
+
+
+async def test_login_oidc_denies_ambiguous_domain_claim(session: AsyncSession) -> None:
+    """Defense in depth: `set_org_sso_domains` now rejects a second org claiming
+    an already-claimed domain (see tests/modules/tenancy/test_sso_domains.py),
+    but `login_oidc` must fail loudly too if the data ever ends up ambiguous
+    anyway (e.g. rows written before that guard existed, or direct DB edits) --
+    it must never silently pick whichever org `.first()` happens to sort."""
+    org_a = Organization(name="Acme-A", sso_domains=["acme.com"])
+    org_b = Organization(name="Acme-B", sso_domains=["acme.com"])
+    session.add_all([org_a, org_b])
+    await session.flush()
+    await session.commit()
+
+    with pytest.raises(AuthenticationError):
+        await login_oidc(session, email="new.hire@acme.com", settings=SETTINGS)
+
+    # no user was provisioned into either org as a side effect of the failed attempt
+    rows = (
+        await session.execute(select(User).where(User.email == "new.hire@acme.com"))
+    ).scalars().all()
+    assert rows == []
 
 
 async def test_logout_revokes(session: AsyncSession) -> None:

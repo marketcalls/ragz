@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     litellm_master_key: str = "sk-raghub-dev-master"  # noqa: S105
     chat_context_token_budget: int = 8000
 
+    # Phase 2 Plan F: OIDC SSO (AUTH-2)
+    public_api_base_url: str = "http://localhost:8000"  # builds the OIDC redirect_uri
+    frontend_base_url: str = "http://localhost:5173"    # post-callback redirect target
+
+    # QUOTA-3 backstop: USD mirrored onto per-user LiteLLM virtual keys per 1M
+    # tokens of allocation. 0 disables max_budget (local-only installs).
+    litellm_usd_per_million_tokens: float = 5.0
+
 
 @lru_cache
 def get_settings() -> Settings:

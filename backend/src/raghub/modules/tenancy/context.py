@@ -14,7 +14,7 @@ from raghub.core.errors import AuthenticationError, AuthorizationError
 from raghub.core.ratelimit import FixedWindowLimiter, RedisFixedWindowLimiter
 from raghub.modules.auth.models import User
 from raghub.modules.auth.tokens import decode_access_token
-from raghub.modules.tenancy.models import WorkspaceMember
+from raghub.modules.tenancy.models import UserGroup, WorkspaceMember
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class TenantContext:
     org_id: UUID
     role: str
     workspace_ids: frozenset[UUID]
+    group_ids: frozenset[UUID] = frozenset()
 
 
 _bearer = HTTPBearer(auto_error=False)
@@ -45,8 +46,14 @@ async def get_tenant_context(
             select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
         )
     ).scalars().all()
+    group_ids = (
+        await session.execute(
+            select(UserGroup.group_id).where(UserGroup.user_id == user.id)
+        )
+    ).scalars().all()
     return TenantContext(
-        user_id=user.id, org_id=user.org_id, role=user.role, workspace_ids=frozenset(ws_ids)
+        user_id=user.id, org_id=user.org_id, role=user.role,
+        workspace_ids=frozenset(ws_ids), group_ids=frozenset(group_ids),
     )
 
 

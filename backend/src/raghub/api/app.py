@@ -10,13 +10,18 @@ from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from raghub.api.routes.admin_audit import router as admin_audit_router
 from raghub.api.routes.admin_secrets import router as admin_secrets_router
+from raghub.api.routes.admin_sso import router as admin_sso_router
 from raghub.api.routes.auth import router as auth_router
 from raghub.api.routes.chats import router as chats_router
 from raghub.api.routes.documents import router as documents_router
+from raghub.api.routes.groups import router as groups_router
 from raghub.api.routes.health import router as health_router
 from raghub.api.routes.models import router as models_router
+from raghub.api.routes.oidc import router as oidc_router
 from raghub.api.routes.search import router as search_router
+from raghub.api.routes.usage import router as usage_router
 from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
 from raghub.core.config import get_settings
@@ -57,6 +62,7 @@ def create_app(
     retriever: Retriever | None = None,
     llm_streamer: LLMStreamer | None = None,
     chunk_reader: ChunkReader | None = None,
+    oidc_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -72,6 +78,7 @@ def create_app(
     app.state.retriever = retriever if retriever is not None else retrieve
     app.state.llm_streamer = llm_streamer
     app.state.chunk_reader = chunk_reader if chunk_reader is not None else RetrievalChunkReader()
+    app.state.oidc_transport = oidc_transport
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:
@@ -113,11 +120,16 @@ def create_app(
 
     app.include_router(health_router)
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(oidc_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
     app.include_router(workspaces_router, prefix="/api/v1")
     app.include_router(documents_router, prefix="/api/v1")
+    app.include_router(groups_router, prefix="/api/v1")
     app.include_router(search_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
+    app.include_router(admin_audit_router, prefix="/api/v1")
+    app.include_router(admin_sso_router, prefix="/api/v1")
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(chats_router, prefix="/api/v1")
+    app.include_router(usage_router, prefix="/api/v1")
     return app

@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
+import { AuditPage } from '@/features/admin/audit/audit-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
 import { UsersPage } from '@/features/admin/users/users-page';
 import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
@@ -30,7 +31,10 @@ export const router = createBrowserRouter([
           },
           {
             element: <RequireRole role="superadmin" />,
-            children: [{ path: '/admin/models', element: <ModelsPage /> }],
+            children: [
+              { path: '/admin/models', element: <ModelsPage /> },
+              { path: '/admin/audit', element: <AuditPage /> },
+            ],
           },
         ],
       },

@@ -116,6 +116,50 @@ async def test_delete_document_points(session: AsyncSession, qdrant_collection: 
     assert result.chunks == []
 
 
+async def test_delete_restricted_document_points(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """Verify deletion of a RESTRICTED document via delete_document_points:
+    an unfiltered scroll must show zero points for that doc (maintenance posture
+    ignores ACL). Kills the mutant hard-coding a groupset in delete's filter."""
+    from uuid import UUID
+
+    from raghub.modules.retrieval.client import COLLECTION
+
+    ctx, ws = await seed_workspace(session, "orgg")
+    # Seed a restricted document with ACL payload (acl_groups=[finance_group_id])
+    document_id = str(uuid4())
+    finance_id = uuid4()
+    dense = await get_dense_embedder().embed(["restricted finance data"])
+    sparse = await asyncio.to_thread(embed_sparse, ["restricted finance data"])
+    points = [
+        models.PointStruct(
+            id=str(uuid4()),
+            vector={"dense": dense[0], "sparse": sparse[0]},
+            payload={
+                "tenant_id": str(ctx.org_id),
+                "workspace_id": str(ws.id),
+                "document_id": document_id,
+                "page": 1,
+                "chunk_index": 0,
+                "text": "restricted finance data",
+                "doc_type": "text/plain",
+                "date": "2026-07-18",
+                "acl_groups": [str(finance_id)],  # non-empty ACL payload
+            },
+        )
+    ]
+    await get_qdrant().upsert(COLLECTION, points=points, wait=True)
+
+    # Delete the document via delete_document_points (maintenance path)
+    await delete_document_points(ctx.org_id, UUID(document_id))
+
+    # Unfiltered scroll must show zero points for that document
+    all_points, _ = await get_qdrant().scroll(COLLECTION, limit=100)
+    doc_points = [p for p in all_points if (p.payload or {}).get("document_id") == document_id]
+    assert doc_points == []
+
+
 async def test_delete_points_tolerates_missing_collection(stack_env: None) -> None:
     """Deleting a never-indexed document must be a no-op, not a Qdrant 404 (smoke regression).
 

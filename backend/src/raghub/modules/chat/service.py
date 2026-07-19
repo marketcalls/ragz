@@ -42,6 +42,7 @@ from raghub.modules.chat.router import classify_query
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
+from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
@@ -513,6 +514,12 @@ async def stream_reply(
                 session, ctx, chat, parent=user_message, content=convo_answer,
                 model_id=model.id, usage=convo_usage, citations=[],
             )
+            if convo_usage is not None:
+                await quota_service.record_usage(
+                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                    feature="chat", prompt_tokens=convo_usage.prompt_tokens,
+                    completion_tokens=convo_usage.completion_tokens,
+                )
             yield citations_event([])
             yield done_event(
                 message_id=str(msg.id),
@@ -626,6 +633,12 @@ async def stream_reply(
             session, ctx, chat, parent=user_message, content=answer, model_id=model.id,
             usage=usage, citations=citation_refs,
         )
+        if usage is not None:
+            await quota_service.record_usage(
+                session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                feature="chat", prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+            )
         yield citations_event(citation_refs)
         yield done_event(
             message_id=str(msg.id),

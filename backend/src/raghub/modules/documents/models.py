@@ -2,6 +2,8 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from raghub.core.db import Base, UUIDPk, naive_utc
@@ -26,6 +28,11 @@ class Document(UUIDPk, Base):
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
     pinned: Mapped[bool] = mapped_column(default=False, index=True)
+    # None = unrestricted (every pre-Phase-2 document); a list = only members of
+    # those groups (and admins) may retrieve or open it (RBAC-5).
+    acl_group_ids: Mapped[list[UUID] | None] = mapped_column(
+        ARRAY(PG_UUID(as_uuid=True)), default=None
+    )
 
 
 class IngestJob(UUIDPk, Base):

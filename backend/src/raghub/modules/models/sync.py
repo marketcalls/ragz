@@ -4,8 +4,12 @@ Replace-all strategy: list deployed models, delete each, re-create from the
 enabled registry rows. Runs after every registry CRUD (route layer) and on app
 startup, so the proxy's own store is disposable state.
 
-This module is the ONLY caller of secrets service._get_secret_decrypted
-(iron rule 3); a source-scan test enforces that.
+Iron rule 3 note: `_get_secret_decrypted` is defined in secrets/service.py and
+called from exactly four files — this module, auth/oidc.py, and
+models/keys.py, plus its own definition. A source-scan test
+(tests/modules/models/test_sync.py::test_decryption_callers_are_exactly_the_gateway_allowlist)
+pins that allowlist; adding a caller is a security review event, not a
+refactor.
 """
 
 from typing import Any

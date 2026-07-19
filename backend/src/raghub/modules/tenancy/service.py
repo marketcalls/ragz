@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from uuid import UUID
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +10,7 @@ from raghub.modules.audit.service import record_audit
 from raghub.modules.auth.models import User
 from raghub.modules.models import service as models_service
 from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Workspace, WorkspaceMember
+from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
 
 
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
@@ -122,3 +123,129 @@ async def update_retrieval_settings(
     else:
         await session.flush()
     return ws
+
+
+async def create_group(session: AsyncSession, ctx: TenantContext, name: str) -> Group:
+    group = Group(org_id=ctx.org_id, name=name)
+    session.add(group)
+    await session.flush()
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="group.created", target_type="group", target_id=str(group.id))
+    await session.commit()
+    return group
+
+
+async def _org_group(session: AsyncSession, ctx: TenantContext, group_id: UUID) -> Group:
+    group = (
+        await session.execute(
+            select(Group).where(Group.id == group_id, Group.org_id == ctx.org_id)
+        )
+    ).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError("group not found")
+    return group
+
+
+async def list_groups(
+    session: AsyncSession, ctx: TenantContext
+) -> list[tuple[Group, list[UUID]]]:
+    groups = list(
+        (
+            await session.execute(
+                select(Group).where(Group.org_id == ctx.org_id).order_by(Group.name)
+            )
+        ).scalars()
+    )
+    rows = (
+        await session.execute(
+            select(UserGroup.group_id, UserGroup.user_id)
+            .join(Group, Group.id == UserGroup.group_id)
+            .where(Group.org_id == ctx.org_id)
+        )
+    ).all()
+    members: dict[UUID, list[UUID]] = {g.id: [] for g in groups}
+    for group_id, user_id in rows:
+        members[group_id].append(user_id)
+    return [(g, sorted(members[g.id])) for g in groups]
+
+
+async def delete_group(session: AsyncSession, ctx: TenantContext, group_id: UUID) -> None:
+    group = await _org_group(session, ctx, group_id)
+    await session.delete(group)  # user_groups rows cascade at the DB layer
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="group.deleted", target_type="group", target_id=str(group_id))
+    await session.commit()
+
+
+async def add_group_member(
+    session: AsyncSession, ctx: TenantContext, group_id: UUID, user_id: UUID
+) -> None:
+    await _org_group(session, ctx, group_id)
+    user = (
+        await session.execute(select(User).where(User.id == user_id, User.org_id == ctx.org_id))
+    ).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError("user not found")
+    session.add(UserGroup(group_id=group_id, user_id=user_id))
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="group.member_added", target_type="group",
+                       target_id=f"{group_id}:{user_id}")
+    await session.commit()
+
+
+async def remove_group_member(
+    session: AsyncSession, ctx: TenantContext, group_id: UUID, user_id: UUID
+) -> None:
+    await _org_group(session, ctx, group_id)
+    await session.execute(
+        sa_delete(UserGroup).where(
+            UserGroup.group_id == group_id, UserGroup.user_id == user_id
+        )
+    )
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="group.member_removed", target_type="group",
+                       target_id=f"{group_id}:{user_id}")
+    await session.commit()
+
+
+async def list_organizations(session: AsyncSession) -> list[Organization]:
+    """Superadmin-only listing (admin/sso routes) — platform-wide, not org-scoped."""
+    return list(
+        (await session.execute(select(Organization).order_by(Organization.name))).scalars()
+    )
+
+
+async def set_org_sso_domains(
+    session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, domains: list[str]
+) -> Organization:
+    """AUTH-6: normalize to lowercase, de-duplicate, empty collapses to None.
+
+    Review finding: a domain must be claimed by at most one org, otherwise a
+    JIT-provisioned SSO user gets routed into whichever org happens to sort
+    first (see modules/auth/service.py:login_oidc). Reject the write (409) if
+    any of the requested domains is already claimed by a DIFFERENT org; the
+    same org re-claiming (or extending) its own list is fine.
+    """
+    org = (
+        await session.execute(select(Organization).where(Organization.id == org_id))
+    ).scalar_one_or_none()
+    if org is None:
+        raise NotFoundError("organization not found")
+    normalized = sorted({d.strip().lower() for d in domains if d.strip()})
+    if normalized:
+        conflict = (
+            await session.execute(
+                select(Organization.id).where(
+                    Organization.id != org_id,
+                    Organization.sso_domains.overlap(normalized),
+                )
+            )
+        ).first()
+        if conflict is not None:
+            raise ConflictError("one or more domains are already claimed by another organization")
+    org.sso_domains = normalized or None
+    await record_audit(session, org_id=org.id, actor_id=actor_id,
+                       action="org.sso_domains_changed", target_type="organization",
+                       target_id=str(org.id))
+    await session.commit()
+    return org

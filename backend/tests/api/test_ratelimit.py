@@ -42,3 +42,29 @@ async def test_invitation_accept_rate_limited(client: httpx.AsyncClient) -> None
     r = await client.post("/api/v1/auth/invitations/accept",
                           json={"token": "bogus", "password": "irrelevant1"})
     assert r.status_code == 429
+
+
+async def test_oidc_login_rate_limited(client: httpx.AsyncClient) -> None:
+    # SSO isn't configured in this fixture, so the route itself 404s -- but the
+    # rate-limit dependency runs before the handler body regardless of outcome
+    # (same guard-runs-regardless-of-outcome pattern as /auth/refresh above).
+    for _ in range(10):
+        await client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    r = await client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    assert r.status_code == 429
+    assert r.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_oidc_callback_rate_limited(client: httpx.AsyncClient) -> None:
+    for _ in range(10):
+        await client.get("/api/v1/auth/oidc/callback?code=x&state=y", follow_redirects=False)
+    r = await client.get("/api/v1/auth/oidc/callback?code=x&state=y", follow_redirects=False)
+    assert r.status_code == 429
+
+
+async def test_oidc_status_rate_limited(client: httpx.AsyncClient) -> None:
+    # Looser tier than login/callback, but still bounded.
+    for _ in range(60):
+        await client.get("/api/v1/auth/oidc/status")
+    r = await client.get("/api/v1/auth/oidc/status")
+    assert r.status_code == 429

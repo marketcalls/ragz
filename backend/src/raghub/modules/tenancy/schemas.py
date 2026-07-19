@@ -31,3 +31,13 @@ class WorkspacePatch(BaseModel):
 class MemberAdd(BaseModel):
     user_id: UUID
     role: str = "member"
+
+
+class GroupCreate(BaseModel):
+    name: str
+
+
+class GroupOut(BaseModel):
+    id: UUID
+    name: str
+    member_ids: list[UUID]

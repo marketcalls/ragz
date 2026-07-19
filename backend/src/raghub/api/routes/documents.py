@@ -8,13 +8,27 @@ from raghub.api.deps import get_session
 from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
 from raghub.modules.documents import service
-from raghub.modules.documents.schemas import DocumentOut, DocumentPatch
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context
+from raghub.modules.documents.models import Document
+from raghub.modules.documents.schemas import AclUpdate, DocumentOut, DocumentPatch
+from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
 from raghub.worker.tasks import enqueue_delete, enqueue_ingest
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
+AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
+
+
+def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
+    """`acl_group_ids` is admin-only metadata (CLAUDE.md ACL posture): a
+    restricted document still shows up in workspace listings for plain
+    members (existence is visible, Drive-style) but the group ids themselves
+    are blanked to `null` unless the caller is admin/superadmin. Contents and
+    citations remain enforced in the vector query regardless of this field."""
+    out = DocumentOut.model_validate(doc)
+    if ctx.role not in ("admin", "superadmin"):
+        out = out.model_copy(update={"acl_group_ids": None})
+    return out
 
 
 @router.post("/workspaces/{workspace_id}/documents", status_code=201,
@@ -48,7 +62,7 @@ async def upload_document(
         data=data,
     )
     enqueue_ingest(doc.id, doc.size_bytes)
-    return DocumentOut.model_validate(doc)
+    return _serialize_document(doc, ctx)
 
 
 @router.get("/workspaces/{workspace_id}/documents", response_model=list[DocumentOut])
@@ -56,7 +70,7 @@ async def list_workspace_documents(
     workspace_id: UUID, session: SessionDep, ctx: CtxDep
 ) -> list[DocumentOut]:
     docs = await service.list_documents(session, ctx, workspace_id)
-    return [DocumentOut.model_validate(d) for d in docs]
+    return [_serialize_document(d, ctx) for d in docs]
 
 
 @router.delete("/documents/{document_id}", status_code=202)
@@ -79,4 +93,12 @@ async def patch_document(
     document_id: UUID, body: DocumentPatch, session: SessionDep, ctx: CtxDep
 ) -> DocumentOut:
     doc = await service.set_pinned(session, ctx, document_id, body.pinned)
-    return DocumentOut.model_validate(doc)
+    return _serialize_document(doc, ctx)
+
+
+@router.put("/documents/{document_id}/acl", response_model=DocumentOut)
+async def set_document_acl(
+    document_id: UUID, body: AclUpdate, session: SessionDep, ctx: AdminDep
+) -> DocumentOut:
+    doc = await service.set_document_acl(session, ctx, document_id, body.acl_group_ids)
+    return _serialize_document(doc, ctx)

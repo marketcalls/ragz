@@ -27,8 +27,13 @@ from raghub.modules.documents.pipeline import (
     parse_bytes,
     upsert_points,
 )
+from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.embeddings import get_dense_embedder
-from raghub.modules.retrieval.service import delete_document_points, ensure_collection
+from raghub.modules.retrieval.service import (
+    delete_document_points,
+    ensure_collection,
+    update_document_acl,
+)
 
 _BATCH_SIZE = 32
 
@@ -144,6 +149,7 @@ async def run_embed_upsert(document_id: UUID) -> None:
             await upsert_points(
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
                 mime=doc.mime, created_at=doc.created_at,
+                acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse,
             )
             done += len(batch)
@@ -155,12 +161,38 @@ async def run_embed_upsert(document_id: UUID) -> None:
         # this task reached here). If so, the points we just wrote are
         # orphaned and retrievable despite the document no longer existing —
         # clean them up and skip marking indexed.
+        # populate_existing: `doc` (and thus `still_exists`, same identity map
+        # entry) was loaded once at the top of this function and this session
+        # never expires on commit — without forcing a repopulate here, a
+        # concurrent ACL PUT (different session) committed mid-loop would be
+        # invisible to this SELECT even though its row is on disk.
         still_exists = (
-            await session.execute(select(Document).where(Document.id == document_id))
+            await session.execute(
+                select(Document)
+                .where(Document.id == document_id)
+                .execution_options(populate_existing=True)
+            )
         ).scalar_one_or_none()
         if still_exists is None:
             await delete_document_points(org_id, document_id)
             return
+
+        # An ACL admin PUT racing mid-ingest may have stamped only the points
+        # upserted so far (update_document_acl re-stamps existing points, not
+        # ones written by later batches) — or landed between the last batch's
+        # upsert and here. Re-stamp against the row's CURRENT acl_group_ids
+        # (freshly repopulated above) so every point for this document
+        # reflects the latest PG state before the document is marked indexed
+        # and becomes retrievable.
+        await update_document_acl(org_id, document_id, still_exists.acl_group_ids)
+
+        # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
+        # token usage, so chars//4 is the documented estimate, flagged by feature.
+        await quota_service.record_usage(
+            session, org_id=doc.org_id, user_id=doc.created_by, model_id=None,
+            feature="ingestion",
+            prompt_tokens=sum(len(c.text) for c in chunks) // 4, completion_tokens=0,
+        )
 
         doc.status = "indexed"
         await _finish_stage(session, embed_job)

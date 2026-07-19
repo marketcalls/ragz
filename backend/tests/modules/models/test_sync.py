@@ -133,12 +133,19 @@ async def test_sync_tolerates_empty_litellm_proxy_on_first_sync(
     assert statuses == {"gpt-4o-mini": "synced"}
 
 
-def test_decryption_has_exactly_one_caller() -> None:
-    """Iron rule 3 guard: _get_secret_decrypted appears only in its module and sync.py."""
+def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
+    """Iron rule 3 guard: _get_secret_decrypted appears ONLY in its own module
+    and the sanctioned gateway-boundary callers. Phase 2 addition: auth/oidc.py
+    (OIDC client secret -> one outbound token request; same decrypt-in-memory,
+    use-immediately, never-return pattern as sync.py). Adding a caller here is
+    a security review event, not a refactor.
+    models/keys.py: per-user LiteLLM virtual keys — outbound gateway auth."""
     src_root = Path(raghub.__file__).parent
     allowed = {
         src_root / "modules" / "secrets" / "service.py",
         src_root / "modules" / "models" / "sync.py",
+        src_root / "modules" / "auth" / "oidc.py",
+        src_root / "modules" / "models" / "keys.py",
     }
     offenders = [
         str(p)

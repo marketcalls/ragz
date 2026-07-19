@@ -17,6 +17,7 @@ from raghub.modules.auth.models import Invitation, RefreshToken, User
 from raghub.modules.auth.passwords import hash_password, verify_password
 from raghub.modules.auth.tokens import issue_access_token
 from raghub.modules.tenancy.context import TenantContext
+from raghub.modules.tenancy.models import Organization
 
 
 @dataclass(frozen=True)
@@ -203,3 +204,46 @@ async def set_user_role(
                        target_id=str(user_id))
     await session.commit()
     return user
+
+
+async def login_oidc(session: AsyncSession, *, email: str, settings: Settings) -> TokenPair:
+    """Session issuance for an OIDC-verified email: existing user logs straight
+    in; unknown emails JIT-provision as role 'user' into the unique org whose
+    sso_domains allowlist contains the email domain (AUTH-2 + AUTH-6)."""
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user is None:
+        domain = email.rsplit("@", 1)[-1]
+        orgs = (
+            await session.execute(
+                select(Organization).where(Organization.sso_domains.contains([domain]))
+            )
+        ).scalars().all()
+        if len(orgs) != 1:
+            # Zero matches: no org claims the domain. More than one: the unique-
+            # claim invariant enforced at write time (tenancy.set_org_sso_domains)
+            # was somehow violated anyway (legacy rows, direct DB edits) -- fail
+            # loudly rather than silently picking one. Same generic message and
+            # denial audit action either way: the detail must never reveal
+            # whether zero or multiple orgs matched (no org enumeration).
+            await record_audit(session, org_id=None, actor_id=None,
+                               action="login.oidc_denied", target_type="user",
+                               target_id=email)
+            await session.commit()
+            raise AuthenticationError("no organization accepts this email domain")
+        org = orgs[0]
+        user = User(
+            org_id=org.id, email=email,
+            # unusable password: SSO users authenticate only via the IdP
+            password_hash=hash_password(secrets.token_urlsafe(32)),
+            role="user",
+        )
+        session.add(user)
+        await session.flush()
+        await record_audit(session, org_id=org.id, actor_id=user.id,
+                           action="user.oidc_provisioned", target_type="user",
+                           target_id=str(user.id))
+    if not user.active:
+        raise AuthenticationError("user inactive")
+    await record_audit(session, org_id=user.org_id, actor_id=user.id,
+                       action="login.oidc", target_type="user", target_id=str(user.id))
+    return await _issue_pair(session, user, uuid4(), settings)

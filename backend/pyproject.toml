@@ -24,6 +24,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "cryptography>=42.0",
     "tiktoken>=0.9",
+    "authlib>=1.3",
 ]
 
 [dependency-groups]
@@ -62,7 +63,7 @@ packages = ["raghub"]
 [[tool.mypy.overrides]]
 module = [
     "celery.*", "kombu.*", "fastembed.*", "aioboto3.*", "aiobotocore.*",
-    "botocore.*", "docling.*", "docling_core.*",
+    "botocore.*", "docling.*", "docling_core.*", "authlib.*",
 ]
 ignore_missing_imports = true
 

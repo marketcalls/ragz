@@ -25,3 +25,26 @@ async def get_or_create_signing_key(session: AsyncSession) -> str:
         session.add(row)
         await session.commit()
     return row.value
+
+
+async def get_app_setting(session: AsyncSession, key: str) -> str | None:
+    row = (
+        await session.execute(select(AppSetting).where(AppSetting.key == key))
+    ).scalar_one_or_none()
+    return None if row is None else row.value
+
+
+async def set_app_setting(
+    session: AsyncSession, key: str, value: str, *, commit: bool = True
+) -> None:
+    row = (
+        await session.execute(select(AppSetting).where(AppSetting.key == key))
+    ).scalar_one_or_none()
+    if row is None:
+        session.add(AppSetting(key=key, value=value))
+    else:
+        row.value = value
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
