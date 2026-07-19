@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from raghub.core.errors import UpstreamError
-from raghub.modules.chat.llm import LiteLLMStreamer, LLMDelta, LLMUsage
+from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompletion, LLMDelta, LLMUsage
 
 
 def sse_body(chunks: list[dict[str, object]]) -> bytes:
@@ -75,3 +75,68 @@ async def test_malformed_json_in_stream_maps_to_upstream_error() -> None:
     )
     with pytest.raises(UpstreamError, match="malformed stream chunk from gateway"):
         await collect(make(transport))
+
+
+def _completion_handler(body: dict) -> httpx.Response:  # type: ignore[no-untyped-def]
+    return httpx.Response(200, json=body)
+
+
+async def test_complete_parses_text_and_usage() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _completion_handler({
+            "choices": [{"message": {"content": '{"action": "answer"}'}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 4},
+        })
+
+    s = LiteLLMStreamer(base_url="http://llm", master_key="k",
+                        transport=httpx.MockTransport(handler))
+    out: LLMCompletion = await s.complete(model="m", messages=[{"role": "user", "content": "q"}])
+    assert out.text == '{"action": "answer"}'
+    assert out.tool_calls == [] and out.usage.prompt_tokens == 11
+    assert seen[0]["stream"] is False and "tools" not in seen[0]
+
+
+async def test_complete_passes_tools_and_parses_tool_calls() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _completion_handler({
+            "choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "search", "arguments": '{"query": "muster"}'}},
+            ]}}],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 6},
+        })
+
+    s = LiteLLMStreamer(base_url="http://llm", master_key="k",
+                        transport=httpx.MockTransport(handler))
+    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
+    out = await s.complete(model="m", messages=[{"role": "user", "content": "q"}], tools=tools)
+    assert seen[0]["tools"] == tools
+    assert out.text == ""  # null content normalizes to empty string
+    assert out.tool_calls[0].name == "search"
+    assert out.tool_calls[0].arguments == '{"query": "muster"}'
+
+
+async def test_complete_non_200_raises_upstream() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    s = LiteLLMStreamer(base_url="http://llm", master_key="k",
+                        transport=httpx.MockTransport(handler))
+    with pytest.raises(UpstreamError):
+        await s.complete(model="m", messages=[])
+
+
+async def test_complete_network_error_raises_upstream() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    s = LiteLLMStreamer(base_url="http://llm", master_key="k",
+                        transport=httpx.MockTransport(handler))
+    with pytest.raises(UpstreamError):
+        await s.complete(model="m", messages=[])

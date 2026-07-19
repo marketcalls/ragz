@@ -26,10 +26,33 @@ class LLMUsage:
     completion_tokens: int
 
 
+@dataclass(frozen=True)
+class LLMToolCall:
+    name: str
+    arguments: str  # provider's raw JSON string — parsed leniently by the loop
+
+
+@dataclass(frozen=True)
+class LLMCompletion:
+    text: str
+    tool_calls: list[LLMToolCall]
+    usage: LLMUsage
+
+
 class LLMStreamer(Protocol):
     def stream(
         self, *, model: str, messages: list[dict[str, str]]
     ) -> AsyncGenerator[LLMDelta | LLMUsage, None]: ...
+
+
+class LLMCompleter(Protocol):
+    async def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, object]] | None = None,
+    ) -> LLMCompletion: ...
 
 
 class LiteLLMStreamer:
@@ -95,3 +118,57 @@ class LiteLLMStreamer:
                                 yield LLMDelta(text=delta)
         except httpx.HTTPError as exc:
             raise UpstreamError("LLM gateway unreachable") from exc
+
+    async def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, object]] | None = None,
+    ) -> LLMCompletion:
+        """One non-streaming completion (agent planner rounds). Optional
+        OpenAI-style `tools` for models that do native tool calling; the raw
+        tool_calls come back untouched — the agent loop owns lenient parsing."""
+        payload: dict[str, object] = {"model": model, "messages": messages, "stream": False}
+        if tools:
+            payload["tools"] = tools
+        headers = {"Authorization": f"Bearer {self._master_key}"}
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, transport=self._transport,
+                timeout=httpx.Timeout(120.0, connect=10.0), limits=self._limits,
+            ) as client:
+                response = await client.post(
+                    "/v1/chat/completions", json=payload, headers=headers
+                )
+        except httpx.HTTPError as exc:
+            raise UpstreamError("LLM gateway unreachable") from exc
+        if response.status_code != 200:
+            body_str = response.text[:200]
+            raise UpstreamError(f"LLM gateway returned {response.status_code}: {body_str}")
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise UpstreamError("malformed completion from gateway") from exc
+        choices = body.get("choices") or []
+        message: dict[str, object] = choices[0].get("message") or {} if choices else {}
+        raw_tool_calls = message.get("tool_calls")
+        if not isinstance(raw_tool_calls, list):
+            raw_tool_calls = []
+        tool_calls = [
+            LLMToolCall(
+                name=str((tc.get("function") or {}).get("name", "")),
+                arguments=str((tc.get("function") or {}).get("arguments") or "{}"),
+            )
+            for tc in raw_tool_calls
+            if isinstance(tc, dict)
+        ]
+        usage_raw = body.get("usage") or {}
+        return LLMCompletion(
+            text=str(message.get("content") or ""),
+            tool_calls=tool_calls,
+            usage=LLMUsage(
+                prompt_tokens=int(usage_raw.get("prompt_tokens", 0)),
+                completion_tokens=int(usage_raw.get("completion_tokens", 0)),
+            ),
+        )
