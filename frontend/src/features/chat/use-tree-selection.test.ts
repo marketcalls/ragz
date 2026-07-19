@@ -13,6 +13,8 @@ const base = {
   created_at: 't1',
   citations: [],
   children: [],
+  stopped: false,
+  no_answer: false,
 };
 const roots = [
   { ...base, id: 'u1', sibling_index: 0, content: 'q' },

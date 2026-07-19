@@ -991,6 +991,16 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Stopped
+             * @default false
+             */
+            stopped: boolean;
+            /**
+             * No Answer
+             * @default false
+             */
+            no_answer: boolean;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
             /** Children */

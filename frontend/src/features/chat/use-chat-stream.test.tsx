@@ -44,3 +44,39 @@ test('a stream that starts with token (no retrieval_started/sources) still rende
   expect(result.current.text).toBe('Hi there!');
   expect(result.current.sources).toEqual([]);
 });
+
+test('stop() aborts the in-flight request, resets state, and refetches the tree', async () => {
+  // The mocked streamChatSse never resolves on its own (mirrors an in-flight
+  // SSE connection) - it only settles once the captured signal aborts, and it
+  // never calls onEvent, so a real terminal reduce() never runs.
+  let capturedSignal: AbortSignal | undefined;
+  streamChatSse.mockImplementation(
+    (_url: string, _body: unknown, _onEvent: (e: ChatSseEvent) => void, signal: AbortSignal) => {
+      capturedSignal = signal;
+      return new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => resolve());
+      });
+    },
+  );
+
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+  function stopWrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  }
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper: stopWrapper });
+
+  act(() => {
+    result.current.send('Hi');
+  });
+  expect(result.current.status).toBe('retrieving');
+
+  act(() => {
+    result.current.stop();
+  });
+
+  expect(capturedSignal?.aborted).toBe(true);
+  expect(result.current.status).toBe('idle');
+  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['chat', 'c1'] });
+});

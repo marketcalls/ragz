@@ -104,5 +104,16 @@ export function useChatStream(chatId: string | null) {
   const abort = useCallback(() => abortRef.current?.abort(), []);
   const reset = useCallback(() => setState(IDLE), []);
 
-  return { ...state, send, regenerate, abort, reset };
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+    setState(IDLE);
+    // Server persists the partial answer on a detached task after disconnect;
+    // refetch now and once more shortly after to catch the commit landing.
+    void queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
+    window.setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
+    }, 750);
+  }, [chatId, queryClient]);
+
+  return { ...state, send, regenerate, abort, reset, stop };
 }

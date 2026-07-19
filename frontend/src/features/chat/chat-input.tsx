@@ -1,13 +1,17 @@
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, Square } from 'lucide-react';
 import { useRef, useState, type KeyboardEvent } from 'react';
 
 export function ChatInput({
   onSend,
   disabled,
+  busy = false,
+  onStop,
   placeholder = 'Ask about your documents…',
 }: {
   onSend: (content: string) => void;
   disabled: boolean;
+  busy?: boolean;
+  onStop?: () => void;
   placeholder?: string;
 }) {
   const [value, setValue] = useState('');
@@ -45,15 +49,26 @@ export function ChatInput({
           onKeyDown={onKeyDown}
           className="max-h-[200px] flex-1 resize-none bg-transparent px-2 py-1 text-[15px] text-ink outline-none placeholder:text-muted"
         />
-        <button
-          type="button"
-          aria-label="Send"
-          disabled={disabled || value.trim() === ''}
-          onClick={submit}
-          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg disabled:opacity-40"
-        >
-          <ArrowUp className="h-4 w-4" aria-hidden />
-        </button>
+        {busy ? (
+          <button
+            type="button"
+            aria-label="Stop generating"
+            onClick={onStop}
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg"
+          >
+            <Square className="h-3 w-3 fill-current" aria-hidden />
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-label="Send"
+            disabled={disabled || value.trim() === ''}
+            onClick={submit}
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg disabled:opacity-40"
+          >
+            <ArrowUp className="h-4 w-4" aria-hidden />
+          </button>
+        )}
       </div>
     </div>
   );
