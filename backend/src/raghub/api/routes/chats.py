@@ -3,6 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +36,7 @@ from raghub.modules.tenancy.context import (
     require_permission,
 )
 from raghub.modules.tenancy.models import Workspace
+from raghub.worker.tasks import enqueue_audit_message
 
 router = APIRouter(tags=["chat"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -74,6 +76,25 @@ async def _streamer(
 
 async def _encoded(events: AsyncIterator[SSEEvent]) -> AsyncIterator[str]:
     async for event in events:
+        if (
+            event.event == "done"
+            and event.data.get("grounding") == "documents"
+            # Deviation from the Task 3 brief's literal snippet: also gate on
+            # no_answer here, not just in audit_message. The decline-policy
+            # no-answer path yields grounding="documents" too (nothing else
+            # distinguishes it in the done frame), so skipping it only inside
+            # the Celery task would still enqueue a task that always no-ops -
+            # wasted broker traffic for a turn we already know carries
+            # nothing to audit.
+            and not event.data.get("no_answer")
+        ):
+            # Phase 3 Auditor (§3): fire-and-forget, never awaited, never
+            # blocks the stream - a Celery enqueue failure (broker down) is
+            # swallowed the same way a missed audit already is (worker side).
+            try:
+                enqueue_audit_message(UUID(str(event.data["message_id"])))
+            except Exception:
+                structlog.get_logger().warning("audit_enqueue_failed", exc_info=True)
         yield event.encode()
 
 

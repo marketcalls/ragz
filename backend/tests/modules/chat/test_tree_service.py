@@ -1,8 +1,11 @@
+from typing import Any
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.auth.models import User
+from raghub.modules.chat import service
 from raghub.modules.chat.models import Chat
 from raghub.modules.chat.service import (
     active_leaf,
@@ -16,6 +19,21 @@ from raghub.modules.chat.service import (
 )
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace, WorkspaceMember
+from tests.conftest import FakeCompleter
+
+
+@pytest.fixture
+async def ctx(
+    session: AsyncSession, seeded_user: User, chat_env: dict[str, Any]
+) -> TenantContext:
+    """TenantContext for chat_env's seeded workspace member (mirrors
+    test_agent.py's ctx fixture — this file uses chat_env's Document-bearing
+    workspace rather than make_ctx's bare one for the new audit tests below)."""
+    ws = chat_env["workspace"]
+    return TenantContext(
+        user_id=seeded_user.id, org_id=seeded_user.org_id, role=seeded_user.role,
+        workspace_ids=frozenset({ws.id}),
+    )
 
 
 async def make_ctx(session: AsyncSession, user: User) -> tuple[TenantContext, Workspace]:
@@ -148,3 +166,62 @@ async def test_second_root_sibling_does_not_retitle(
         parent=None,
     )
     assert chat.title == "Original question"
+
+
+async def test_audit_message_no_utility_model_is_noop(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext
+) -> None:
+    chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
+    user_msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_USER, content="q", parent=None
+    )
+    msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_ASSISTANT, content="[1] answer",
+        parent=user_msg, grounding="documents",
+    )
+    assert await service.audit_message(session, msg.id) is False
+    await session.refresh(msg)
+    assert msg.grounding_score is None
+
+
+async def test_audit_message_skips_non_document_grounding(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext, utility_model: object,
+) -> None:
+    chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
+    user_msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_USER, content="hi", parent=None
+    )
+    msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_ASSISTANT, content="hello",
+        parent=user_msg, grounding="documents",
+    )
+    msg.no_answer = True  # decline turns carry grounding="documents" but nothing to audit
+    await session.commit()
+    assert await service.audit_message(session, msg.id) is False
+
+
+async def test_audit_message_persists_scores(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext, utility_model: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from raghub.modules.chat import service as chat_service
+    from raghub.modules.chat.llm import LLMCompletion, LLMUsage
+
+    fake = FakeCompleter([LLMCompletion(
+        text='{"grounding_score": 0.8, "completeness_score": 0.9}', tool_calls=[],
+        usage=LLMUsage(prompt_tokens=30, completion_tokens=10),
+    )])
+    monkeypatch.setattr(chat_service, "_completer_for_audit", lambda settings: fake)
+
+    chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
+    user_msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_USER, content="Where is the muster point?",
+        parent=None,
+    )
+    msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_ASSISTANT, content="[1] Gate B.",
+        parent=user_msg, grounding="documents",
+    )
+    assert await service.audit_message(session, msg.id) is True
+    await session.refresh(msg)
+    assert msg.grounding_score == 0.8 and msg.completeness_score == 0.9

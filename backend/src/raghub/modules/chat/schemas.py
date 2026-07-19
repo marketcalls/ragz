@@ -74,6 +74,8 @@ class MessageNode(BaseModel):
     stopped: bool = False
     no_answer: bool = False
     grounding: str = "documents"
+    grounding_score: float | None = None
+    completeness_score: float | None = None
     citations: list[CitationOut]
     children: list["MessageNode"]
 

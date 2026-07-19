@@ -15,7 +15,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from raghub.core.config import Settings
+from raghub.core.config import Settings, get_settings
 from raghub.core.db import naive_utc
 from raghub.core.errors import ConflictError, NotFoundError, UpstreamError
 from raghub.modules.chat.agent import AgentGathered, AgentStep, run_agent_gather
@@ -31,7 +31,7 @@ from raghub.modules.chat.events import (
     sources_event,
     token_event,
 )
-from raghub.modules.chat.llm import LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
+from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
 from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message
 from raghub.modules.chat.prompting import (
     PromptSource,
@@ -45,10 +45,12 @@ from raghub.modules.chat.prompting import (
 )
 from raghub.modules.chat.router import classify_query, should_escalate
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
+from raghub.modules.chat.validation import build_auditor_messages, parse_auditor_scores
 from raghub.modules.chat.web import TAVILY_SECRET_NAME, WebResult, WebSearcher
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
+from raghub.modules.models.utility import get_utility_model
 from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
 from raghub.modules.secrets import service as secrets_service
@@ -176,6 +178,7 @@ def build_tree(
             model_id=m.model_id, prompt_tokens=m.prompt_tokens,
             completion_tokens=m.completion_tokens, created_at=m.created_at,
             stopped=m.stopped, no_answer=m.no_answer, grounding=m.grounding,
+            grounding_score=m.grounding_score, completeness_score=m.completeness_score,
             citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
             children=[node(k) for k in kids],
         )
@@ -502,6 +505,66 @@ async def _persist_assistant(
         )
     await session.commit()
     return msg
+
+
+def _completer_for_audit(settings: Settings) -> LiteLLMStreamer:
+    """Own gateway client per audit run - the worker has no request-scoped
+    app.state to borrow one from (mirrors LiteLLMStreamer's construction in
+    chats.py's _streamer, minus the per-user virtual key: audit calls are
+    platform overhead, not a member's own usage)."""
+    return LiteLLMStreamer(base_url=settings.litellm_url, master_key=settings.litellm_master_key)
+
+
+async def audit_message(session: AsyncSession, message_id: UUID) -> bool:
+    """Phase 3 Auditor (§3): scores ONE already-persisted message. No ctx -
+    this runs from a worker-owned session with no request-scoped tenant
+    context; it only ever touches the single message_id the route already
+    resolved inside a real, ACL-checked request, so it needs no additional
+    tenant filtering of its own. Returns False (no-op, never raises) when
+    there is no utility model, the message is gone, or grounding != 'documents'
+    (nothing meaningful to check citations against on conversational/
+    general-knowledge/no-answer turns)."""
+    utility_model = await get_utility_model(session)
+    if utility_model is None:
+        return False
+    msg = (
+        await session.execute(select(Message).where(Message.id == message_id))
+    ).scalar_one_or_none()
+    if msg is None or msg.grounding != "documents" or msg.no_answer:
+        return False
+    user_msg = (
+        await session.execute(select(Message).where(Message.id == msg.parent_message_id))
+    ).scalar_one_or_none()
+    question = user_msg.content if user_msg else ""
+    citations = (
+        await session.execute(
+            select(Citation).where(Citation.message_id == msg.id).order_by(Citation.marker)
+        )
+    ).scalars()
+    sources = [
+        PromptSource(marker=c.marker, filename=c.chunk_ref, page=c.page, text="", section=c.section)
+        for c in citations
+    ]
+    settings = get_settings()
+    completer = _completer_for_audit(settings)
+    completion = await completer.complete(
+        model=utility_model.litellm_model_name,
+        messages=build_auditor_messages(question=question, answer=msg.content, sources=sources),
+    )
+    scores = parse_auditor_scores(completion.text)
+    if scores is None:
+        return False
+    msg.grounding_score = scores.grounding_score
+    msg.completeness_score = scores.completeness_score
+    chat = await session.get(Chat, msg.chat_id)
+    assert chat is not None  # FK guarantees the parent chat row exists
+    await quota_service.record_usage(
+        session, org_id=chat.org_id, user_id=chat.user_id, model_id=utility_model.id,
+        feature="validation", prompt_tokens=completion.usage.prompt_tokens,
+        completion_tokens=completion.usage.completion_tokens,
+    )
+    await session.commit()
+    return True
 
 
 _STOP_PERSISTS: set[asyncio.Task[None]] = set()

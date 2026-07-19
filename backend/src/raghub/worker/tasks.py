@@ -12,6 +12,7 @@ from celery import Task, chain
 
 from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
+from raghub.modules.chat import service as chat_service
 from raghub.modules.documents import ingest
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.models import catalog
@@ -108,6 +109,32 @@ def enqueue_delete(document_id: UUID, actor_id: UUID) -> None:
 
 def enqueue_reindex(document_id: UUID) -> None:
     reindex_task.si(str(document_id)).apply_async(queue="interactive")
+
+
+@celery_app.task(name="chat.audit_message")
+def audit_message_task(message_id: str) -> None:
+    """Phase 3 Auditor (§3): async, best-effort. Failures are logged, never
+    retried with backoff -- a missed audit is an observability gap, not a
+    user-facing incident (unlike ingestion, which retries)."""
+
+    async def _run() -> None:
+        settings = get_settings()
+        engine = build_engine(settings.database_url)
+        try:
+            factory = build_session_factory(engine)
+            async with factory() as session:
+                await chat_service.audit_message(session, UUID(message_id))
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except Exception:
+        structlog.get_logger().warning("audit_message_failed", message_id=message_id, exc_info=True)
+
+
+def enqueue_audit_message(message_id: UUID) -> None:
+    audit_message_task.si(str(message_id)).apply_async(queue="default")
 
 
 @celery_app.task(name="models.refresh_catalog")

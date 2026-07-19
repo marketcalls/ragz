@@ -19,6 +19,7 @@ from raghub.modules.auth.passwords import hash_password
 from raghub.modules.chat.llm import LLMCompletion, LLMDelta, LLMUsage
 from raghub.modules.chat.web import WebResult
 from raghub.modules.documents.models import Document
+from raghub.modules.models.models import Model
 from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.rerank import get_reranker
@@ -298,6 +299,20 @@ class FakeRetriever:
                            text="Costs were 4M.", score=0.55),
         ]
         return RetrievalResult(no_answer=self.no_answer, chunks=chunks)
+
+
+@pytest.fixture
+async def utility_model(session: AsyncSession) -> Model:
+    """A superadmin-designated utility model (Task 1, D5): Auditor/escalation/
+    enrichment tests that need modules.models.utility.get_utility_model to
+    resolve something use this rather than hand-rolling one per test file."""
+    model = Model(
+        litellm_model_name="utility-model", display_name="Utility",
+        provider_kind="ollama", is_utility=True, enabled=True,
+    )
+    session.add(model)
+    await session.commit()
+    return model
 
 
 @pytest.fixture

@@ -548,3 +548,77 @@ async def test_weak_retrieval_decline_workspace_unchanged(
     assert token_text == NO_ANSWER_TEXT
     done = next(d for n, d in frames if n == "done")
     assert done["no_answer"] is True and done["grounding"] == "documents"
+
+
+async def test_document_answer_enqueues_audit(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grounding='documents' done frame triggers the audit enqueue exactly
+    once, with the persisted message's id — decline/conversational/GK turns
+    must NOT (covered by the sibling test below)."""
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        "raghub.api.routes.chats.enqueue_audit_message", lambda mid: enqueued.append(str(mid))
+    )
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    frames = parse_sse(r.text)
+    done = next(d for n, d in frames if n == "done")
+    assert done["grounding"] == "documents" and done["no_answer"] is False
+    assert enqueued == [done["message_id"]]
+
+
+async def test_no_answer_does_not_enqueue_audit(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FakeRetriever(no_answer=True) in a decline workspace -> zero audit
+    enqueues (grounding='documents' but no_answer=True carries nothing to
+    audit)."""
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        "raghub.api.routes.chats.enqueue_audit_message", lambda mid: enqueued.append(str(mid))
+    )
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id, no_answer=True),
+        llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r_patch = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"fallback_policy": "decline"}, headers=h,
+        )
+        assert r_patch.status_code == 200
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "quantum llamas?"}, headers=h)
+    frames = parse_sse(r.text)
+    done = next(d for n, d in frames if n == "done")
+    assert done["no_answer"] is True and done["grounding"] == "documents"
+    assert enqueued == []

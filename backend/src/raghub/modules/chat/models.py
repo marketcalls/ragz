@@ -52,6 +52,10 @@ class Message(UUIDPk, Base):
     # Phase 3 Plan I (design D3): "documents" | "general" - set to "general" ONLY
     # on general-knowledge fallback answers (RAG-miss + permissive policy).
     grounding: Mapped[str] = mapped_column(default="documents", server_default="documents")
+    # Phase 3 Plan J (§3): Auditor scores, 0.0-1.0. None = never audited
+    # (no utility model designated, or this message isn't grounding="documents").
+    grounding_score: Mapped[float | None] = mapped_column(default=None)
+    completeness_score: Mapped[float | None] = mapped_column(default=None)
 
 
 class Citation(UUIDPk, Base):
