@@ -42,6 +42,11 @@ export type MetadataFieldOut = components['schemas']['MetadataFieldOut'];
 // templates. `permissions` is a flat list of dotted flags (see
 // PERMISSION_LABELS in features/admin/roles/role-form-dialog.tsx).
 export type RoleTemplateOut = components['schemas']['RoleTemplateOut'];
+// GET/POST /api/v1/workspaces/{workspace_id}/golden-queries, DELETE
+// /api/v1/golden-queries/{query_id} (Plan J Task 9/10): admin-authored
+// eval fixtures — a question plus the document ids retrieval should hit.
+export type GoldenQueryOut = components['schemas']['GoldenQueryOut'];
+export type GoldenQueryCreate = components['schemas']['GoldenQueryCreate'];
 
 export type DocumentStatus = DocumentOut['status'];
 
