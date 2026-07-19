@@ -54,6 +54,8 @@ class CitationOut(BaseModel):
     chunk_ref: str
     page: int
     score: float
+    section: str | None
+    version: int
 
     model_config = {"from_attributes": True}
 

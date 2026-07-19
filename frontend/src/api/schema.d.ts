@@ -313,6 +313,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}/approved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Document Approved */
+        put: operations["set_document_approved_api_v1_documents__document_id__approved_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/groups": {
         parameters: {
             query?: never;
@@ -394,7 +411,8 @@ export interface paths {
         /** Put Secret */
         put: operations["put_secret_api_v1_admin_secrets__name__put"];
         post?: never;
-        delete?: never;
+        /** Delete Secret */
+        delete: operations["delete_secret_api_v1_admin_secrets__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -828,6 +846,11 @@ export interface components {
             /** Acl Group Ids */
             acl_group_ids: string[] | null;
         };
+        /** ApprovedPatch */
+        ApprovedPatch: {
+            /** Approved */
+            approved: boolean;
+        };
         /** AuditEventOut */
         AuditEventOut: {
             /**
@@ -957,6 +980,10 @@ export interface components {
             text: string;
             /** Score */
             score: number;
+            /** Section */
+            section: string | null;
+            /** Version */
+            version: number;
         };
         /** CitationOut */
         CitationOut: {
@@ -973,6 +1000,10 @@ export interface components {
             page: number;
             /** Score */
             score: number;
+            /** Section */
+            section: string | null;
+            /** Version */
+            version: number;
         };
         /** ClientErrorIn */
         ClientErrorIn: {
@@ -1046,6 +1077,19 @@ export interface components {
             pinned: boolean;
             /** Acl Group Ids */
             acl_group_ids?: string[] | null;
+            /** Version */
+            version: number;
+            /**
+             * Lineage Id
+             * Format: uuid
+             */
+            lineage_id: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Approved */
+            approved: boolean;
+            /** Supersedes Document Id */
+            supersedes_document_id: string | null;
         };
         /** DocumentPatch */
         DocumentPatch: {
@@ -2163,6 +2207,41 @@ export interface operations {
             };
         };
     };
+    set_document_approved_api_v1_documents__document_id__approved_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovedPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_groups_api_v1_groups_get: {
         parameters: {
             query?: never;
@@ -2363,6 +2442,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SecretOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_secret_api_v1_admin_secrets__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

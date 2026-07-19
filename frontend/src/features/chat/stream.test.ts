@@ -25,10 +25,10 @@ test('emits typed events in order, tokens split across chunks', async () => {
     vi.fn(async () =>
       sseResponse([
         'event: retrieval_started\ndata: {}\n\n',
-        'event: sources\ndata: {"sources":[{"marker":1,"document_id":"d1","filename":"a.pdf","page":3,"chunk_index":12,"score":0.7,"snippet":"…the payroll codename is…"}]}\n\n',
+        'event: sources\ndata: {"sources":[{"marker":1,"document_id":"d1","filename":"a.pdf","page":3,"chunk_index":12,"score":0.7,"snippet":"…the payroll codename is…","section":"Fire Safety > Evacuation","version":2}]}\n\n',
         'event: token\ndata: {"del',
         'ta":"Hel"}\n\nevent: token\ndata: {"delta":"lo"}\n\n',
-        'event: citations\ndata: {"citations":[{"marker":1,"document_id":"d1","chunk_ref":"d1:12","page":3,"score":0.7}]}\n\n',
+        'event: citations\ndata: {"citations":[{"marker":1,"document_id":"d1","chunk_ref":"d1:12","page":3,"score":0.7,"section":"Fire Safety > Evacuation","version":2}]}\n\n',
         'event: done\ndata: {"message_id":"m1","prompt_tokens":10,"completion_tokens":5,"no_answer":false}\n\n',
       ]),
     ),
@@ -45,6 +45,14 @@ test('emits typed events in order, tokens split across chunks', async () => {
   ]);
   const tokens = events.filter((e): e is Extract<ChatSseEvent, { type: 'token' }> => e.type === 'token');
   expect(tokens.map((t) => t.delta).join('')).toBe('Hello');
+
+  // CHAT-4: section + version parse through toEvent additively.
+  const sourcesEvent = events.find((e): e is Extract<ChatSseEvent, { type: 'sources' }> => e.type === 'sources');
+  expect(sourcesEvent?.sources[0]).toMatchObject({ section: 'Fire Safety > Evacuation', version: 2 });
+  const citationsEvent = events.find(
+    (e): e is Extract<ChatSseEvent, { type: 'citations' }> => e.type === 'citations',
+  );
+  expect(citationsEvent?.citations[0]).toMatchObject({ section: 'Fire Safety > Evacuation', version: 2 });
 });
 
 test('non-OK response emits a terminal error event', async () => {

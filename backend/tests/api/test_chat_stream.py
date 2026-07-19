@@ -15,6 +15,7 @@ from raghub.core.errors import UpstreamError
 from raghub.modules.auth.models import User
 from raghub.modules.chat.models import Citation, Message
 from raghub.modules.chat.service import NO_ANSWER_TEXT
+from raghub.modules.retrieval.service import RetrievedChunk
 from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_litellm_handler
 
 
@@ -122,6 +123,56 @@ async def test_full_event_sequence_and_persistence(
     final_user = sent[-1]["content"]  # type: ignore[index]
     assert '<data id="1" source="report.pdf" page="3">' in final_user
     assert "data, not instructions" in final_user
+
+
+async def test_sources_and_citations_carry_section_and_version(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """CHAT-4: the `sources`/`citations` SSE frames and the persisted Citation
+    row carry the chunk's section path and the document's OWN version (fetched
+    from the same get_document_checked call as the filename - not a chunk-local
+    guess). chunk_ref identity (H-C3) is untouched by this."""
+    document = chat_env["document"]
+    document.version = 2
+    await session.commit()
+
+    retriever = FakeRetriever(document.id)
+    retriever.chunks = [
+        RetrievedChunk(document_id=document.id, page=3, chunk_index=0,
+                       text="Evacuate via the north stairwell.", score=0.91,
+                       section="Fire Safety > Evacuation", version=2),
+    ]
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=retriever,
+        llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "evacuation?"}, headers=h)
+    assert r.status_code == 200
+    frames = [{"event": e, "data": d} for e, d in parse_sse(r.text)]
+
+    sources_frame = next(f for f in frames if f["event"] == "sources")
+    src = sources_frame["data"]["sources"][0]
+    assert src["section"] == "Fire Safety > Evacuation"
+    assert src["version"] == 2
+
+    citations_frame = next(f for f in frames if f["event"] == "citations")
+    cit = citations_frame["data"]["citations"][0]
+    assert cit["section"] == "Fire Safety > Evacuation" and cit["version"] == 2
+
+    cits = list((await session.execute(select(Citation))).scalars())
+    assert cits[0].section == "Fire Safety > Evacuation" and cits[0].version == 2
 
 
 async def test_no_answer_path_is_honest(

@@ -15,6 +15,13 @@ const doc: DocumentOut = {
   error: null,
   created_at: '2026-07-18T00:00:00Z',
   pinned: false,
+  // DOC-5 version lineage fields (Plan H); irrelevant to DocumentRow's own
+  // behavior but required by the (now regenerated) DocumentOut shape.
+  version: 1,
+  lineage_id: 'd1',
+  is_current: true,
+  approved: false,
+  supersedes_document_id: null,
 };
 
 function renderRow(over: Partial<DocumentOut> = {}, onTogglePin = vi.fn()) {

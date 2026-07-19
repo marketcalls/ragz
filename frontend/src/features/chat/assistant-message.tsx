@@ -22,7 +22,7 @@ export function AssistantMessage({
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
   return (
     <div>
-      <CitationProvider onCitationClick={setHighlightedN}>
+      <CitationProvider onCitationClick={setHighlightedN} sources={sources}>
         <Markdown content={content} />
       </CitationProvider>
       {noAnswer ? (

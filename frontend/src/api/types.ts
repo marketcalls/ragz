@@ -42,6 +42,8 @@ export interface SourceRef {
   chunk_index: number;
   score: number;
   snippet: string;
+  section: string | null;
+  version: number;
 }
 
 export interface CitationRef {
@@ -50,6 +52,8 @@ export interface CitationRef {
   chunk_ref: string;
   page: number;
   score: number;
+  section: string | null;
+  version: number;
 }
 
 export interface DoneInfo {

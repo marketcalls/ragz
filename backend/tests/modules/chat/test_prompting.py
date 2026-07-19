@@ -35,6 +35,32 @@ def test_filename_attribute_injection_is_escaped() -> None:
     assert block.count("<data id=") == 1
 
 
+def test_data_block_includes_section_when_present() -> None:
+    # ">" is escaped by _attr just like in filenames (iron rule 5's delimiter
+    # defense applies to section text too - it is document-derived).
+    block = render_data_blocks(
+        [PromptSource(marker=1, filename="x.pdf", page=2, text="a", section="A > B")]
+    )
+    assert 'section="A &gt; B"' in block
+
+
+def test_data_block_omits_section_when_absent() -> None:
+    block = render_data_blocks([PromptSource(marker=1, filename="x.pdf", page=2, text="a")])
+    assert "section=" not in block
+
+
+def test_section_attribute_injection_is_escaped() -> None:
+    """Section text is document-derived (iron rule 5's delimiter defense
+    applies here too, not just to filenames)."""
+    malicious = 'x" injected="y'
+    block = render_data_blocks(
+        [PromptSource(marker=1, filename="x.pdf", page=1, text="hi", section=malicious)]
+    )
+    assert malicious not in block
+    assert 'injected="y"' not in block
+    assert "&quot;" in block
+
+
 def test_build_messages_shape_without_truncation() -> None:
     msgs = build_messages(
         sources=SOURCES, history=[("user", "hi"), ("assistant", "hello [1]")],
