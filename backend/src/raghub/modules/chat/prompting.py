@@ -114,6 +114,18 @@ def render_data_blocks(sources: Sequence[PromptSource]) -> str:
     return "\n".join([_DATA_PREAMBLE, *(_render_block(s) for s in sources)])
 
 
+def wrap_untrusted_block(tag: str, text: str) -> str:
+    """Generic delimiter-neutralized untrusted-content wrapper (iron rule 5),
+    for LLM-boundary callers that aren't rendering document <data> blocks:
+    Auditor/Gatekeeper's answer-under-review, the escalation classifier's
+    question, the eval harness's candidate answer. Mirrors _render_block's
+    </data> guard exactly, generalized to any tag name - one escaping
+    primitive, every non-<data> untrusted-text caller in the codebase."""
+    closer = f"</{tag}>"
+    safe = text.replace(closer, f"<\\/{tag}>")
+    return f"<{tag}>\n{safe}\n</{tag}>"
+
+
 SYSTEM_FRACTION = 0.15
 SOURCES_FRACTION = 0.70   # data blocks + the question live in the user message
 HISTORY_FRACTION = 0.15   # reserved floor; history also absorbs unused budget
