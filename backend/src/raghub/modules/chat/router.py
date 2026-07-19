@@ -18,6 +18,7 @@ clearly match falls through to "retrieval".
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from typing import Literal
 
 QueryClass = Literal["conversational", "retrieval"]
@@ -78,3 +79,47 @@ def classify_query(content: str) -> QueryClass:
     ):
         return "conversational"
     return "retrieval"
+
+
+_INTERROGATIVE_RE = re.compile(
+    r"\b(who|whom|whose|what|which|when|where|why|how)\b", re.IGNORECASE
+)
+_COMPARATIVE_RE = re.compile(
+    r"\b(compare|comparison|versus|vs\.?|difference between|differences between)\b",
+    re.IGNORECASE,
+)
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def should_escalate(content: str, metadata_field_names: Sequence[str] = ()) -> bool:
+    """Router v2 (Phase 3 design §1): does this question warrant the agent loop?
+
+    Deterministic and cheap, like classify_query. Triggers:
+    - multiple question marks, or >=2 DISTINCT interrogative words (multi-part
+      questions: "what changed and when was it approved");
+    - comparative phrasing (compare/versus/difference between);
+    - metadata dimensions: a workspace metadata field name (underscores read as
+      spaces), a calendar year, or an ISO date.
+
+    Bias: false-escalate costs one planner round-trip's tokens but still
+    answers correctly; false-skip is rescued by stream_reply's post-retrieval
+    weak-results trigger. Design D5/§1's utility-model tiebreak for ambiguous
+    cases is deliberately ABSENT until Plan J designates a utility model —
+    Plan J hooks in at this function's call site, not by changing it.
+    """
+    text = " ".join(content.split()).lower()
+    if not text:
+        return False
+    if text.count("?") >= 2:
+        return True
+    if _COMPARATIVE_RE.search(text):
+        return True
+    if len({m.group(1).lower() for m in _INTERROGATIVE_RE.finditer(text)}) >= 2:
+        return True
+    if _YEAR_RE.search(text) or _ISO_DATE_RE.search(text):
+        return True
+    return any(
+        name and name.replace("_", " ").lower() in text
+        for name in metadata_field_names
+    )

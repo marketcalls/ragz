@@ -1,6 +1,6 @@
 import pytest
 
-from raghub.modules.chat.router import classify_query
+from raghub.modules.chat.router import classify_query, should_escalate
 
 
 @pytest.mark.parametrize(
@@ -78,3 +78,42 @@ def test_classify_query_empty_or_whitespace_is_retrieval() -> None:
 
 def test_classify_query_long_greeting_like_string_is_retrieval() -> None:
     assert classify_query("hi hi hi hi hi hi hi hi hi hi hi hi hi") == "retrieval"
+
+
+def test_simple_lookup_does_not_escalate() -> None:
+    # The load-test gate depends on this staying False (design §9).
+    assert not should_escalate("What is the muster point?")
+    assert not should_escalate("summarize the safety policy")
+    assert not should_escalate("hello")
+    assert not should_escalate("")
+
+
+def test_two_question_marks_escalate() -> None:
+    assert should_escalate("What is the muster point? And who approves changes?")
+
+
+def test_two_distinct_interrogatives_escalate() -> None:
+    assert should_escalate("What changed and when was it approved")
+
+
+def test_comparatives_escalate() -> None:
+    assert should_escalate("Compare the evacuation steps in v1 versus v2")
+    assert should_escalate("difference between the old and new policy")
+
+
+def test_dates_escalate() -> None:
+    # Metadata-dimension trigger: years and ISO dates suggest revision_date-style
+    # filtering the single-shot pass can't do.
+    assert should_escalate("Which memos mention the 2026 budget")
+    assert should_escalate("anything revised after 2026-01-01")
+
+
+def test_metadata_field_names_escalate() -> None:
+    fields = ["department", "doc_type", "revision_date"]
+    assert should_escalate("show the HSE department procedures", fields)
+    assert should_escalate("filter by doc type manual", fields)  # underscore -> space
+    assert not should_escalate("show the HSE procedures", fields)
+
+
+def test_field_names_only_match_when_supplied() -> None:
+    assert not should_escalate("show the HSE department procedures")
