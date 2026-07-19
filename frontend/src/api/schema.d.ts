@@ -954,6 +954,17 @@ export interface components {
             /** Acl Group Ids */
             acl_group_ids: string[] | null;
         };
+        /** AnswerQualityOut */
+        AnswerQualityOut: {
+            /** Audited Count */
+            audited_count: number;
+            /** Avg Grounding Score */
+            avg_grounding_score: number | null;
+            /** Avg Completeness Score */
+            avg_completeness_score: number | null;
+            /** Low Score Count */
+            low_score_count: number;
+        };
         /** ApprovedPatch */
         ApprovedPatch: {
             /** Approved */
@@ -1143,6 +1154,23 @@ export interface components {
             /** Role Template Id */
             role_template_id: string | null;
         };
+        /** DashboardSummaryOut */
+        DashboardSummaryOut: {
+            /** By Day */
+            by_day: components["schemas"]["DayUsage"][];
+            /** By Model */
+            by_model: components["schemas"]["ModelUsage"][];
+            /** By User */
+            by_user: components["schemas"]["UserUsage"][];
+            kpis: components["schemas"]["UsageKpis"];
+            /** Queries Per Day */
+            queries_per_day: components["schemas"]["DayCount"][];
+            /** Tokens By Model Per Day */
+            tokens_by_model_per_day: components["schemas"]["ModelDayTokens"][];
+            answer_quality: components["schemas"]["AnswerQualityOut"];
+            /** Worst Answers */
+            worst_answers: components["schemas"]["WorstAnswerOut"][];
+        };
         /** DayCount */
         DayCount: {
             /**
@@ -1326,6 +1354,10 @@ export interface components {
              * @default documents
              */
             grounding: string;
+            /** Grounding Score */
+            grounding_score?: number | null;
+            /** Completeness Score */
+            completeness_score?: number | null;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
             /** Children */
@@ -1680,20 +1712,6 @@ export interface components {
             /** Warning */
             warning: boolean;
         };
-        /** UsageSummaryOut */
-        UsageSummaryOut: {
-            /** By Day */
-            by_day: components["schemas"]["DayUsage"][];
-            /** By Model */
-            by_model: components["schemas"]["ModelUsage"][];
-            /** By User */
-            by_user: components["schemas"]["UserUsage"][];
-            kpis: components["schemas"]["UsageKpis"];
-            /** Queries Per Day */
-            queries_per_day: components["schemas"]["DayCount"][];
-            /** Tokens By Model Per Day */
-            tokens_by_model_per_day: components["schemas"]["ModelDayTokens"][];
-        };
         /** UserOut */
         UserOut: {
             /**
@@ -1802,6 +1820,30 @@ export interface components {
             fallback_policy?: ("general_knowledge" | "decline") | null;
             /** Web Search Enabled */
             web_search_enabled?: boolean | null;
+        };
+        /** WorstAnswerOut */
+        WorstAnswerOut: {
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /**
+             * Chat Id
+             * Format: uuid
+             */
+            chat_id: string;
+            /** Content Snippet */
+            content_snippet: string;
+            /** Grounding Score */
+            grounding_score: number | null;
+            /** Completeness Score */
+            completeness_score: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
     };
     responses: never;
@@ -3699,7 +3741,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UsageSummaryOut"];
+                    "application/json": components["schemas"]["DashboardSummaryOut"];
                 };
             };
             /** @description Validation Error */

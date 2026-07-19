@@ -225,3 +225,44 @@ async def test_audit_message_persists_scores(
     assert await service.audit_message(session, msg.id) is True
     await session.refresh(msg)
     assert msg.grounding_score == 0.8 and msg.completeness_score == 0.9
+
+
+async def test_answer_quality_summary_averages_and_ranks_worst(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext
+) -> None:
+    chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
+    user_msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_USER, content="q", parent=None
+    )
+    good = await service.add_message(
+        session, ctx, chat, role=service.ROLE_ASSISTANT, content="good", parent=user_msg,
+        grounding="documents",
+    )
+    good.grounding_score, good.completeness_score = 0.95, 0.9
+    bad = await service.add_message(
+        session, ctx, chat, role=service.ROLE_ASSISTANT, content="bad", parent=user_msg,
+        grounding="documents",
+    )
+    bad.grounding_score, bad.completeness_score = 0.1, 0.2
+    await session.commit()
+
+    summary = await service.answer_quality_summary(session, ctx, days=30)
+    assert summary.audited_count == 2
+    assert summary.avg_grounding_score == pytest.approx((0.95 + 0.1) / 2)
+    assert summary.low_score_count == 1
+    assert summary.worst[0].message_id == bad.id  # lowest average first
+
+
+async def test_answer_quality_summary_excludes_unaudited(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext
+) -> None:
+    chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
+    user_msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_USER, content="q", parent=None
+    )
+    await service.add_message(
+        session, ctx, chat, role=service.ROLE_ASSISTANT, content="unaudited", parent=user_msg,
+        grounding="documents",
+    )
+    summary = await service.answer_quality_summary(session, ctx, days=30)
+    assert summary.audited_count == 0 and summary.worst == []

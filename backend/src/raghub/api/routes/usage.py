@@ -1,11 +1,14 @@
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.core.config import Settings, get_settings
+from raghub.modules.chat import service as chat_service
 from raghub.modules.models import keys
 from raghub.modules.quotas import service
 from raghub.modules.quotas.schemas import (
@@ -91,13 +94,53 @@ async def usage_me(request: Request, session: SessionDep, ctx: CtxDep) -> UsageM
     )
 
 
-@router.get("/admin/usage/summary", response_model=UsageSummaryOut)
+# Task 4 (Plan J, SAFE-2): route-local composed response, not a change to
+# quotas/schemas.py — chat-owned Auditor data is composed at the API edge
+# (J-C14's CatalogOut precedent), keeping module boundaries clean.
+class AnswerQualityOut(BaseModel):
+    audited_count: int
+    avg_grounding_score: float | None
+    avg_completeness_score: float | None
+    low_score_count: int
+
+
+class WorstAnswerOut(BaseModel):
+    message_id: UUID
+    chat_id: UUID
+    content_snippet: str
+    grounding_score: float | None
+    completeness_score: float | None
+    created_at: datetime
+
+
+class DashboardSummaryOut(UsageSummaryOut):
+    answer_quality: AnswerQualityOut
+    worst_answers: list[WorstAnswerOut]
+
+
+@router.get("/admin/usage/summary", response_model=DashboardSummaryOut)
 async def usage_summary(
     session: SessionDep, ctx: AnalyticsDep,
     days: Annotated[int, Query(ge=1, le=365)] = 30,
-) -> UsageSummaryOut:
-    return UsageSummaryOut.model_validate(
-        await service.org_usage_summary(session, org_id=ctx.org_id, days=days)
+) -> DashboardSummaryOut:
+    base = await service.org_usage_summary(session, org_id=ctx.org_id, days=days)
+    quality = await chat_service.answer_quality_summary(session, ctx, days=days)
+    return DashboardSummaryOut(
+        **UsageSummaryOut.model_validate(base).model_dump(),
+        answer_quality=AnswerQualityOut(
+            audited_count=quality.audited_count,
+            avg_grounding_score=quality.avg_grounding_score,
+            avg_completeness_score=quality.avg_completeness_score,
+            low_score_count=quality.low_score_count,
+        ),
+        worst_answers=[
+            WorstAnswerOut(
+                message_id=w.message_id, chat_id=w.chat_id,
+                content_snippet=w.content_snippet, grounding_score=w.grounding_score,
+                completeness_score=w.completeness_score, created_at=w.created_at,
+            )
+            for w in quality.worst
+        ],
     )
 
 

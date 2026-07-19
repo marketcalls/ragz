@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { ChartCard } from '@/components/charts/chart-card';
 import { StackedBars } from '@/components/charts/stacked-bars';
@@ -72,6 +73,15 @@ export function DashboardPage() {
                 value={String(query.data.kpis.no_answer_count)}
                 sub="content gaps (ADM-4)"
               />
+              <StatTile
+                label="Answer quality"
+                value={
+                  query.data.answer_quality.avg_grounding_score != null
+                    ? `${Math.round(query.data.answer_quality.avg_grounding_score * 100)}%`
+                    : '—'
+                }
+                sub={`${query.data.answer_quality.audited_count} audited`}
+              />
             </div>
             <ChartCard title="Queries per day">
               <TimeSeriesLine data={query.data.queries_per_day} />
@@ -101,6 +111,37 @@ export function DashboardPage() {
                 </tbody>
               </table>
             </div>
+            {query.data.worst_answers.length > 0 ? (
+              <div className="rounded-lg border border-line">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-raised text-left text-xs text-secondary">
+                      <th className="px-4 py-2 font-medium">Lowest-scoring answers</th>
+                      <th className="px-4 py-2 text-right font-medium">Grounding</th>
+                      <th className="px-4 py-2 text-right font-medium">Completeness</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {query.data.worst_answers.map((w) => (
+                      <tr key={w.message_id} className="border-t border-line-faint">
+                        <td className="px-4 py-2 text-ink">
+                          <Link to={`/chat/${w.chat_id}`} className="hover:underline">
+                            {w.content_snippet.slice(0, 80)}
+                            {w.content_snippet.length > 80 ? '…' : ''}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {w.grounding_score != null ? w.grounding_score.toFixed(2) : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {w.completeness_score != null ? w.completeness_score.toFixed(2) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

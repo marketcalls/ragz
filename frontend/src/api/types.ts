@@ -16,9 +16,17 @@ export type ModelOut = components['schemas']['ModelOut'];
 // slimmer shape — id + display_name only, already filtered to enabled models
 // server-side. ModelOut (id/display_name/enabled/…) is the admin-page shape.
 export type ModelPublic = components['schemas']['ModelPublic'];
-// GET /api/v1/admin/usage/summary (QUOTA-1 + ADM-4): KPI tiles, the two
-// per-day series (queries_per_day, tokens_by_model_per_day), and top users.
-export type UsageSummaryOut = components['schemas']['UsageSummaryOut'];
+// GET /api/v1/admin/usage/summary (QUOTA-1 + ADM-4, extended by Plan J Task
+// 4): KPI tiles, the two per-day series (queries_per_day,
+// tokens_by_model_per_day), top users, the Auditor rollup (answer_quality)
+// and the worst-scoring answers table (worst_answers). Composed route-locally
+// in usage.py from UsageSummaryOut (quotas/schemas.py) — that base schema is
+// inlined by FastAPI/pydantic's schema generation and so no longer appears
+// as its own component now that DashboardSummaryOut is the only response
+// model referencing it; DashboardSummaryOut is the one true alias here.
+export type DashboardSummaryOut = components['schemas']['DashboardSummaryOut'];
+export type AnswerQualityOut = components['schemas']['AnswerQualityOut'];
+export type WorstAnswerOut = components['schemas']['WorstAnswerOut'];
 // GET /api/v1/superadmin/client-errors (Task 6). message/stack/url are
 // attacker-controlled — render as text only, never dangerouslySetInnerHTML.
 export type ClientErrorOut = components['schemas']['ClientErrorOut'];

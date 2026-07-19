@@ -227,6 +227,20 @@ async def test_org_quota_change_remirrors_all_vkey_budgets(
     assert str(user3.id) not in json.dumps([json.loads(c.content) for c in calls])
 
 
+async def test_usage_summary_includes_answer_quality(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """Task 4 (Plan J): the dashboard's single summary call now also carries
+    the Auditor rollup (answer_quality) + worst-answers table, additively."""
+    h = await auth(client, "a@acme.com")
+    r = await client.get("/api/v1/admin/usage/summary?days=30", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert "answer_quality" in body and "worst_answers" in body
+    assert body["answer_quality"]["audited_count"] == 0  # no audited messages seeded yet
+    assert body["worst_answers"] == []
+
+
 async def test_org_quota_change_survives_gateway_down(
     client: httpx.AsyncClient, seeded_user: User, seeded_superadmin: User,
     session: AsyncSession, test_settings: Settings,

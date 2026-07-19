@@ -8,6 +8,8 @@ import asyncio
 import contextlib
 from collections import defaultdict
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -565,6 +567,76 @@ async def audit_message(session: AsyncSession, message_id: UUID) -> bool:
     )
     await session.commit()
     return True
+
+
+@dataclass(frozen=True)
+class WorstAnswerRow:
+    message_id: UUID
+    chat_id: UUID
+    content_snippet: str
+    grounding_score: float | None
+    completeness_score: float | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class AnswerQualitySummary:
+    audited_count: int
+    avg_grounding_score: float | None
+    avg_completeness_score: float | None
+    low_score_count: int  # grounding_score < 0.5 OR completeness_score < 0.5
+    worst: list[WorstAnswerRow]
+
+
+_SNIPPET_CHARS_QUALITY = 200
+_LOW_SCORE_THRESHOLD = 0.5
+
+
+async def answer_quality_summary(
+    session: AsyncSession, ctx: TenantContext, *, days: int, limit: int = 10
+) -> AnswerQualitySummary:
+    """Phase 3 Auditor surfacing (§3): org-scoped average scores + the
+    lowest-scoring answers, for the admin dashboard tile/table. Only
+    audited messages (grounding_score IS NOT NULL) count."""
+    cutoff = naive_utc() - timedelta(days=days)
+    base = (
+        select(Message)
+        .join(Chat, Chat.id == Message.chat_id)
+        .where(
+            Chat.org_id == ctx.org_id,
+            Message.grounding_score.is_not(None),
+            Message.created_at >= cutoff,
+        )
+    )
+    rows = list((await session.execute(base)).scalars())
+    audited_count = len(rows)
+    if audited_count == 0:
+        return AnswerQualitySummary(0, None, None, 0, [])
+    avg_grounding = sum(m.grounding_score for m in rows) / audited_count  # type: ignore[misc]
+    avg_completeness = sum(m.completeness_score for m in rows) / audited_count  # type: ignore[misc]
+    low_score_count = sum(
+        1 for m in rows
+        if (m.grounding_score or 0) < _LOW_SCORE_THRESHOLD
+        or (m.completeness_score or 0) < _LOW_SCORE_THRESHOLD
+    )
+    worst = sorted(
+        rows, key=lambda m: ((m.grounding_score or 0) + (m.completeness_score or 0)) / 2
+    )[:limit]
+    return AnswerQualitySummary(
+        audited_count=audited_count,
+        avg_grounding_score=avg_grounding,
+        avg_completeness_score=avg_completeness,
+        low_score_count=low_score_count,
+        worst=[
+            WorstAnswerRow(
+                message_id=m.id, chat_id=m.chat_id,
+                content_snippet=m.content[:_SNIPPET_CHARS_QUALITY],
+                grounding_score=m.grounding_score, completeness_score=m.completeness_score,
+                created_at=m.created_at,
+            )
+            for m in worst
+        ],
+    )
 
 
 _STOP_PERSISTS: set[asyncio.Task[None]] = set()
