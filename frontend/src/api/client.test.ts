@@ -1,4 +1,4 @@
-import { setAccessToken } from '@/lib/auth-store';
+import { getAccessToken, setAccessToken } from '@/lib/auth-store';
 
 import { authFetch, refreshAccessToken, setOnAuthFailure } from './client';
 
@@ -71,4 +71,36 @@ test('401 on auth endpoints does NOT trigger refresh', async () => {
   vi.stubGlobal('fetch', fetchMock);
   await authFetch(new Request('http://x/api/v1/auth/login', { method: 'POST' }));
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test('a query string on an auth endpoint does not defeat the pathname match', async () => {
+  const fetchMock = vi.fn(async () => res(401));
+  vi.stubGlobal('fetch', fetchMock);
+  await authFetch(new Request('http://x/api/v1/auth/login?next=1', { method: 'POST' }));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test('a non-auth endpoint whose query string happens to contain an auth path still refreshes', async () => {
+  setAccessToken('stale');
+  const fetchMock = vi.fn(async (req: Request) => {
+    const url = typeof req === 'string' ? req : req.url;
+    if (url.includes('/auth/refresh')) return res(200, { access_token: 'fresh' });
+    return req.headers.get('authorization') === 'Bearer fresh' ? res(200) : res(401);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const r = await authFetch(new Request('http://x/api/v1/reports?ref=/api/v1/auth/login'));
+  expect(r.status).toBe(200);
+});
+
+test('refresh success with a malformed (empty) body is treated as failure and clears the token', async () => {
+  setAccessToken('stale');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: Request) => {
+      const url = typeof req === 'string' ? req : req.url;
+      return url.includes('/auth/refresh') ? res(200, {}) : res(401);
+    }),
+  );
+  expect(await refreshAccessToken()).toBe(false);
+  expect(getAccessToken()).toBeNull();
 });

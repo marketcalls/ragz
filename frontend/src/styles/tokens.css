@@ -22,6 +22,7 @@
   --danger-soft: #fef2f2;
   --warning: #b45309;
   --warning-soft: #fffbeb;
+  --scrim: rgba(23, 23, 23, 0.4);
 
   /* shape & elevation (theme spec §2.4) */
   --r-sm: 6px;
@@ -52,4 +53,5 @@
   --danger-soft: rgba(239, 68, 68, 0.15);
   --warning: #d97706;
   --warning-soft: rgba(217, 119, 6, 0.15);
+  --scrim: rgba(0, 0, 0, 0.6);
 }

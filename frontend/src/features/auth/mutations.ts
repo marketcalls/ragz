@@ -12,7 +12,6 @@ export function problemDetail(body: unknown): string {
 }
 
 export function useLogin() {
-  const navigate = useNavigate();
   return useMutation({
     mutationFn: async (creds: { email: string; password: string }) => {
       const { data, error } = await api.POST('/api/v1/auth/login', { body: creds });
@@ -24,7 +23,6 @@ export function useLogin() {
     },
     onSuccess: (data) => {
       setAccessToken(data.access_token);
-      navigate('/chat', { replace: true });
     },
   });
 }
