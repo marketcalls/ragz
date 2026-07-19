@@ -2,8 +2,9 @@ import json
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+import structlog
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field, ValidationError
 
 from raghub.modules.tenancy.context import (
     TenantContext,
@@ -11,6 +12,8 @@ from raghub.modules.tenancy.context import (
     rate_limit_user,
     require_role,
 )
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["ops"])
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
@@ -50,7 +53,15 @@ async def report_client_error(
 
 @router.get("/superadmin/client-errors", response_model=list[ClientErrorOut])
 async def list_client_errors(
-    request: Request, ctx: SuperadminDep, limit: int = 50
+    request: Request,
+    ctx: SuperadminDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[ClientErrorOut]:
     raw = await request.app.state.redis.lrange(_KEY, 0, min(limit, _MAX) - 1)
-    return [ClientErrorOut(**json.loads(r)) for r in raw]
+    entries: list[ClientErrorOut] = []
+    for r in raw:
+        try:
+            entries.append(ClientErrorOut(**json.loads(r)))
+        except (json.JSONDecodeError, ValidationError):
+            log.warning("client_errors.skip_malformed_entry", raw=r)
+    return entries
