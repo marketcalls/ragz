@@ -43,7 +43,9 @@ def _load_snapshot() -> dict[str, Any]:
     return json.loads(raw)  # type: ignore[no-any-return]
 
 
-def _rows(data: dict[str, Any], source: str) -> list[ModelCatalogEntry]:
+def _rows(data: Any, source: str) -> list[ModelCatalogEntry]:
+    if not isinstance(data, dict):
+        return []
     rows = []
     for name, meta in data.items():
         if not isinstance(meta, dict) or name == "sample_spec":
@@ -85,12 +87,17 @@ async def refresh_catalog(
                 data = resp.json()
         except (httpx.HTTPError, ValueError):
             structlog.get_logger().warning("model_catalog_fetch_failed", exc_info=True)
-    if data is None:
-        if newest is not None:
-            return 0  # keep stale rows over clobbering them with the snapshot
-        data, source = _load_snapshot(), "snapshot"
 
-    rows = _rows(data, source)
+    rows = _rows(data, source) if data is not None else []
+    if not rows:
+        # Fetch failed outright, or parsed to zero usable rows (empty object,
+        # non-dict body, upstream schema change, captive-portal JSON, etc).
+        # Either way, treat it like a failure: never wipe good rows with this.
+        if newest is not None:
+            return 0  # keep stale rows over clobbering them with a bad fetch
+        data, source = _load_snapshot(), "snapshot"
+        rows = _rows(data, source)
+
     await session.execute(delete(ModelCatalogEntry))  # full replace: pk-safe, idempotent
     session.add_all(rows)
     await session.commit()

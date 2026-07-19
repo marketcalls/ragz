@@ -118,8 +118,12 @@ async def get_catalog(session: SessionDep, ctx: SuperadminDep) -> CatalogOut:
     out = [
         CatalogEntryOut(
             name=e.name, provider=e.provider, max_input_tokens=e.max_input_tokens,
-            input_cost_per_1m=(e.input_cost_per_token or 0) * 1e6 or None,
-            output_cost_per_1m=(e.output_cost_per_token or 0) * 1e6 or None,
+            input_cost_per_1m=(
+                e.input_cost_per_token * 1e6 if e.input_cost_per_token is not None else None
+            ),
+            output_cost_per_1m=(
+                e.output_cost_per_token * 1e6 if e.output_cost_per_token is not None else None
+            ),
             registered=e.name in registered,
         )
         for e in entries

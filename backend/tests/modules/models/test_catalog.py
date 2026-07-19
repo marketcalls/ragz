@@ -128,3 +128,49 @@ async def test_stale_rows_kept_on_second_failure(
     }
     assert set(rows) == {"gpt-4o-mini", "claude-3-haiku"}
     assert all(r.source == "remote" for r in rows.values())
+
+
+async def test_degenerate_empty_object_body_does_not_wipe_catalog(
+    session: AsyncSession, settings: Settings
+) -> None:
+    """A 200 response that parses as JSON but yields zero usable rows (e.g. an
+    empty object, or an upstream schema change) must never wipe existing rows."""
+    rec = Recorder()
+    await refresh_catalog(session, settings, transport=rec.transport)
+    for row in (await session.execute(select(ModelCatalogEntry))).scalars():
+        row.fetched_at = naive_utc() - timedelta(days=4)
+    await session.commit()
+
+    empty_rec = Recorder(data={})
+    n = await refresh_catalog(session, settings, transport=empty_rec.transport)
+    assert n == 0
+    rows = {
+        r.name: r for r in (await session.execute(select(ModelCatalogEntry))).scalars()
+    }
+    assert set(rows) == {"gpt-4o-mini", "claude-3-haiku"}
+    assert all(r.source == "remote" for r in rows.values())
+
+
+async def test_degenerate_json_array_body_does_not_crash_or_wipe_catalog(
+    session: AsyncSession, settings: Settings
+) -> None:
+    """A 200 response whose body is a JSON array (not an object) must degrade
+    gracefully instead of raising AttributeError out of `_rows`."""
+    rec = Recorder()
+    await refresh_catalog(session, settings, transport=rec.transport)
+    for row in (await session.execute(select(ModelCatalogEntry))).scalars():
+        row.fetched_at = naive_utc() - timedelta(days=4)
+    await session.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "dict"])
+
+    n = await refresh_catalog(
+        session, settings, transport=httpx.MockTransport(handler)
+    )
+    assert n == 0
+    rows = {
+        r.name: r for r in (await session.execute(select(ModelCatalogEntry))).scalars()
+    }
+    assert set(rows) == {"gpt-4o-mini", "claude-3-haiku"}
+    assert all(r.source == "remote" for r in rows.values())

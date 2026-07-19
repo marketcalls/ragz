@@ -133,3 +133,24 @@ async def test_catalog_listing_flags_unregistered_models(
                              headers=h_admin)).status_code == 403
     assert (await client.post("/api/v1/admin/models/catalog/refresh",
                               headers=h_admin)).status_code == 403
+
+
+async def test_catalog_listing_preserves_zero_cost_entries(
+    client: httpx.AsyncClient, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """A free model (cost 0.0) must be distinguished from an unknown cost
+    (None) in the catalog response, not collapsed to null."""
+    session.add(
+        ModelCatalogEntry(
+            name="free-local-model", provider="ollama", max_input_tokens=8192,
+            input_cost_per_token=0.0, output_cost_per_token=0.0, source="snapshot",
+        )
+    )
+    await session.commit()
+
+    h_super = await auth(client, "root@platform.example")
+    r = await client.get("/api/v1/admin/models/catalog", headers=h_super)
+    assert r.status_code == 200
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert by_name["free-local-model"]["input_cost_per_1m"] == 0.0
+    assert by_name["free-local-model"]["output_cost_per_1m"] == 0.0
