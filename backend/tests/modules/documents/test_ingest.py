@@ -22,7 +22,7 @@ from raghub.modules.documents.models import Document, IngestJob
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.service import retrieve
+from raghub.modules.retrieval.service import retrieve, update_document_current
 from raghub.modules.tenancy.models import Group
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
@@ -58,6 +58,10 @@ async def test_full_runner_sequence_indexes_document(
     assert set(jobs) == {"parse", "chunk", "embed", "upsert"}
     assert all(j.finished_at is not None and j.progress == 1.0 for j in jobs.values())
 
+    # Plan H: freshly-upserted points are is_current=False (invisible) until
+    # promotion (Task 6). Real promotion doesn't exist yet, so this test
+    # stands in for it via the sanctioned update_document_current path.
+    await update_document_current(ctx.org_id, doc.id, is_current=True)
     result = await retrieve(session, ctx, ws.id, "invoice 0231")
     assert result.chunks and result.chunks[0].document_id == doc.id
 
@@ -91,6 +95,8 @@ async def test_delete_propagates_everywhere(
     await run_parse(doc.id)
     await run_chunk(doc.id)
     await run_embed_upsert(doc.id)
+    # Plan H: promote first so the delete-propagation check below is non-vacuous.
+    await update_document_current(ctx.org_id, doc.id, is_current=True)
 
     await run_delete(doc.id, ctx.user_id)
     assert (await session.execute(

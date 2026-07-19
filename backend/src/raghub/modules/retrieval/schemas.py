@@ -14,6 +14,8 @@ class ChunkOut(BaseModel):
     chunk_index: int
     text: str
     score: float
+    section: str | None
+    version: int
 
 
 class SearchResponse(BaseModel):

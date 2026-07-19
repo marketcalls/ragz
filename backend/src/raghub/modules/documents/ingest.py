@@ -155,7 +155,7 @@ async def run_embed_upsert(document_id: UUID) -> None:
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
                 mime=doc.mime, created_at=doc.created_at,
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
-                chunks=batch, dense=dense, sparse=sparse,
+                chunks=batch, dense=dense, sparse=sparse, version=doc.version,
             )
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)

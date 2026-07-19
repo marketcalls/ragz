@@ -5,6 +5,7 @@ from raghub.modules.auth.models import User
 from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from raghub.modules.documents.models import Document
 from raghub.modules.documents.service import create_from_upload
+from raghub.modules.retrieval.service import update_document_current
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
 from tests.modules.retrieval.test_retrieve import seed_workspace
@@ -13,12 +14,19 @@ from tests.modules.retrieval.test_retrieve import seed_workspace
 async def ingest_text(
     session: AsyncSession, ctx: TenantContext, ws: Workspace, filename: str, text: str
 ) -> Document:
-    """Seed via the REAL pipeline: upload service -> parse -> chunk -> embed+upsert."""
+    """Seed via the REAL pipeline: upload service -> parse -> chunk -> embed+upsert.
+
+    Plan H: upsert_points always stamps is_current=False (invisible until
+    promotion — Task 6). Real promotion doesn't exist yet, so this fixture
+    flips visibility itself via the sanctioned update_document_current path —
+    standing in for "this freshly-ingested version was promoted."
+    """
     doc = await create_from_upload(session, ctx, ws.id, filename=filename,
                                    mime="text/plain", data=text.encode())
     await run_parse(doc.id)
     await run_chunk(doc.id)
     await run_embed_upsert(doc.id)
+    await update_document_current(ctx.org_id, doc.id, is_current=True)
     await session.refresh(doc)
     assert doc.status == "indexed"
     return doc

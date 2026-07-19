@@ -254,9 +254,16 @@ async def upsert_points(
     chunks: list[Chunk],
     dense: list[list[float]],
     sparse: list[models.SparseVector],
+    version: int,
+    is_current: bool = False,
 ) -> None:
     """Upsert one batch of chunk points with the spec §2.2 payload. Constructs
-    points, never filters (iron rule 1 — filters live in retrieval only)."""
+    points, never filters (iron rule 1 — filters live in retrieval only).
+
+    Plan H: every point is stamped with its document's `version` and `section`
+    (heading trail). `is_current` defaults False — points are invisible to
+    current_only retrieval until promotion (Task 6) flips them via
+    `retrieval.service.update_document_current`."""
     points = [
         models.PointStruct(
             id=str(uuid5(_CHUNK_NAMESPACE, f"{document_id}:{c.chunk_index}")),
@@ -271,6 +278,9 @@ async def upsert_points(
                 "doc_type": mime,
                 "date": created_at.isoformat(),
                 "acl_groups": sorted(acl_group_ids),
+                "section": c.section,
+                "version": version,
+                "is_current": is_current,
             },
         )
         for c, d, s in zip(chunks, dense, sparse, strict=True)

@@ -23,7 +23,7 @@ async def search_workspace(
         no_answer=result.no_answer,
         chunks=[
             ChunkOut(document_id=c.document_id, page=c.page, chunk_index=c.chunk_index,
-                     text=c.text, score=c.score)
+                     text=c.text, score=c.score, section=c.section, version=c.version)
             for c in result.chunks
         ],
     )
