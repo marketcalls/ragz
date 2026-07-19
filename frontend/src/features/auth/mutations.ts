@@ -17,6 +17,9 @@ export function useLogin() {
     mutationFn: async (creds: { email: string; password: string }) => {
       const { data, error } = await api.POST('/api/v1/auth/login', { body: creds });
       if (error) throw new Error(problemDetail(error));
+      // A dead backend / proxy error can yield neither data nor a parsed
+      // error body -- surface it instead of crashing on data.access_token.
+      if (!data) throw new Error('Login failed: the server did not respond');
       return data;
     },
     onSuccess: (data) => {
