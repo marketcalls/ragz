@@ -34,6 +34,7 @@ from raghub.modules.retrieval.service import (
     delete_document_points,
     ensure_collection,
     update_document_acl,
+    update_document_metadata,
 )
 
 _BATCH_SIZE = 32
@@ -192,6 +193,10 @@ async def run_embed_upsert(document_id: UUID) -> None:
         # reflects the latest PG state before the document is marked indexed
         # and becomes retrievable.
         await update_document_acl(org_id, document_id, still_exists.acl_group_ids)
+        # Same race, same cure for metadata: a Tags PUT mid-ingest restamps
+        # only already-upserted points; later batches carry the stale meta
+        # loaded at task start. Re-stamp from the fresh row (final review).
+        await update_document_metadata(org_id, document_id, still_exists.meta or {})
 
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.
