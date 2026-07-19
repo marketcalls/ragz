@@ -84,6 +84,33 @@ async def test_model_create_returns_before_sync_completes(
     assert listing.json()[0]["sync_status"] == "synced"
 
 
+async def test_model_create_survives_non_upstream_sync_failure(
+    client: httpx.AsyncClient, seeded_superadmin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_background_sync only special-cased UpstreamError; any other exception
+    (e.g. a programming error, a DB hiccup on the fresh session) used to
+    escape the background task and leave the row 'pending' forever with no
+    way for the polling admin UI to learn the sync ended. The broad except
+    tail must swallow it (and only log) so the request that scheduled the
+    sync is unaffected."""
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("raghub.api.routes.models.sync_models_to_litellm", _boom)
+
+    h = await auth(client, "root@platform.example")
+    r = await client.post("/api/v1/admin/models", json=OPENAI_BODY, headers=h)
+    assert r.status_code == 201
+    assert r.json()["sync_status"] == "pending"
+
+    # No unhandled exception escaped the background task; the row is simply
+    # left at its pre-sync status since sync_models_to_litellm itself never
+    # ran far enough to persist anything.
+    listing = await client.get("/api/v1/admin/models", headers=h)
+    assert listing.json()[0]["sync_status"] == "pending"
+
+
 async def test_model_delete_triggers_background_sync(
     client: httpx.AsyncClient, seeded_superadmin: User
 ) -> None:

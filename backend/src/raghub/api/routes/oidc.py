@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.api.routes.auth import _set_refresh
 from raghub.core.config import Settings, get_settings
-from raghub.core.errors import AuthenticationError, NotFoundError, UpstreamError
+from raghub.core.errors import AuthenticationError, NotFoundError, SecretsError, UpstreamError
 from raghub.core.ratelimit import rate_limit
 from raghub.modules.auth import oidc
 from raghub.modules.auth import service as auth_service
@@ -71,7 +71,7 @@ async def callback(
             settings=settings, transport=request.app.state.oidc_transport,
         )
         pair = await auth_service.login_oidc(session, email=email, settings=settings)
-    except (AuthenticationError, UpstreamError, NotFoundError):
+    except (AuthenticationError, UpstreamError, NotFoundError, SecretsError):
         log.warning("oidc_callback_failed", exc_info=True)
         return RedirectResponse(
             f"{settings.frontend_base_url}/login?sso_error=1", status_code=302

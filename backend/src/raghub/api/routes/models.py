@@ -1,6 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -35,6 +36,13 @@ async def _background_sync(app_state: object, settings: Settings) -> None:
             )
     except UpstreamError:
         pass  # sync_status='error' already persisted by sync_models_to_litellm
+    except Exception:
+        # Never let an unexpected error escape a background task: FastAPI has
+        # already sent the response, so an unhandled raise here can't surface
+        # to the client - it would just leave rows stuck 'pending' forever
+        # while the admin UI polls for a terminal state. structlog is the
+        # only place this is observable.
+        structlog.get_logger().warning("model_sync_background_failed", exc_info=True)
 
 
 def _schedule_sync(background_tasks: BackgroundTasks, request: Request, settings: Settings) -> None:

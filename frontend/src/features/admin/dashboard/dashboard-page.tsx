@@ -11,11 +11,14 @@ import { useUsageSummary } from './queries';
 
 const RANGES = [7, 30, 90] as const;
 
-/** Pivot rows to one object per day; keep top-4 models by total, bucket rest as "Other". */
+/** Pivot rows to one object per day; keep top-3 models by total, bucket rest as "Other".
+ * Capped at top-3 (not top-4) so that with an "Other" bucket added there are at most 4
+ * series total, matching categorical()'s 4-color cap - otherwise "Other" wraps around
+ * to the accent color and collides with the top model's series. */
 function pivotTokens(rows: { day: string; model_name: string; tokens: number }[]) {
   const totals = new Map<string, number>();
   for (const r of rows) totals.set(r.model_name, (totals.get(r.model_name) ?? 0) + r.tokens);
-  const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([m]) => m);
+  const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m]) => m);
   const byDay = new Map<string, Record<string, string | number>>();
   for (const r of rows) {
     const key = top.includes(r.model_name) ? r.model_name : 'Other';
@@ -23,7 +26,7 @@ function pivotTokens(rows: { day: string; model_name: string; tokens: number }[]
     row[key] = ((row[key] as number | undefined) ?? 0) + r.tokens;
     byDay.set(r.day, row);
   }
-  const keys = totals.size > 4 ? [...top, 'Other'] : top;
+  const keys = totals.size > 3 ? [...top, 'Other'] : top;
   return { data: [...byDay.values()], keys };
 }
 

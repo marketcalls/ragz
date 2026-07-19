@@ -104,9 +104,13 @@ def refresh_model_catalog() -> None:
 
     async def _run() -> None:
         settings = get_settings()
-        factory = build_session_factory(build_engine(settings.database_url))
-        async with factory() as session:
-            n = await catalog.refresh_catalog(session, settings)
-            structlog.get_logger().info("model_catalog_refreshed", upserted=n)
+        engine = build_engine(settings.database_url)
+        try:
+            factory = build_session_factory(engine)
+            async with factory() as session:
+                n = await catalog.refresh_catalog(session, settings)
+                structlog.get_logger().info("model_catalog_refreshed", upserted=n)
+        finally:
+            await engine.dispose()
 
     asyncio.run(_run())
