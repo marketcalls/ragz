@@ -28,6 +28,7 @@ export function WorkspaceSettingsDialog({
     workspace.fallback_policy as 'general_knowledge' | 'decline',
   );
   const [webSearch, setWebSearch] = useState(workspace.web_search_enabled);
+  const [strictMode, setStrictMode] = useState(workspace.strict_mode);
 
   const submit = (e: FormEvent): void => {
     e.preventDefault();
@@ -43,6 +44,7 @@ export function WorkspaceSettingsDialog({
       system_prompt_override?: string | null;
       fallback_policy?: 'general_knowledge' | 'decline';
       web_search_enabled?: boolean;
+      strict_mode?: boolean;
     } = {};
     const nextTopK = Number(topK);
     const nextMinScore = Number(minScore);
@@ -55,6 +57,7 @@ export function WorkspaceSettingsDialog({
     }
     if (fallback !== workspace.fallback_policy) changes.fallback_policy = fallback;
     if (webSearch !== workspace.web_search_enabled) changes.web_search_enabled = webSearch;
+    if (strictMode !== workspace.strict_mode) changes.strict_mode = strictMode;
 
     if (Object.keys(changes).length === 0) {
       onOpenChange(false);
@@ -148,6 +151,15 @@ export function WorkspaceSettingsDialog({
               Allow web search (Tavily) — answers may cite public web pages
             </label>
           )}
+          <label className="flex items-center gap-2 text-[13px] text-secondary">
+            <input
+              type="checkbox"
+              checked={strictMode}
+              onChange={(e) => setStrictMode(e.target.checked)}
+              aria-label="Strict mode"
+            />
+            Strict mode — validate every answer before it streams, one retry on failure
+          </label>
           <div className="space-y-1">
             <Label htmlFor="ws-prompt-override">System prompt additions</Label>
             <textarea

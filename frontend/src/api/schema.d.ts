@@ -1803,6 +1803,8 @@ export interface components {
             fallback_policy: string;
             /** Web Search Enabled */
             web_search_enabled: boolean;
+            /** Strict Mode */
+            strict_mode: boolean;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
@@ -1820,6 +1822,8 @@ export interface components {
             fallback_policy?: ("general_knowledge" | "decline") | null;
             /** Web Search Enabled */
             web_search_enabled?: boolean | null;
+            /** Strict Mode */
+            strict_mode?: boolean | null;
         };
         /** WorstAnswerOut */
         WorstAnswerOut: {

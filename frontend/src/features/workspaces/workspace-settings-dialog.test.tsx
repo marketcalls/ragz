@@ -17,6 +17,7 @@ const ws: WorkspaceOut = {
   system_prompt_override: null,
   fallback_policy: 'general_knowledge',
   web_search_enabled: false,
+  strict_mode: false,
 };
 
 function stubFetch(responseBody: WorkspaceOut) {
@@ -187,6 +188,40 @@ test('the web search toggle is visible and submits web_search_enabled when chang
 test('the web search toggle is hidden when the fallback policy is decline (spec D7)', () => {
   renderDialog({ ...ws, fallback_policy: 'decline' });
   expect(screen.queryByLabelText('Allow web search')).not.toBeInTheDocument();
+});
+
+test('checking strict mode PATCHes only strict_mode', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, strict_mode: true });
+  const toggle = screen.getByLabelText('Strict mode');
+  expect(toggle).not.toBeChecked();
+  await user.click(toggle);
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect(body).toStrictEqual({ strict_mode: true });
+});
+
+test('leaves strict_mode out of the PATCH body when untouched', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, top_k: 12 });
+  const topK = screen.getByLabelText('Sources per query (top_k)');
+  await user.clear(topK);
+  await user.type(topK, '12');
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect('strict_mode' in body).toBe(false);
 });
 
 test('clearing the system prompt override sends an explicit null only when it changed', async () => {

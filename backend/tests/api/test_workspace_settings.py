@@ -141,6 +141,35 @@ async def test_web_search_enabled_defaults_off_and_round_trips(
     assert r.json()["web_search_enabled"] is True
 
 
+async def test_patch_strict_mode(client: httpx.AsyncClient, seeded_user: User) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"strict_mode": True}, headers=h
+    )
+    assert r.status_code == 200
+    assert r.json()["strict_mode"] is True
+
+
+async def test_strict_mode_defaults_to_false(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    ws = next(w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+              if w["id"] == ws_id)
+    assert ws["strict_mode"] is False
+
+
+async def test_strict_mode_null_is_409(client: httpx.AsyncClient, seeded_user: User) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"strict_mode": None}, headers=h
+    )
+    assert r.status_code == 409
+
+
 async def test_patch_atomicity_with_mixed_valid_invalid_fields(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

@@ -19,6 +19,7 @@ class WorkspaceOut(BaseModel):
     system_prompt_override: str | None
     fallback_policy: str
     web_search_enabled: bool
+    strict_mode: bool
 
     model_config = {"from_attributes": True}
 
@@ -31,6 +32,7 @@ class WorkspacePatch(BaseModel):
     system_prompt_override: str | None = Field(default=None, max_length=8000)
     fallback_policy: Literal["general_knowledge", "decline"] | None = None
     web_search_enabled: bool | None = None
+    strict_mode: bool | None = None
 
 
 class MemberAdd(BaseModel):
