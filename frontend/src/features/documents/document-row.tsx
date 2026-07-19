@@ -1,7 +1,7 @@
-import { Check, Lock, Pin, Trash2, Undo2 } from 'lucide-react';
+import { Check, Lock, Pin, Tags, Trash2, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
-import type { DocumentOut } from '@/api/types';
+import type { DocumentOut, MetadataFieldOut } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -12,12 +12,14 @@ import { toast } from '@/components/ui/toaster';
 import { useClaims } from '@/lib/use-claims';
 
 import { AclDialog } from './acl-dialog';
+import { MetadataDialog } from './metadata-dialog';
 import { useSetApproved } from './queries';
 import { formatBytes, statusPresentation } from './status';
 
 export function DocumentRow({
   doc,
   workspaceId,
+  fields = [],
   dimmed = false,
   onDelete,
   deleting,
@@ -26,6 +28,9 @@ export function DocumentRow({
 }: {
   doc: DocumentOut;
   workspaceId: string | null;
+  // Workspace metadata schema (DOC-6/Task 11) — defaults to [] so existing
+  // callers/tests that don't care about metadata don't need to pass it.
+  fields?: MetadataFieldOut[];
   dimmed?: boolean;
   onDelete: () => void;
   deleting: boolean;
@@ -34,6 +39,7 @@ export function DocumentRow({
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [aclOpen, setAclOpen] = useState(false);
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const claims = useClaims();
   const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
   const { tone, label } = statusPresentation(doc);
@@ -70,6 +76,15 @@ export function DocumentRow({
       </TD>
       <TD className="text-muted">{new Date(doc.created_at).toLocaleDateString()}</TD>
       <TD className="text-right">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Edit metadata for ${doc.filename}`}
+          title="Edit metadata"
+          onClick={() => setMetadataOpen(true)}
+        >
+          <Tags className="h-4 w-4" aria-hidden />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -124,6 +139,13 @@ export function DocumentRow({
           <Trash2 className="h-4 w-4" aria-hidden />
         </Button>
         {isAdmin ? <AclDialog document={doc} open={aclOpen} onOpenChange={setAclOpen} /> : null}
+        <MetadataDialog
+          doc={doc}
+          fields={fields}
+          workspaceId={workspaceId}
+          open={metadataOpen}
+          onOpenChange={setMetadataOpen}
+        />
         <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
           <DialogContent
             title="Delete document"

@@ -16,7 +16,8 @@ import { useClaims } from '@/lib/use-claims';
 
 import { DocumentRow } from './document-row';
 import { Dropzone } from './dropzone';
-import { useDeleteDocument, useDocuments, usePinDocument } from './queries';
+import { matchesMetadataFilter, MetadataFilterBar } from './metadata-filter-bar';
+import { useDeleteDocument, useDocuments, useMetadataFields, usePinDocument } from './queries';
 import { uploadDocuments } from './upload';
 import { groupByLineage } from './versions';
 
@@ -31,6 +32,9 @@ export function DocumentsPage() {
   const documents = useDocuments(workspaceId);
   const deleteDocument = useDeleteDocument(workspaceId);
   const pinDocument = usePinDocument(workspaceId);
+  const metadataFields = useMetadataFields(workspaceId);
+  const fields = metadataFields.data ?? [];
+  const [metadataFilter, setMetadataFilter] = useState<Record<string, string>>({});
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const claims = useClaims();
@@ -38,6 +42,12 @@ export function DocumentsPage() {
   const { data: workspaces } = useWorkspaces();
   const workspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const groups = documents.data
+    ? groupByLineage(documents.data).filter(({ current }) =>
+        matchesMetadataFilter(current.meta, fields, metadataFilter),
+      )
+    : [];
 
   const onFiles = (files: File[]): void => {
     if (!workspaceId) return;
@@ -90,6 +100,9 @@ export function DocumentsPage() {
             </div>
           ))}
           {documents.isPending && workspaceId ? <Spinner label="Loading documents…" /> : null}
+          {documents.data && documents.data.length > 0 && fields.length > 0 ? (
+            <MetadataFilterBar fields={fields} value={metadataFilter} onChange={setMetadataFilter} />
+          ) : null}
           {documents.data && documents.data.length > 0 ? (
             <Table>
               <THead>
@@ -103,13 +116,14 @@ export function DocumentsPage() {
                 </TR>
               </THead>
               <TBody>
-                {groupByLineage(documents.data).map(({ current, older }) => {
+                {groups.map(({ current, older }) => {
                   const isExpanded = expanded.has(current.lineage_id);
                   const renderRow = (doc: DocumentOut, dimmed: boolean) => (
                     <DocumentRow
                       key={doc.id}
                       doc={doc}
                       workspaceId={workspaceId}
+                      fields={fields}
                       dimmed={dimmed}
                       deleting={deleteDocument.isPending}
                       onDelete={() =>
@@ -167,6 +181,11 @@ export function DocumentsPage() {
           {documents.data?.length === 0 && uploads.length === 0 ? (
             <p className="pt-4 text-center text-[13px] text-secondary">
               No documents yet — upload some to make them searchable.
+            </p>
+          ) : null}
+          {documents.data && documents.data.length > 0 && groups.length === 0 ? (
+            <p className="pt-4 text-center text-[13px] text-secondary">
+              No documents match the current filters.
             </p>
           ) : null}
         </div>

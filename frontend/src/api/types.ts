@@ -27,6 +27,9 @@ export type ClientErrorOut = components['schemas']['ClientErrorOut'];
 // Cost fields are null when unknown to LiteLLM — omit pricing, don't show $0.
 export type CatalogEntryOut = components['schemas']['CatalogEntryOut'];
 export type CatalogOut = components['schemas']['CatalogOut'];
+// Per-workspace metadata schema (DOC-6, Task 9/11): field_type is
+// 'text' | 'date' | 'select'; options is populated only for 'select'.
+export type MetadataFieldOut = components['schemas']['MetadataFieldOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/toaster';
 
+import { MetadataFieldsSection } from './metadata-fields-section';
 import { usePatchWorkspace } from './queries';
 
 export function WorkspaceSettingsDialog({
@@ -69,6 +70,7 @@ export function WorkspaceSettingsDialog({
       <DialogContent
         title={`Retrieval settings — ${workspace.name}`}
         description="Tuning applies to every chat and search in this workspace."
+        className="max-w-lg"
       >
         <form onSubmit={submit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -132,6 +134,9 @@ export function WorkspaceSettingsDialog({
             </Button>
           </DialogFooter>
         </form>
+        <div className="mt-6 border-t border-line pt-4">
+          <MetadataFieldsSection workspaceId={workspace.id} />
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -330,6 +330,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/metadata-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Metadata Fields */
+        get: operations["list_metadata_fields_api_v1_workspaces__workspace_id__metadata_fields_get"];
+        put?: never;
+        /** Create Metadata Field */
+        post: operations["create_metadata_field_api_v1_workspaces__workspace_id__metadata_fields_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metadata-fields/{field_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Metadata Field */
+        delete: operations["delete_metadata_field_api_v1_metadata_fields__field_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Document Metadata */
+        put: operations["set_document_metadata_api_v1_documents__document_id__metadata_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/groups": {
         parameters: {
             query?: never;
@@ -1090,6 +1142,10 @@ export interface components {
             approved: boolean;
             /** Supersedes Document Id */
             supersedes_document_id: string | null;
+            /** Meta */
+            meta?: {
+                [key: string]: string;
+            } | null;
         };
         /** DocumentPatch */
         DocumentPatch: {
@@ -1229,6 +1285,48 @@ export interface components {
             parent_message_id?: string | null;
             /** Model Id */
             model_id?: string | null;
+        };
+        /**
+         * MetadataFieldCreate
+         * @description POST /workspaces/{id}/metadata-fields body (DOC-6).
+         */
+        MetadataFieldCreate: {
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /** Field Type */
+            field_type: string;
+            /** Options */
+            options?: string[] | null;
+        };
+        /** MetadataFieldOut */
+        MetadataFieldOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /** Field Type */
+            field_type: string;
+            /** Options */
+            options: string[] | null;
+            /** Position */
+            position: number;
+        };
+        /**
+         * MetadataValuesIn
+         * @description PUT /documents/{id}/metadata body — full replacement of doc.meta.
+         */
+        MetadataValuesIn: {
+            /** Values */
+            values: {
+                [key: string]: string;
+            };
         };
         /** ModelCreate */
         ModelCreate: {
@@ -1390,6 +1488,10 @@ export interface components {
             query: string;
             /** Top K */
             top_k?: number | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: string;
+            } | null;
         };
         /** SearchResponse */
         SearchResponse: {
@@ -2219,6 +2321,136 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ApprovedPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_metadata_fields_api_v1_workspaces__workspace_id__metadata_fields_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataFieldOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_metadata_field_api_v1_workspaces__workspace_id__metadata_fields_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataFieldCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataFieldOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_metadata_field_api_v1_metadata_fields__field_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                field_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_document_metadata_api_v1_documents__document_id__metadata_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataValuesIn"];
             };
         };
         responses: {
