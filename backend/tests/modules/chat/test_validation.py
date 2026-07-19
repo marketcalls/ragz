@@ -12,6 +12,7 @@ from raghub.modules.chat.validation import (
     build_auditor_messages,
     build_escalation_messages,
     build_gatekeeper_messages,
+    classify_escalation,
     parse_auditor_scores,
     parse_escalation_verdict,
     parse_gatekeeper_verdict,
@@ -78,6 +79,22 @@ def test_parse_escalation_verdict() -> None:
     assert parse_escalation_verdict('{"escalate": false}') is False
     assert parse_escalation_verdict("garbage") is False
     assert parse_escalation_verdict('{"escalate": "true"}') is False  # must be a JSON bool
+
+
+async def test_classify_escalation_returns_verdict_and_usage() -> None:
+    from raghub.modules.chat.llm import LLMCompletion, LLMUsage
+    from raghub.modules.models.models import Model
+
+    completer = FakeCompleter([
+        LLMCompletion(text='{"escalate": true}', tool_calls=[], usage=LLMUsage(15, 4)),
+    ])
+    utility_model = Model(litellm_model_name="util-m", display_name="U",
+                          provider_kind="ollama", base_url="http://x")
+    verdict, usage = await classify_escalation(
+        completer, utility_model, "a long ambiguous question"
+    )
+    assert verdict is True and usage == LLMUsage(15, 4)
+    assert completer.calls[0]["model"] == "util-m"
 
 
 # --- synthesize_with_gatekeeper (Task 6) ------------------------------------

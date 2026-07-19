@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from raghub.modules.chat.llm import LLMCompleter, LLMUsage
 from raghub.modules.chat.prompting import PromptSource, render_data_blocks, wrap_untrusted_block
+from raghub.modules.models.models import Model  # type only; resolution stays in models service
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 _NO_SOURCES_NOTE = "(no source excerpts were provided for this answer)"
@@ -239,3 +240,15 @@ def parse_escalation_verdict(text: str) -> bool:
     except (json.JSONDecodeError, ValueError):
         return False
     return isinstance(raw, dict) and raw.get("escalate") is True
+
+
+async def classify_escalation(
+    completer: LLMCompleter, utility_model: Model, question: str
+) -> tuple[bool, LLMUsage]:
+    """Design §1's utility-model tiebreak. Returns (verdict, usage) - the
+    caller must meter usage even on a False verdict; the call still spent
+    tokens on a question that, in the end, didn't escalate."""
+    completion = await completer.complete(
+        model=utility_model.litellm_model_name, messages=build_escalation_messages(question)
+    )
+    return parse_escalation_verdict(completion.text), completion.usage

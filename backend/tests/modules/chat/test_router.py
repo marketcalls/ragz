@@ -1,6 +1,6 @@
 import pytest
 
-from raghub.modules.chat.router import classify_query, should_escalate
+from raghub.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
 
 
 @pytest.mark.parametrize(
@@ -117,3 +117,15 @@ def test_metadata_field_names_escalate() -> None:
 
 def test_field_names_only_match_when_supplied() -> None:
     assert not should_escalate("show the HSE department procedures")
+
+
+def test_short_question_is_not_ambiguous() -> None:
+    assert not is_ambiguous_for_escalation("What is the muster point?")
+    assert not is_ambiguous_for_escalation("hello")
+    assert not is_ambiguous_for_escalation("")
+
+
+def test_long_single_clause_question_is_ambiguous() -> None:
+    assert is_ambiguous_for_escalation(
+        "Summarize the current evacuation procedure for the north building complex"
+    )

@@ -14,6 +14,7 @@ from raghub.core.db import build_session_factory
 from raghub.modules.chat.llm import LLMCompletion, LLMUsage
 from raghub.modules.chat.models import Citation
 from raghub.modules.chat.service import NO_ANSWER_TEXT
+from raghub.modules.models.models import Model
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
 from tests.conftest import (
     FakeChunkReader,
@@ -362,3 +363,144 @@ async def test_web_search_not_offered_when_disabled_or_decline(
             web_search_enabled=True, fallback_policy="general_knowledge"
         )
         assert "web_search" not in prompt_c
+
+
+# --- Task 8: utility-model escalation tiebreak (design §1's deferred piece) -
+
+# One interrogative ("Summarize" isn't one), no comparatives, no year/ISO
+# date, no metadata-field match -> should_escalate alone returns False. Ten
+# words -> is_ambiguous_for_escalation alone returns True. Only the
+# combination (heuristic silent + ambiguous + a completer + a designated
+# utility model) reaches the tiebreak.
+_AMBIGUOUS_QUESTION = "Summarize the current evacuation procedure for the north building complex"
+
+
+async def test_ambiguous_question_uses_utility_tiebreak_when_heuristic_silent(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession, utility_model: Model,
+) -> None:
+    """should_escalate alone would miss this long single-clause question (no
+    second interrogative, no comparative, no date, no metadata match). With a
+    utility model designated and a completer scripted to answer
+    {"escalate": true} first, then the usual search->answer planner script,
+    the tiebreak fires: the loop engages exactly as a heuristic-escalated
+    question would, and the tiebreak's own usage is folded into the SAME
+    summed total the agent loop and synthesize call feed."""
+    completer = FakeCompleter([
+        LLMCompletion(text='{"escalate": true}', tool_calls=[], usage=LLMUsage(15, 4)),
+        _search_completion("evacuation procedure"),
+    ])
+    fake_streamer = FakeStreamer()
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=fake_streamer, chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _flag_tools_unreliable(client, h_super)
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": _AMBIGUOUS_QUESTION},
+            headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert names.index("retrieval_started") < names.index("agent_step") < names.index("sources")
+    # The FIRST completer call is the tiebreak classifier, on the utility model.
+    assert completer.calls[0]["model"] == utility_model.litellm_model_name
+    step = next(d for n, d in frames if n == "agent_step")
+    assert step == {"n": 1, "tool": "search", "query": "evacuation procedure"}
+    done = next(d for n, d in frames if n == "done")
+    # Usage summed: tiebreak (15/4) + synth (42/7 from FakeStreamer) +
+    # planner rounds (10+3 / 5+1, same script-exhaustion shape as the
+    # heuristic-escalation test above):
+    assert done["prompt_tokens"] == 15 + 42 + 13
+    assert done["completion_tokens"] == 4 + 7 + 6
+    assert done["grounding"] == "documents"
+
+
+async def test_ambiguous_question_without_utility_model_never_escalates(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """The SAME ambiguous question, no utility model designated anywhere:
+    is_ambiguous_for_escalation alone can't reach the tiebreak (Plan I's
+    original heuristics-only contract) -- zero completer calls, no
+    agent_step frame, stream identical to the pre-Plan-J contract."""
+    completer = FakeCompleter([_search_completion("evacuation procedure")])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": _AMBIGUOUS_QUESTION},
+            headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert "agent_step" not in names
+    assert completer.calls == []
+    done = next(d for n, d in frames if n == "done")
+    assert done["prompt_tokens"] == 42 and done["completion_tokens"] == 7
+    assert done["grounding"] == "documents"
+
+
+async def test_tiebreak_false_verdict_still_meters_usage_without_escalating(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession, utility_model: Model,
+) -> None:
+    """A utility model is designated and the tiebreak fires (heuristic
+    silent + ambiguous), but the classifier answers {"escalate": false}: the
+    turn must NOT escalate (no agent_step, single retrieval shot, direct
+    synth), yet the classifier call still spent tokens and those tokens must
+    still show up in the final summed usage -- the caller must meter a
+    tiebreak call even on a False verdict."""
+    completer = FakeCompleter([
+        LLMCompletion(text='{"escalate": false}', tool_calls=[], usage=LLMUsage(12, 3)),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": _AMBIGUOUS_QUESTION},
+            headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert "agent_step" not in names  # no escalation -- single retrieval shot
+    assert len(completer.calls) == 1  # only the tiebreak classifier call
+    assert completer.calls[0]["model"] == utility_model.litellm_model_name
+    done = next(d for n, d in frames if n == "done")
+    # Metered even on a False verdict: synth (42/7) + the spent-but-unused
+    # tiebreak usage (12/3).
+    assert done["prompt_tokens"] == 42 + 12 and done["completion_tokens"] == 7 + 3
+    assert done["grounding"] == "documents"

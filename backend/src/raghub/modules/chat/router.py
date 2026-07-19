@@ -123,3 +123,22 @@ def should_escalate(content: str, metadata_field_names: Sequence[str] = ()) -> b
         name and name.replace("_", " ").lower() in text
         for name in metadata_field_names
     )
+
+
+_AMBIGUOUS_MIN_WORDS = 10
+
+
+def is_ambiguous_for_escalation(content: str) -> bool:
+    """Cheap pre-filter for design §1's utility-model tiebreak. Only
+    questions at least this long are worth spending a classifier call on at
+    all - should_escalate already resolved the confident cases (both ways),
+    and short questions are virtually always single-shot; spending a model
+    call on every short question would burn budget for no benefit given the
+    escalate-anyway rescue at stream_reply's post-retrieval trigger.
+
+    Deliberately independent of should_escalate's verdict: this function
+    alone only answers "is this substantial enough for a classifier call to
+    plausibly be worth it" -- it is the CALLER's job (stream_reply) to check
+    that should_escalate already said False before spending that call.
+    """
+    return len(content.split()) >= _AMBIGUOUS_MIN_WORDS

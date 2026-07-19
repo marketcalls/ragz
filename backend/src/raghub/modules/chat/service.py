@@ -45,10 +45,11 @@ from raghub.modules.chat.prompting import (
     parse_citation_markers,
     split_budget,
 )
-from raghub.modules.chat.router import classify_query, should_escalate
+from raghub.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
 from raghub.modules.chat.validation import (
     build_auditor_messages,
+    classify_escalation,
     parse_auditor_scores,
     synthesize_with_gatekeeper,
 )
@@ -804,20 +805,45 @@ async def stream_reply(
 
         # Phase 3 escalation (design §1): pre-trigger runs BEFORE the single
         # retrieval shot (should_escalate on the raw question + this
-        # workspace's metadata field names); post-trigger fires only when
-        # that single shot came back weak AND the workspace permits a
-        # general-knowledge fallback AND the workspace actually has indexed
-        # content to loop over (empty workspaces fall straight through).
-        # completer=None (no injected/derived LLMCompleter) disables
-        # escalation entirely -- every pre-Plan-I call site is unaffected.
+        # workspace's metadata field names; when that heuristic stays silent,
+        # Plan J's utility-model tiebreak gets one classifier call on
+        # questions substantial enough to be worth it - is_ambiguous_for_
+        # escalation); post-trigger fires only when that single shot came
+        # back weak AND the workspace permits a general-knowledge fallback
+        # AND the workspace actually has indexed content to loop over (empty
+        # workspaces fall straight through). completer=None (no
+        # injected/derived LLMCompleter) disables escalation entirely --
+        # every pre-Plan-I call site is unaffected.
         field_names: list[str] = []
         if completer is not None:
             field_names = [
                 f.name for f in await metadata_service.list_fields(session, ctx, chat.workspace_id)
             ]
-        pre_escalate = completer is not None and should_escalate(
+        # Initialized here (BEFORE the tiebreak below, not after the whole
+        # escalation block as pre-Plan-J) so the tiebreak's usage - spent
+        # even on a False verdict - has an accumulator to fold into before
+        # the agent loop or Gatekeeper (Task 7) add anything else to it.
+        agent_prompt_tokens = agent_completion_tokens = 0
+        heuristic_escalate = completer is not None and should_escalate(
             user_message.content, field_names
         )
+        pre_escalate = heuristic_escalate
+        if (
+            not heuristic_escalate
+            and completer is not None
+            and is_ambiguous_for_escalation(user_message.content)
+        ):
+            # get_utility_model is only queried once the heuristic is silent
+            # AND the question clears the ambiguity bar, so a workspace with
+            # no designated utility model never pays for the lookup on
+            # questions the heuristic already resolved either way.
+            escalation_utility_model = await get_utility_model(session)
+            if escalation_utility_model is not None:
+                pre_escalate, tiebreak_usage = await classify_escalation(
+                    completer, escalation_utility_model, user_message.content
+                )
+                agent_prompt_tokens += tiebreak_usage.prompt_tokens
+                agent_completion_tokens += tiebreak_usage.completion_tokens
         result = (
             RetrievalResult(chunks=[], no_answer=True)
             if pre_escalate  # the loop's first search subsumes the single shot
@@ -829,7 +855,6 @@ async def stream_reply(
             and workspace.fallback_policy == "general_knowledge"
             and await documents_service.has_indexed_documents(session, ctx, chat.workspace_id)
         )
-        agent_prompt_tokens = agent_completion_tokens = 0
         web_hits: list[WebResult] = []
         if run_loop and completer is not None:
             # D7/Task 11: the web_search tool is offered to the planner only
@@ -857,8 +882,13 @@ async def stream_reply(
                 else:
                     gathered = gather_item
             if gathered is not None:
-                agent_prompt_tokens = gathered.prompt_tokens
-                agent_completion_tokens = gathered.completion_tokens
+                # += (not =): the escalation tiebreak above may already have
+                # folded its own spent usage into these accumulators before
+                # the loop ever ran (e.g. a tiebreak True verdict that
+                # triggered this very loop) - an overwrite here would
+                # silently drop that spend from the final ledger.
+                agent_prompt_tokens += gathered.prompt_tokens
+                agent_completion_tokens += gathered.completion_tokens
                 web_hits = gathered.web_results
                 result = RetrievalResult(
                     # Loop findings outrank the stale weak single shot for the
