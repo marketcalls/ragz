@@ -2,8 +2,13 @@
 and never turns into a 500, queue depth reads real Redis list lengths, and
 the route is gated to superadmin (mirrors F's platform_usage_by_org gating
 test in tests/api/test_usage_endpoints.py).
+
+Review round 1 additions: the org rollup (platform_usage_by_org) and the
+Redis LLEN probe must degrade-not-fail too - a DB error must not 500 the
+whole endpoint, and a blackholed Redis must not hang the gather forever.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -12,9 +17,11 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from raghub.api.app import create_app
+from raghub.api.routes import superadmin_ops
 from raghub.core.config import Settings, get_settings
 from raghub.core.db import build_session_factory
 from raghub.modules.auth.models import User
+from raghub.modules.ops import health as ops_health
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -76,3 +83,52 @@ async def test_requires_superadmin(client: httpx.AsyncClient, seeded_user: User)
     h = await auth(client, "a@acme.com")
     r = await client.get("/api/v1/superadmin/health", headers=h)
     assert r.status_code == 403
+
+
+async def test_org_rollup_failure_degrades(
+    client: httpx.AsyncClient,
+    seeded_superadmin: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DB failure inside platform_usage_by_org must not 500 the endpoint -
+    it degrades the orgs component while the other probes stay intact."""
+
+    async def _boom(session: object, *, days: int = 30) -> list[dict[str, object]]:
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(superadmin_ops, "platform_usage_by_org", _boom)
+    h = await auth(client, "root@platform.example")
+    r = await client.get("/api/v1/superadmin/health", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["orgs"] == {"status": "error", "detail": "RuntimeError"}
+    # Other probes are independent of the org rollup and stay intact - the
+    # `client` fixture doesn't point qdrant at a live instance (that's what
+    # `degraded_qdrant_client` is for above), so only assert the two probes
+    # this fixture actually exercises successfully.
+    assert body["queues"]["status"] == "ok"
+    assert body["litellm"]["status"] == "ok"
+
+
+async def test_queue_depth_timeout_degrades(
+    client: httpx.AsyncClient,
+    seeded_superadmin: User,
+    redis_client: Redis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blackholed Redis LLEN must time out and degrade the queues component
+    instead of hanging the whole gather forever. The module-level timeout is
+    monkeypatched down so the test stays fast."""
+    monkeypatch.setattr(ops_health, "QUEUE_TIMEOUT_SECONDS", 0.05)
+
+    async def _slow_llen(_key: str) -> int:
+        await asyncio.sleep(1.0)
+        return 0
+
+    monkeypatch.setattr(redis_client, "llen", _slow_llen)
+    h = await auth(client, "root@platform.example")
+    r = await client.get("/api/v1/superadmin/health", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["queues"] == {"status": "error", "detail": "TimeoutError"}
+    assert body["litellm"]["status"] == "ok"

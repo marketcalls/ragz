@@ -28,10 +28,18 @@ async def system_health(
         ops_health.qdrant_stats(settings, transport),
         ops_health.litellm_health(settings, transport),
     )
-    orgs = await platform_usage_by_org(session, days=30)
+    # Unlike the other probes, the brief's example payload keeps "orgs" as a
+    # bare list on success (no status wrapper) - so only the error path gets
+    # the {"status": "error", "detail": ...} shape; success stays a plain
+    # list to match the documented contract exactly.
+    orgs: Any
+    try:
+        orgs = await platform_usage_by_org(session, days=30)
+    except Exception as exc:  # noqa: BLE001 - health must degrade, not raise
+        orgs = {"status": "error", "detail": type(exc).__name__}
     return {
         "queues": queues,
         "qdrant": qdrant,
         "litellm": litellm,
-        "orgs": orgs,  # F's platform_usage_by_org already returns plain rows
+        "orgs": orgs,
     }

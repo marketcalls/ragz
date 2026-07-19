@@ -3,6 +3,7 @@ as data. httpx transport injectable for tests. Org rollups delegate to
 modules/quotas (Plan F's platform_usage_by_org) - one aggregation code path.
 """
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -11,15 +12,28 @@ from redis.asyncio import Redis
 from raghub.core.config import Settings
 
 CELERY_QUEUES = ("default", "interactive")
+# Module-level so tests can monkeypatch it to a small value and exercise the
+# timeout path quickly, without a blackholed Redis actually hanging for 5s.
+QUEUE_TIMEOUT_SECONDS = 5.0
 
 
-async def queue_depths(redis: Redis) -> dict[str, Any]:
+async def queue_depths(redis: Redis, timeout: float | None = None) -> dict[str, Any]:
+    """LLEN each Celery queue, bounded by `timeout` (default QUEUE_TIMEOUT_SECONDS)
+    so a blackholed Redis degrades the component instead of hanging the gather
+    forever."""
+    effective_timeout = QUEUE_TIMEOUT_SECONDS if timeout is None else timeout
+
+    async def _llen(key: str) -> int:
+        # redis-py's llen() is stubbed Union[Awaitable[int], int] (a known
+        # sync/async typing gap in that library, not a real ambiguity here).
+        # Wrapping it in a coroutine normalizes it to a plain Awaitable[int]
+        # so asyncio.wait_for's overloads are satisfied.
+        return int(await redis.llen(key))  # type: ignore[misc]
+
     try:
         depths: dict[str, int] = {}
         for q in CELERY_QUEUES:
-            # redis-py's llen() is stubbed Union[Awaitable[int], int] (a known
-            # sync/async typing gap in that library, not a real ambiguity here).
-            depths[q] = int(await redis.llen(q))  # type: ignore[misc]
+            depths[q] = await asyncio.wait_for(_llen(q), timeout=effective_timeout)
         return {"status": "ok", "depths": depths}
     except Exception as exc:  # noqa: BLE001 - health must degrade, not raise
         return {"status": "error", "detail": type(exc).__name__}
