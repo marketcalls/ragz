@@ -197,6 +197,22 @@ async def seeded_superadmin(session: AsyncSession) -> User:
     return user
 
 
+@pytest.fixture
+async def user_headers(client: httpx.AsyncClient, seeded_user: User) -> dict[str, str]:
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": seeded_user.email, "password": "pw123456"}
+    )
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.fixture
+async def superadmin_headers(client: httpx.AsyncClient, seeded_superadmin: User) -> dict[str, str]:
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": seeded_superadmin.email, "password": "pw123456"}
+    )
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
 class FakeStreamer:
     def __init__(self, deltas: list[str] | None = None) -> None:
         self.deltas = deltas if deltas is not None else ["Revenue was 12M ", "[1]."]

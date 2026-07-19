@@ -15,6 +15,7 @@ from raghub.api.routes.admin_secrets import router as admin_secrets_router
 from raghub.api.routes.admin_sso import router as admin_sso_router
 from raghub.api.routes.auth import router as auth_router
 from raghub.api.routes.chats import router as chats_router
+from raghub.api.routes.client_errors import router as client_errors_router
 from raghub.api.routes.documents import router as documents_router
 from raghub.api.routes.groups import router as groups_router
 from raghub.api.routes.health import router as health_router
@@ -143,6 +144,7 @@ def create_app(
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(chats_router, prefix="/api/v1")
     app.include_router(usage_router, prefix="/api/v1")
+    app.include_router(client_errors_router, prefix="/api/v1")
 
     app.add_middleware(RequestIDMiddleware)
 
