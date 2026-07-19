@@ -1,15 +1,20 @@
+import json
 from datetime import timedelta
 from uuid import uuid4
 
 import httpx
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from raghub.core.config import Settings
 from raghub.core.db import naive_utc
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.chat.models import Chat, Message
 from raghub.modules.models.models import Model
+from raghub.modules.quotas.models import UserQuota
 from raghub.modules.quotas.service import record_usage
+from raghub.modules.secrets import service as secrets_service
 from raghub.modules.tenancy.models import Organization, Workspace
 
 
@@ -163,3 +168,81 @@ async def test_by_user_carries_query_counts(
     assert body["by_user"] == [
         {"user_id": str(seeded_user.id), "email": "a@acme.com", "tokens": 20, "queries": 2}
     ]
+
+
+async def _seed_vkey_users(
+    session: AsyncSession, seeded_user: User, test_settings: Settings
+) -> tuple[User, User]:
+    """seeded_user + user2 both hold stored vkeys (user2 has a per-user override);
+    user3 has no stored vkey and must never be touched by the org-quota mirror."""
+    org_id = seeded_user.org_id
+    user2 = User(org_id=org_id, email="b@acme.com",
+                 password_hash=hash_password("pw123456"), role="user")
+    user3 = User(org_id=org_id, email="c@acme.com",
+                 password_hash=hash_password("pw123456"), role="user")
+    session.add_all([user2, user3])
+    await session.flush()
+    session.add(UserQuota(user_id=user2.id, monthly_tokens=42_000))
+    await session.commit()
+
+    await secrets_service.set_secret(session, actor_id=None, name=f"vkey:{seeded_user.id}",
+                                     value="sk-u1", settings=test_settings)
+    await secrets_service.set_secret(session, actor_id=None, name=f"vkey:{user2.id}",
+                                     value="sk-u2", settings=test_settings)
+    return user2, user3
+
+
+async def test_org_quota_change_remirrors_all_vkey_budgets(
+    client: httpx.AsyncClient, seeded_user: User, seeded_superadmin: User,
+    session: AsyncSession, test_settings: Settings,
+) -> None:
+    """A live-user report: existing per-user gateway budgets must be re-mirrored
+    after the ORG quota changes, not just after a per-user PUT. Only org members
+    with a stored vkey (user1, user2) get /key/update; user3 (no vkey) is skipped."""
+    user2, user3 = await _seed_vkey_users(session, seeded_user, test_settings)
+
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={})
+
+    app = client._transport.app  # type: ignore[attr-defined]
+    app.state.litellm_transport = httpx.MockTransport(handler)
+
+    h_super = await auth(client, "root@platform.example")
+    r = await client.put(
+        f"/api/v1/admin/orgs/{seeded_user.org_id}/quota", headers=h_super,
+        json={"monthly_tokens": 500_000, "default_user_monthly_tokens": 20_000, "reset_day": 1},
+    )
+    assert r.status_code == 200
+
+    updates = {
+        json.loads(c.content)["key"]: json.loads(c.content)
+        for c in calls if c.url.path == "/key/update"
+    }
+    assert set(updates) == {"sk-u1", "sk-u2"}
+    assert updates["sk-u1"]["max_budget"] == pytest.approx(0.1)  # 20_000 tok @ $5/1M default
+    assert updates["sk-u2"]["max_budget"] == pytest.approx(0.21)  # 42_000 tok override
+    assert str(user3.id) not in json.dumps([json.loads(c.content) for c in calls])
+
+
+async def test_org_quota_change_survives_gateway_down(
+    client: httpx.AsyncClient, seeded_user: User, seeded_superadmin: User,
+    session: AsyncSession, test_settings: Settings,
+) -> None:
+    """Best-effort mirror: a dead gateway must not block the quota save."""
+    await _seed_vkey_users(session, seeded_user, test_settings)
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("gateway down")
+
+    app = client._transport.app  # type: ignore[attr-defined]
+    app.state.litellm_transport = httpx.MockTransport(boom)
+
+    h_super = await auth(client, "root@platform.example")
+    r = await client.put(
+        f"/api/v1/admin/orgs/{seeded_user.org_id}/quota", headers=h_super,
+        json={"monthly_tokens": 500_000, "default_user_monthly_tokens": 20_000, "reset_day": 1},
+    )
+    assert r.status_code == 200
