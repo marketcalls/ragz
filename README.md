@@ -20,6 +20,8 @@ uv run uvicorn --factory raghub.api.app:create_app --port 8000
 uv run celery -A raghub.worker.celery_app:celery_app worker -Q interactive,default -l info
 # macOS note: add --pool=solo — Docling's native libraries crash under the default
 # prefork pool (fork-safety); Linux deployments can keep prefork.
+# beat (third terminal, from backend/) — scheduled jobs (model catalog sync):
+uv run celery -A raghub.worker.celery_app:celery_app beat -l info
 
 # 3. Frontend (from frontend/)
 cd frontend && pnpm install

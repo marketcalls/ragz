@@ -11,6 +11,7 @@ import raghub.modules.audit.models  # noqa: F401
 import raghub.modules.auth.models  # noqa: F401  (registered as tasks add them)
 import raghub.modules.chat.models  # noqa: F401
 import raghub.modules.documents.models  # noqa: F401
+import raghub.modules.models.catalog  # noqa: F401
 import raghub.modules.models.models  # noqa: F401
 import raghub.modules.quotas.models  # noqa: F401
 import raghub.modules.secrets.models  # noqa: F401

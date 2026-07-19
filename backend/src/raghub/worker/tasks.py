@@ -7,11 +7,14 @@ import asyncio
 from typing import Any
 from uuid import UUID
 
+import structlog
 from celery import Task, chain
 
 from raghub.core.config import get_settings
+from raghub.core.db import build_engine, build_session_factory
 from raghub.modules.documents import ingest
 from raghub.modules.documents.pipeline import IngestFailure
+from raghub.modules.models import catalog
 from raghub.worker.celery_app import celery_app
 
 _MAX_RETRIES = 3
@@ -92,3 +95,18 @@ def enqueue_ingest(document_id: UUID, size_bytes: int) -> None:
 
 def enqueue_delete(document_id: UUID, actor_id: UUID) -> None:
     delete_task.si(str(document_id), str(actor_id)).apply_async(queue="interactive")
+
+
+@celery_app.task(name="models.refresh_catalog")
+def refresh_model_catalog() -> None:
+    """Beat-scheduled daily; refresh_catalog's own 3-day cache makes redundant
+    runs a cheap no-op (MODEL-10/G7)."""
+
+    async def _run() -> None:
+        settings = get_settings()
+        factory = build_session_factory(build_engine(settings.database_url))
+        async with factory() as session:
+            n = await catalog.refresh_catalog(session, settings)
+            structlog.get_logger().info("model_catalog_refreshed", upserted=n)
+
+    asyncio.run(_run())

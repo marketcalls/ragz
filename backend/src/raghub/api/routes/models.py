@@ -2,12 +2,16 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.core.config import Settings, get_settings
 from raghub.core.errors import UpstreamError
 from raghub.modules.models import service
+from raghub.modules.models.catalog import ModelCatalogEntry, refresh_catalog
+from raghub.modules.models.models import Model
 from raghub.modules.models.schemas import ModelCreate, ModelOut, ModelPatch, ModelPublic
 from raghub.modules.models.sync import sync_models_to_litellm
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
@@ -85,6 +89,49 @@ async def delete_model(
     """See create_model docstring: sync now runs in the background."""
     await service.delete_model(session, ctx, model_id, settings=settings)
     _schedule_sync(background_tasks, request, settings)
+
+
+class CatalogEntryOut(BaseModel):
+    name: str
+    provider: str
+    max_input_tokens: int | None
+    input_cost_per_1m: float | None  # derived: input_cost_per_token * 1e6
+    output_cost_per_1m: float | None
+    registered: bool
+
+    model_config = {"from_attributes": False}
+
+
+class CatalogOut(BaseModel):
+    entries: list[CatalogEntryOut]
+    new_available: int
+
+
+@router.get("/admin/models/catalog", response_model=CatalogOut)
+async def get_catalog(session: SessionDep, ctx: SuperadminDep) -> CatalogOut:
+    """MODEL-10/G7: LiteLLM's pricing/context-window catalog, cross-referenced
+    against the registry so the admin UI can flag models not yet added."""
+    entries = (
+        await session.execute(select(ModelCatalogEntry).order_by(ModelCatalogEntry.name))
+    ).scalars().all()
+    registered = set((await session.execute(select(Model.litellm_model_name))).scalars())
+    out = [
+        CatalogEntryOut(
+            name=e.name, provider=e.provider, max_input_tokens=e.max_input_tokens,
+            input_cost_per_1m=(e.input_cost_per_token or 0) * 1e6 or None,
+            output_cost_per_1m=(e.output_cost_per_token or 0) * 1e6 or None,
+            registered=e.name in registered,
+        )
+        for e in entries
+    ]
+    return CatalogOut(entries=out, new_available=sum(1 for e in out if not e.registered))
+
+
+@router.post("/admin/models/catalog/refresh")
+async def force_refresh_catalog(
+    session: SessionDep, settings: SettingsDep, ctx: SuperadminDep
+) -> dict[str, int]:
+    return {"upserted": await refresh_catalog(session, settings, force=True)}
 
 
 @router.get("/models", response_model=list[ModelPublic])
