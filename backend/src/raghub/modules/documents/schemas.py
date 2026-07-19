@@ -30,6 +30,10 @@ class DocumentPatch(BaseModel):
     pinned: bool
 
 
+class ApprovedPatch(BaseModel):
+    approved: bool
+
+
 class AclUpdate(BaseModel):
     """PUT /documents/{id}/acl body.
 

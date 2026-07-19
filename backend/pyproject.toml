@@ -88,3 +88,12 @@ root_package = "raghub"
 name = "Layered architecture"
 type = "layers"
 layers = ["raghub.api", "raghub.worker", "raghub.modules", "raghub.core"]
+# DOC-5 (Plan H Task 6): promote_lineage's reindex-enqueue call is deliberately
+# a function-local import, not a design escape from the layering rule -- it
+# exists solely to break the REAL circular Python import (worker.tasks imports
+# modules.documents.ingest, which now imports modules.documents.service at
+# module scope). The layering direction itself is unchanged: this is the one
+# documented, narrow exception, not a general modules->worker allowance.
+ignore_imports = [
+    "raghub.modules.documents.service -> raghub.worker.tasks",
+]

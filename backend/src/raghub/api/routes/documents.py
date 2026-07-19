@@ -9,7 +9,7 @@ from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
 from raghub.modules.documents import service
 from raghub.modules.documents.models import Document
-from raghub.modules.documents.schemas import AclUpdate, DocumentOut, DocumentPatch
+from raghub.modules.documents.schemas import AclUpdate, ApprovedPatch, DocumentOut, DocumentPatch
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
 from raghub.worker.tasks import enqueue_delete, enqueue_ingest
 
@@ -101,4 +101,12 @@ async def set_document_acl(
     document_id: UUID, body: AclUpdate, session: SessionDep, ctx: AdminDep
 ) -> DocumentOut:
     doc = await service.set_document_acl(session, ctx, document_id, body.acl_group_ids)
+    return _serialize_document(doc, ctx)
+
+
+@router.put("/documents/{document_id}/approved", response_model=DocumentOut)
+async def set_document_approved(
+    document_id: UUID, body: ApprovedPatch, session: SessionDep, ctx: AdminDep
+) -> DocumentOut:
+    doc = await service.set_approved(session, ctx, document_id, body.approved)
     return _serialize_document(doc, ctx)

@@ -164,3 +164,66 @@ async def set_document_acl(
     # is idempotent).
     await retrieval_service.update_document_acl(ctx.org_id, doc.id, doc.acl_group_ids)
     return doc
+
+
+async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID) -> None:
+    """Converge one lineage on its effective current version (DOC-5).
+
+    effective = highest-version APPROVED indexed row if any indexed row is
+    approved, else highest-version indexed row. Exactly one row ends with
+    is_current=True. Qdrant holds points only for the effective version:
+    promotion flips the winner visible FIRST, then deletes demoted points
+    (momentary double-serve beats momentary blackout). A winner whose points
+    were deleted earlier (approval flipped back to an old version) is
+    re-indexed from its stored chunks.json; promotion re-runs on completion.
+    """
+    rows = list(
+        (
+            await session.execute(
+                select(Document).where(
+                    Document.lineage_id == lineage_id, Document.status == "indexed"
+                )
+            )
+        ).scalars()
+    )
+    if not rows:
+        return
+    approved_rows = [r for r in rows if r.approved]
+    effective = max(approved_rows or rows, key=lambda d: d.version)
+
+    if not effective.vectors_present:
+        # Points were deleted when this version was demoted. Rebuild first;
+        # the reindex task ends by calling promote_lineage again.
+        # local: avoids the real ingest<->service circular import; explicitly
+        # allow-listed in pyproject.toml's import-linter ignore_imports.
+        from raghub.worker.tasks import enqueue_reindex
+
+        enqueue_reindex(effective.id)
+        return
+
+    for row in rows:
+        row.is_current = row.id == effective.id
+    await session.commit()
+
+    await retrieval_service.update_document_current(org_id, effective.id, is_current=True)
+    for row in rows:
+        if row.id != effective.id and row.vectors_present:
+            await retrieval_service.delete_document_points(org_id, row.id)
+            row.vectors_present = False
+    await session.commit()
+
+
+async def set_approved(
+    session: AsyncSession, ctx: TenantContext, document_id: UUID, approved: bool
+) -> Document:
+    doc = await get_document_checked(session, ctx, document_id)
+    doc.approved = approved
+    await record_audit(
+        session, org_id=ctx.org_id, actor_id=ctx.user_id,
+        action="document.approved" if approved else "document.unapproved",
+        target_type="document", target_id=str(doc.id),
+    )
+    await session.commit()
+    await promote_lineage(session, ctx.org_id, doc.lineage_id)
+    await session.refresh(doc)
+    return doc
