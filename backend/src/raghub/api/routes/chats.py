@@ -144,6 +144,7 @@ async def send_message(
         streamer=await _streamer(request, session, settings, ctx),
         retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
+        session_factory=request.app.state.session_factory,
     ))
 
 
@@ -169,4 +170,5 @@ async def regenerate(
         streamer=await _streamer(request, session, settings, ctx),
         retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
+        session_factory=request.app.state.session_factory,
     ))

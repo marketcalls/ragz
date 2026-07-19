@@ -6,7 +6,7 @@ one sanctioned mock).
 """
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -29,7 +29,7 @@ class LLMUsage:
 class LLMStreamer(Protocol):
     def stream(
         self, *, model: str, messages: list[dict[str, str]]
-    ) -> AsyncIterator[LLMDelta | LLMUsage]: ...
+    ) -> AsyncGenerator[LLMDelta | LLMUsage, None]: ...
 
 
 class LiteLLMStreamer:
@@ -46,7 +46,7 @@ class LiteLLMStreamer:
 
     async def stream(
         self, *, model: str, messages: list[dict[str, str]]
-    ) -> AsyncIterator[LLMDelta | LLMUsage]:
+    ) -> AsyncGenerator[LLMDelta | LLMUsage, None]:
         payload = {
             "model": model,
             "messages": messages,

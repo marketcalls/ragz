@@ -4,6 +4,8 @@ Tree invariants live HERE, not in routes: roots are user-role, roles strictly
 alternate parent->child, sibling_index is dense per (chat, parent).
 """
 
+import asyncio
+import contextlib
 from collections import defaultdict
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol
@@ -11,7 +13,7 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from raghub.core.config import Settings
 from raghub.core.db import naive_utc
@@ -167,6 +169,7 @@ def build_tree(
             sibling_index=m.sibling_index, role=m.role, content=m.content,
             model_id=m.model_id, prompt_tokens=m.prompt_tokens,
             completion_tokens=m.completion_tokens, created_at=m.created_at,
+            stopped=m.stopped, no_answer=m.no_answer,
             citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
             children=[node(k) for k in kids],
         )
@@ -237,6 +240,8 @@ async def add_message(
     model_id: UUID | None = None,
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
+    stopped: bool = False,
+    no_answer: bool = False,
 ) -> Message:
     if parent is None:
         if role != ROLE_USER:
@@ -266,6 +271,8 @@ async def add_message(
         model_id=model_id,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        stopped=stopped,
+        no_answer=no_answer,
     )
     session.add(msg)
     if (
@@ -438,12 +445,14 @@ async def _persist_assistant(
     model_id: UUID | None,
     usage: LLMUsage | None,
     citations: list[CitationRef],
+    no_answer: bool = False,
 ) -> Message:
     msg = await add_message(
         session, ctx, chat, role=ROLE_ASSISTANT, content=content, parent=parent,
         model_id=model_id,
         prompt_tokens=usage.prompt_tokens if usage else None,
         completion_tokens=usage.completion_tokens if usage else None,
+        no_answer=no_answer,
     )
     for c in citations:
         session.add(
@@ -454,6 +463,47 @@ async def _persist_assistant(
         )
     await session.commit()
     return msg
+
+
+_STOP_PERSISTS: set[asyncio.Task[None]] = set()
+
+
+def persist_stopped_detached(
+    session_factory: async_sessionmaker[AsyncSession],
+    ctx: TenantContext,
+    *,
+    chat_id: UUID,
+    user_message_id: UUID,
+    content: str,
+    model_id: UUID | None,
+) -> asyncio.Task[None]:
+    """Persist a partial answer after client abort (G2).
+
+    Runs on a task + session that OUTLIVE the dying SSE request: by the time
+    cancellation unwinds the generator, the request-scoped session may already
+    be closing, and awaiting on the cancelled task itself would be re-cancelled.
+    Tracked in _STOP_PERSISTS so tests (and a future shutdown hook) can await
+    completion; failures are logged, never raised — losing a partial answer is
+    acceptable, crashing teardown is not.
+    """
+
+    async def _persist() -> None:
+        try:
+            async with session_factory() as session:
+                chat = await get_chat(session, ctx, chat_id)
+                messages = await list_messages(session, chat_id)
+                parent = next(m for m in messages if m.id == user_message_id)
+                await add_message(
+                    session, ctx, chat, role=ROLE_ASSISTANT, content=content,
+                    parent=parent, model_id=model_id, stopped=True,
+                )
+        except Exception:
+            structlog.get_logger().error("stop_persist_failed", exc_info=True)
+
+    task = asyncio.get_running_loop().create_task(_persist())
+    _STOP_PERSISTS.add(task)
+    task.add_done_callback(_STOP_PERSISTS.discard)
+    return task
 
 
 async def stream_reply(
@@ -468,6 +518,7 @@ async def stream_reply(
     retriever: Retriever,
     chunk_reader: ChunkReader,
     settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -484,6 +535,7 @@ async def stream_reply(
     if not conversational:
         yield retrieval_started_event()
 
+    streamed_parts: list[str] = []
     try:
         if conversational:
             all_messages = await list_messages(session, chat.id)
@@ -498,18 +550,26 @@ async def stream_reply(
                 model_hint=model.litellm_model_name,
             )
 
-            convo_parts: list[str] = []
             convo_usage: LLMUsage | None = None
-            async for item in streamer.stream(
-                model=model.litellm_model_name, messages=prompt
-            ):
-                if isinstance(item, LLMDelta):
-                    convo_parts.append(item.text)
-                    yield token_event(item.text)
-                else:
-                    convo_usage = item
+            # aclosing (not a bare async-for): on client abort, GeneratorExit
+            # is thrown into THIS frame at the `yield token_event` below, not
+            # into streamer.stream()'s frame - a bare async-for only drops
+            # the inner generator's last reference, and asyncio's asyncgen
+            # finalizer then closes it on a LATER loop iteration (not
+            # synchronously), so the upstream LLM call would leak open past
+            # this request's teardown. aclosing's __aexit__ awaits aclose()
+            # deterministically, in the same unwind.
+            async with contextlib.aclosing(
+                streamer.stream(model=model.litellm_model_name, messages=prompt)
+            ) as llm_stream:
+                async for item in llm_stream:
+                    if isinstance(item, LLMDelta):
+                        streamed_parts.append(item.text)
+                        yield token_event(item.text)
+                    else:
+                        convo_usage = item
 
-            convo_answer = "".join(convo_parts)
+            convo_answer = "".join(streamed_parts)
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message, content=convo_answer,
                 model_id=model.id, usage=convo_usage, citations=[],
@@ -587,7 +647,7 @@ async def stream_reply(
             yield token_event(NO_ANSWER_TEXT)
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
-                model_id=None, usage=None, citations=[],
+                model_id=None, usage=None, citations=[], no_answer=True,
             )
             yield citations_event([])
             yield done_event(message_id=str(msg.id), prompt_tokens=0,
@@ -604,18 +664,20 @@ async def stream_reply(
             model_hint=model_hint,
         )
 
-        parts: list[str] = []
         usage: LLMUsage | None = None
-        async for item in streamer.stream(
-            model=model.litellm_model_name, messages=prompt
-        ):
-            if isinstance(item, LLMDelta):
-                parts.append(item.text)
-                yield token_event(item.text)
-            else:
-                usage = item
+        # See the aclosing note in the conversational branch above - same
+        # deterministic-cleanup-on-abort reasoning applies here.
+        async with contextlib.aclosing(
+            streamer.stream(model=model.litellm_model_name, messages=prompt)
+        ) as llm_stream:
+            async for item in llm_stream:
+                if isinstance(item, LLMDelta):
+                    streamed_parts.append(item.text)
+                    yield token_event(item.text)
+                else:
+                    usage = item
 
-        answer = "".join(parts)
+        answer = "".join(streamed_parts)
         markers = parse_citation_markers(answer, len(sources))
         by_marker = {s.marker: s for s in sources}
         citation_refs = [
@@ -656,3 +718,14 @@ async def stream_reply(
         structlog.get_logger().error("stream_failed", exc_info=True)
         yield error_event("streaming failed unexpectedly")
         return
+    except (asyncio.CancelledError, GeneratorExit):
+        # Client aborted the SSE request (stop button / navigation). The
+        # async-for over streamer.stream() has already been unwound, which
+        # closes the upstream LLM stream. Persist what streamed so far.
+        if session_factory is not None and streamed_parts:
+            persist_stopped_detached(
+                session_factory, ctx, chat_id=chat.id,
+                user_message_id=user_message.id,
+                content="".join(streamed_parts), model_id=model.id,
+            )
+        raise
