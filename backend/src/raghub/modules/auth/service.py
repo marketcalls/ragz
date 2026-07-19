@@ -82,17 +82,42 @@ async def rotate_refresh(
         raise AuthenticationError("invalid refresh token")
     now = datetime.now(UTC)
     now_naive = now.replace(tzinfo=None)
+    grace_reissue = False
     if row.revoked_at is not None:
-        # Reuse of a rotated token: revoke the entire family.
-        await session.execute(
-            update(RefreshToken)
-            .where(RefreshToken.family_id == row.family_id)
-            .values(revoked_at=now_naive)
+        # Reuse of a revoked token. Two live tabs racing on the same cookie is
+        # legitimate: the loser lands here moments after the winner rotated.
+        # Treat reuse inside the grace window as a benign concurrent rotation,
+        # but ONLY when the family shows evidence of a real rotation — a live
+        # successor token. A token revoked by logout has no successor and must
+        # never resurrect. Anything else keeps the theft response: revoke the
+        # entire family, uniform error.
+        within_grace = now - row.revoked_at.replace(tzinfo=UTC) <= timedelta(
+            seconds=settings.refresh_reuse_grace_seconds
         )
-        await session.commit()
-        structlog.get_logger().info("refresh_rejected", reason="reuse_detected")
-        raise AuthenticationError("invalid refresh token")
+        has_live_successor = (
+            await session.execute(
+                select(RefreshToken.id)
+                .where(
+                    RefreshToken.family_id == row.family_id,
+                    RefreshToken.id != row.id,
+                    RefreshToken.revoked_at.is_(None),
+                    RefreshToken.expires_at > now_naive,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none() is not None
+        if not (within_grace and has_live_successor):
+            await session.execute(
+                update(RefreshToken)
+                .where(RefreshToken.family_id == row.family_id)
+                .values(revoked_at=now_naive)
+            )
+            await session.commit()
+            structlog.get_logger().info("refresh_rejected", reason="reuse_detected")
+            raise AuthenticationError("invalid refresh token")
+        grace_reissue = True
     if row.expires_at.replace(tzinfo=UTC) < now:
+        # Expiry wins even inside the grace window.
         structlog.get_logger().info("refresh_rejected", reason="expired")
         raise AuthenticationError("invalid refresh token")
     user = (await session.execute(select(User).where(User.id == row.user_id))).scalar_one()
@@ -101,7 +126,14 @@ async def rotate_refresh(
         # reactivated the token resumes working within its original expiry.
         structlog.get_logger().info("refresh_rejected", reason="user_inactive")
         raise AuthenticationError("invalid refresh token")
-    row.revoked_at = now_naive
+    if grace_reissue:
+        # revoked_at stays as-is: the window is anchored to the original
+        # rotation and never extends. Serialization: the SELECT ... FOR UPDATE
+        # above holds the row lock, so two grace requests on the same token
+        # queue up rather than double-issuing unobserved.
+        structlog.get_logger().info("refresh_grace_reissue", family_id=str(row.family_id))
+    else:
+        row.revoked_at = now_naive
     return await _issue_pair(session, user, row.family_id, settings)
 
 

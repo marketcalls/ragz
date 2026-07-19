@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     kek_file: str = "./data/raghub_kek"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
+    # Concurrent tabs race on the same refresh cookie: the loser presents an
+    # already-rotated token. Reuse within this window (with a live successor in
+    # the family) reissues instead of tripping theft detection; reuse outside
+    # it still revokes the whole family. 0 disables the grace window.
+    refresh_reuse_grace_seconds: int = 10
 
     # Plan B: ingestion & retrieval
     qdrant_url: str = "http://localhost:56333"
