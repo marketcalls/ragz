@@ -68,6 +68,7 @@ async def to_model_out(session: AsyncSession, models: list[Model]) -> list[Model
             enabled=m.enabled,
             key_fingerprint=fingerprints.get(f"model:{m.id}"),
             sync_status=m.sync_status,  # type: ignore[arg-type]
+            mock_response=m.mock_response,
         )
         for m in models
     ]
@@ -83,10 +84,11 @@ async def create_model(
     base_url: str | None,
     api_key: str | None,
     settings: Settings,
+    mock_response: str | None = None,
 ) -> Model:
     model = Model(
         litellm_model_name=litellm_model_name, display_name=display_name,
-        provider_kind=provider_kind, base_url=base_url,
+        provider_kind=provider_kind, base_url=base_url, mock_response=mock_response,
     )
     session.add(model)
     await session.flush()
@@ -111,6 +113,7 @@ async def update_model(
     enabled: bool | None,
     api_key: str | None,
     settings: Settings,
+    mock_response: str | None = None,
 ) -> Model:
     model = await get_model(session, model_id)
     if display_name is not None:
@@ -119,6 +122,8 @@ async def update_model(
         model.base_url = base_url
     if enabled is not None:
         model.enabled = enabled
+    if mock_response is not None:
+        model.mock_response = mock_response
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.updated",
                        target_type="model", target_id=str(model.id))
     if api_key is not None:

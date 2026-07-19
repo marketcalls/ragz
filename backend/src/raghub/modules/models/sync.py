@@ -42,6 +42,8 @@ async def _litellm_params(
         )
     except NotFoundError:
         pass  # keyless provider (ollama / open local endpoints)
+    if model.mock_response:
+        params["mock_response"] = model.mock_response
     return params
 
 

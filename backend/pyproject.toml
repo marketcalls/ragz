@@ -38,6 +38,7 @@ dev = [
     "import-linter>=2.0",
     "psycopg2-binary>=2.9",
 ]
+loadtest = ["locust>=2.29"]
 
 [build-system]
 requires = ["hatchling"]

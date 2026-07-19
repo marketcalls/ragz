@@ -12,6 +12,8 @@ class ModelCreate(BaseModel):
     provider_kind: ProviderKind
     base_url: str | None = None
     api_key: str | None = None  # write-only: stored via the secrets module, never returned
+    # Superadmin-only fake-LLM passthrough (D2) - never exposed on ModelPublic.
+    mock_response: str | None = None
 
     @model_validator(mode="after")
     def _base_url_required_for_self_hosted(self) -> "ModelCreate":
@@ -25,6 +27,7 @@ class ModelPatch(BaseModel):
     base_url: str | None = None
     enabled: bool | None = None
     api_key: str | None = None  # write-only
+    mock_response: str | None = None
 
 
 SyncStatus = Literal["synced", "error", "pending"]
@@ -41,6 +44,7 @@ class ModelOut(BaseModel):
     enabled: bool
     key_fingerprint: str | None  # secrets fingerprint for model:{id}; None = keyless
     sync_status: SyncStatus
+    mock_response: str | None  # superadmin-only fake-LLM passthrough (D2)
 
 
 class ModelPublic(BaseModel):
