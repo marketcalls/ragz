@@ -46,7 +46,9 @@ async def add_member(
     await service.add_member(session, ctx, workspace_id, body.user_id, body.role)
 
 
-_SETTINGS_FIELDS = ("top_k", "min_score", "rerank_enabled", "system_prompt_override")
+_SETTINGS_FIELDS = (
+    "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy"
+)
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceOut)

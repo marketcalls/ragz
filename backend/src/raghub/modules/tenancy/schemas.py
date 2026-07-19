@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -16,6 +17,7 @@ class WorkspaceOut(BaseModel):
     top_k: int
     rerank_enabled: bool
     system_prompt_override: str | None
+    fallback_policy: str
 
     model_config = {"from_attributes": True}
 
@@ -26,6 +28,7 @@ class WorkspacePatch(BaseModel):
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
     rerank_enabled: bool | None = None
     system_prompt_override: str | None = Field(default=None, max_length=8000)
+    fallback_policy: Literal["general_knowledge", "decline"] | None = None
 
 
 class MemberAdd(BaseModel):

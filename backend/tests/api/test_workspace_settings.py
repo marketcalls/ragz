@@ -84,6 +84,48 @@ async def test_non_admin_cannot_patch(
     assert r.status_code == 403
 
 
+async def test_patch_fallback_policy(client: httpx.AsyncClient, seeded_user: User) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"fallback_policy": "decline"}, headers=h
+    )
+    assert r.status_code == 200
+    assert r.json()["fallback_policy"] == "decline"
+
+
+async def test_fallback_policy_defaults_to_general_knowledge(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    ws = next(w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+              if w["id"] == ws_id)
+    assert ws["fallback_policy"] == "general_knowledge"
+
+
+async def test_fallback_policy_rejects_unknown_value(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"fallback_policy": "hallucinate"}, headers=h
+    )
+    assert r.status_code == 422
+
+
+async def test_fallback_policy_null_is_409(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"fallback_policy": None}, headers=h
+    )
+    assert r.status_code == 409
+
+
 async def test_patch_atomicity_with_mixed_valid_invalid_fields(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

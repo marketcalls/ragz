@@ -107,7 +107,9 @@ async def set_default_model(
     return ws
 
 
-_RETRIEVAL_SETTINGS_FIELDS = {"top_k", "min_score", "rerank_enabled", "system_prompt_override"}
+_RETRIEVAL_SETTINGS_FIELDS = {
+    "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy"
+}
 
 
 async def update_retrieval_settings(

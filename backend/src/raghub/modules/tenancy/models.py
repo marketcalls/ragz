@@ -27,6 +27,10 @@ class Workspace(UUIDPk, Base):
     top_k: Mapped[int] = mapped_column(default=8)
     rerank_enabled: Mapped[bool] = mapped_column(default=False)
     system_prompt_override: Mapped[str | None] = mapped_column(Text(), default=None)
+    # Phase 3 Plan I (design D3): RAG-miss policy — "general_knowledge" | "decline"
+    fallback_policy: Mapped[str] = mapped_column(
+        default="general_knowledge", server_default="general_knowledge"
+    )
 
 
 class WorkspaceMember(Base):

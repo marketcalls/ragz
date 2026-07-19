@@ -1764,6 +1764,8 @@ export interface components {
             rerank_enabled: boolean;
             /** System Prompt Override */
             system_prompt_override: string | null;
+            /** Fallback Policy */
+            fallback_policy: string;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
@@ -1777,6 +1779,8 @@ export interface components {
             rerank_enabled?: boolean | null;
             /** System Prompt Override */
             system_prompt_override?: string | null;
+            /** Fallback Policy */
+            fallback_policy?: ("general_knowledge" | "decline") | null;
         };
     };
     responses: never;

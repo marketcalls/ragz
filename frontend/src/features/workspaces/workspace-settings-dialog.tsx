@@ -24,6 +24,9 @@ export function WorkspaceSettingsDialog({
   const [minScore, setMinScore] = useState(String(workspace.min_score));
   const [rerank, setRerank] = useState(workspace.rerank_enabled);
   const [override, setOverride] = useState(workspace.system_prompt_override ?? '');
+  const [fallback, setFallback] = useState<'general_knowledge' | 'decline'>(
+    workspace.fallback_policy as 'general_knowledge' | 'decline',
+  );
 
   const submit = (e: FormEvent): void => {
     e.preventDefault();
@@ -37,6 +40,7 @@ export function WorkspaceSettingsDialog({
       min_score?: number;
       rerank_enabled?: boolean;
       system_prompt_override?: string | null;
+      fallback_policy?: 'general_knowledge' | 'decline';
     } = {};
     const nextTopK = Number(topK);
     const nextMinScore = Number(minScore);
@@ -47,6 +51,7 @@ export function WorkspaceSettingsDialog({
     if (nextOverride !== workspace.system_prompt_override) {
       changes.system_prompt_override = nextOverride;
     }
+    if (fallback !== workspace.fallback_policy) changes.fallback_policy = fallback;
 
     if (Object.keys(changes).length === 0) {
       onOpenChange(false);
@@ -113,6 +118,22 @@ export function WorkspaceSettingsDialog({
             With reranking on, the confidence threshold reads the reranker&apos;s 0–1 relevance
             score instead of cosine similarity — recheck it after toggling.
           </p>
+          <div className="space-y-1">
+            <Label htmlFor="ws-fallback">If retrieval finds nothing</Label>
+            <select
+              id="ws-fallback"
+              value={fallback}
+              onChange={(e) =>
+                setFallback(e.target.value as 'general_knowledge' | 'decline')
+              }
+              className="w-full rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-ink"
+            >
+              <option value="general_knowledge">
+                Answer from general knowledge (labeled, no citations)
+              </option>
+              <option value="decline">Decline to answer (compliance mode)</option>
+            </select>
+          </div>
           <div className="space-y-1">
             <Label htmlFor="ws-prompt-override">System prompt additions</Label>
             <textarea

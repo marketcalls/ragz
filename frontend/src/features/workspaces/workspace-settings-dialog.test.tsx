@@ -15,6 +15,7 @@ const ws: WorkspaceOut = {
   top_k: 8,
   rerank_enabled: false,
   system_prompt_override: null,
+  fallback_policy: 'general_knowledge',
 };
 
 function stubFetch(responseBody: WorkspaceOut) {
@@ -131,6 +132,38 @@ test('closes without PATCHing when nothing changed', async () => {
   expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
     false,
   );
+});
+
+test('changing the fallback policy PATCHes only fallback_policy', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, fallback_policy: 'decline' });
+  await user.selectOptions(screen.getByLabelText('If retrieval finds nothing'), 'decline');
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect(body).toStrictEqual({ fallback_policy: 'decline' });
+});
+
+test('leaves fallback_policy out of the PATCH body when untouched', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, top_k: 12 });
+  const topK = screen.getByLabelText('Sources per query (top_k)');
+  await user.clear(topK);
+  await user.type(topK, '12');
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect('fallback_policy' in body).toBe(false);
 });
 
 test('clearing the system prompt override sends an explicit null only when it changed', async () => {

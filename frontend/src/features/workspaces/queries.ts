@@ -25,6 +25,7 @@ export function usePatchWorkspace() {
       min_score?: number;
       rerank_enabled?: boolean;
       system_prompt_override?: string | null;
+      fallback_policy?: 'general_knowledge' | 'decline';
     }) => {
       const { data, error } = await api.PATCH('/api/v1/workspaces/{workspace_id}', {
         params: { path: { workspace_id: id } },
