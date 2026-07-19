@@ -105,6 +105,7 @@ class CatalogEntryOut(BaseModel):
     max_input_tokens: int | None
     input_cost_per_1m: float | None  # derived: input_cost_per_token * 1e6
     output_cost_per_1m: float | None
+    position: int  # source-JSON enumeration order; higher ~= newer release
     registered: bool
 
     model_config = {"from_attributes": False}
@@ -118,9 +119,16 @@ class CatalogOut(BaseModel):
 @router.get("/admin/models/catalog", response_model=CatalogOut)
 async def get_catalog(session: SessionDep, ctx: SuperadminDep) -> CatalogOut:
     """MODEL-10/G7: LiteLLM's pricing/context-window catalog, cross-referenced
-    against the registry so the admin UI can flag models not yet added."""
+    against the registry so the admin UI can flag models not yet added.
+
+    Ordered (provider ASC, position DESC): the add-model picker groups by
+    provider and shows the newest models first within each provider."""
     entries = (
-        await session.execute(select(ModelCatalogEntry).order_by(ModelCatalogEntry.name))
+        await session.execute(
+            select(ModelCatalogEntry).order_by(
+                ModelCatalogEntry.provider, ModelCatalogEntry.position.desc()
+            )
+        )
     ).scalars().all()
     registered = set((await session.execute(select(Model.litellm_model_name))).scalars())
     out = [
@@ -132,6 +140,7 @@ async def get_catalog(session: SessionDep, ctx: SuperadminDep) -> CatalogOut:
             output_cost_per_1m=(
                 e.output_cost_per_token * 1e6 if e.output_cost_per_token is not None else None
             ),
+            position=e.position,
             registered=e.name in registered,
         )
         for e in entries

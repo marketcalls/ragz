@@ -112,19 +112,27 @@ async def test_catalog_listing_flags_unregistered_models(
     session.add_all([
         ModelCatalogEntry(name="gpt-4o-mini", provider="openai", max_input_tokens=128000,
                           input_cost_per_token=0.00000015, output_cost_per_token=0.0000006,
-                          source="snapshot"),
+                          source="snapshot", position=3),
         ModelCatalogEntry(name="claude-3-haiku", provider="anthropic", max_input_tokens=200000,
                           input_cost_per_token=0.00000025, output_cost_per_token=0.00000125,
-                          source="snapshot"),
+                          source="snapshot", position=5),
+        ModelCatalogEntry(name="claude-3-opus", provider="anthropic", max_input_tokens=200000,
+                          input_cost_per_token=0.000015, output_cost_per_token=0.000075,
+                          source="snapshot", position=7),
     ])
     await session.commit()
 
     r = await client.get("/api/v1/admin/models/catalog", headers=h_super)
     assert r.status_code == 200
     body = r.json()
-    assert body["new_available"] == 1  # claude-3-haiku only; gpt-4o-mini is registered
+    assert body["new_available"] == 2  # both claudes; gpt-4o-mini is registered
+    # Picker ordering contract: provider ASC, then position DESC (newest first).
+    assert [e["name"] for e in body["entries"]] == [
+        "claude-3-opus", "claude-3-haiku", "gpt-4o-mini",
+    ]
     by_name = {e["name"]: e for e in body["entries"]}
     assert by_name["gpt-4o-mini"]["registered"] is True
+    assert by_name["gpt-4o-mini"]["position"] == 3
     assert by_name["claude-3-haiku"]["registered"] is False
     assert by_name["claude-3-haiku"]["input_cost_per_1m"] == 0.25
 

@@ -669,6 +669,9 @@ export interface paths {
          * Get Catalog
          * @description MODEL-10/G7: LiteLLM's pricing/context-window catalog, cross-referenced
          *     against the registry so the admin UI can flag models not yet added.
+         *
+         *     Ordered (provider ASC, position DESC): the add-model picker groups by
+         *     provider and shows the newest models first within each provider.
          */
         get: operations["get_catalog_api_v1_admin_models_catalog_get"];
         put?: never;
@@ -1003,6 +1006,8 @@ export interface components {
             input_cost_per_1m: number | null;
             /** Output Cost Per 1M */
             output_cost_per_1m: number | null;
+            /** Position */
+            position: number;
             /** Registered */
             registered: boolean;
         };
@@ -1396,7 +1401,7 @@ export interface components {
              * Provider Kind
              * @enum {string}
              */
-            provider_kind: "openai" | "ollama" | "openai_compatible";
+            provider_kind: "openai" | "ollama" | "openai_compatible" | "litellm";
             /** Base Url */
             base_url?: string | null;
             /** Api Key */
@@ -1434,7 +1439,7 @@ export interface components {
              * Provider Kind
              * @enum {string}
              */
-            provider_kind: "openai" | "ollama" | "openai_compatible";
+            provider_kind: "openai" | "ollama" | "openai_compatible" | "litellm";
             /** Base Url */
             base_url: string | null;
             /** Enabled */
