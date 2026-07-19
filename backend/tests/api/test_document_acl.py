@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.modules.auth.models import User
 from raghub.modules.documents.service import get_document_checked
 from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Group
+from raghub.modules.tenancy.models import Group, WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -106,3 +106,38 @@ async def test_restricted_document_direct_access_denied(
     admin = TenantContext(user_id=seeded_user.id, org_id=seeded_user.org_id, role="admin",
                           workspace_ids=frozenset())
     assert (await get_document_checked(session, admin, doc.id)).id == doc.id
+
+
+async def test_listing_blanks_acl_group_ids_for_plain_user_but_shows_admin(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    chat_env: dict, stack_env: None,  # type: ignore[type-arg]
+) -> None:
+    """The restricted document still shows up in the listing for a plain
+    workspace member (existence stays visible, Drive-style) but
+    `acl_group_ids` -- admin-only metadata -- must be null for them, while
+    an admin sees the real group ids."""
+    ws = chat_env["workspace"]
+    doc = chat_env["document"]
+    group = Group(org_id=seeded_user.org_id, name="finance")
+    session.add(group)
+    await session.flush()
+    doc.acl_group_ids = [group.id]
+
+    plain = User(org_id=seeded_user.org_id, email="p@acme.com",
+                 password_hash=seeded_user.password_hash, role="user")
+    session.add(plain)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=plain.id))
+    await session.commit()
+
+    h_admin = await auth(client, "a@acme.com")
+    r_admin = await client.get(f"/api/v1/workspaces/{ws.id}/documents", headers=h_admin)
+    assert r_admin.status_code == 200
+    admin_row = next(d for d in r_admin.json() if d["id"] == str(doc.id))
+    assert admin_row["acl_group_ids"] == [str(group.id)]
+
+    h_user = await auth(client, "p@acme.com")
+    r_user = await client.get(f"/api/v1/workspaces/{ws.id}/documents", headers=h_user)
+    assert r_user.status_code == 200
+    user_row = next(d for d in r_user.json() if d["id"] == str(doc.id))
+    assert user_row["acl_group_ids"] is None

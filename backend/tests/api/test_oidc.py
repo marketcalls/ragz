@@ -21,6 +21,10 @@ from raghub.modules.tenancy.models import Organization
 
 ISSUER = "https://idp.example.com"
 KEY = JsonWebKey.generate_key("RSA", 2048, is_private=True)
+# A second, entirely unrelated key: JWKS never advertises it. Used to mint an
+# ID token with a signature that cannot verify against the published JWKS,
+# simulating a token forged by (or replayed from) a different issuer/key.
+OTHER_KEY = JsonWebKey.generate_key("RSA", 2048, is_private=True)
 _nonce_box: dict[str, str] = {}
 
 
@@ -40,13 +44,15 @@ def _idp_handler(request: httpx.Request) -> httpx.Response:
         assert form["grant_type"] == ["authorization_code"]
         assert "code_verifier" in form and "client_secret" in form
         now = int(time.time())
+        signing_key = _nonce_box.get("key_override", KEY)
         id_token = jwt.encode(
             {"alg": "RS256"},
-            {"iss": ISSUER, "aud": "raghub", "sub": "idp-user-1",
+            {"iss": _nonce_box.get("iss_override", ISSUER),
+             "aud": _nonce_box.get("aud_override", "raghub"), "sub": "idp-user-1",
              "email": _nonce_box.get("email_override", "New.Hire@acme.com"),
              "email_verified": True,
              "nonce": _nonce_box["nonce"], "iat": now, "exp": now + 300},
-            KEY,
+            signing_key,
         ).decode()
         return httpx.Response(200, json={"id_token": id_token, "access_token": "at",
                                          "token_type": "Bearer"})
@@ -145,3 +151,79 @@ async def test_unlisted_domain_rejected(sso_client: httpx.AsyncClient) -> None:
         assert r2.status_code == 401
     finally:
         _nonce_box.pop("email_override", None)
+
+
+async def test_bad_signature_rejected(sso_client: httpx.AsyncClient) -> None:
+    """ID token signed by a key the published JWKS never advertises must be
+    rejected -- otherwise anyone able to reach the token endpoint (or a
+    replayed/forged response) could mint tokens for any identity."""
+    r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    _nonce_box["nonce"] = q["nonce"][0]
+    _nonce_box["key_override"] = OTHER_KEY
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
+            follow_redirects=False,
+        )
+        assert r2.status_code == 401
+        assert r2.json()["detail"] == "invalid ID token"
+    finally:
+        _nonce_box.pop("key_override", None)
+
+
+async def test_wrong_audience_rejected(sso_client: httpx.AsyncClient) -> None:
+    """An ID token issued for a different client_id (aud) must be rejected --
+    otherwise a token minted for another relying party on the same IdP could
+    be replayed here."""
+    r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    _nonce_box["nonce"] = q["nonce"][0]
+    _nonce_box["aud_override"] = "some-other-client"
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
+            follow_redirects=False,
+        )
+        assert r2.status_code == 401
+        assert r2.json()["detail"] == "invalid ID token"
+    finally:
+        _nonce_box.pop("aud_override", None)
+
+
+async def test_wrong_issuer_rejected(sso_client: httpx.AsyncClient) -> None:
+    """An ID token claiming a different issuer than the one discovered and
+    configured must be rejected -- otherwise a compromised/lookalike IdP
+    response could impersonate the trusted issuer."""
+    r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    _nonce_box["nonce"] = q["nonce"][0]
+    _nonce_box["iss_override"] = "https://evil-idp.example.com"
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
+            follow_redirects=False,
+        )
+        assert r2.status_code == 401
+        assert r2.json()["detail"] == "invalid ID token"
+    finally:
+        _nonce_box.pop("iss_override", None)
+
+
+async def test_nonce_mismatch_rejected(sso_client: httpx.AsyncClient) -> None:
+    """The ID token's nonce must match the one this app stashed in Redis for
+    the state at login time -- otherwise a token obtained for an unrelated
+    login attempt could be replayed into this callback (CSRF-ish token
+    replay). Here we deliberately do NOT mirror the real login nonce into the
+    box, so the IdP mock bakes a different one into the token than what's
+    sitting in Redis."""
+    r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    real_nonce = q["nonce"][0]
+    _nonce_box["nonce"] = "totally-different-nonce-" + real_nonce
+    r2 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
+        follow_redirects=False,
+    )
+    assert r2.status_code == 401
+    assert r2.json()["detail"] == "SSO nonce mismatch"
