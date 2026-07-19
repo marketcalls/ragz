@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { AuditPage } from '@/features/admin/audit/audit-page';
+import { DashboardPage } from '@/features/admin/dashboard/dashboard-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
 import { UsersPage } from '@/features/admin/users/users-page';
 import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
@@ -27,7 +28,10 @@ export const router = createBrowserRouter([
           { path: '/documents', element: <DocumentsPage /> },
           {
             element: <RequireRole role="admin" />,
-            children: [{ path: '/admin/users', element: <UsersPage /> }],
+            children: [
+              { path: '/admin/dashboard', element: <DashboardPage /> },
+              { path: '/admin/users', element: <UsersPage /> },
+            ],
           },
           {
             element: <RequireRole role="superadmin" />,

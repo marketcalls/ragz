@@ -16,6 +16,9 @@ export type ModelOut = components['schemas']['ModelOut'];
 // slimmer shape — id + display_name only, already filtered to enabled models
 // server-side. ModelOut (id/display_name/enabled/…) is the admin-page shape.
 export type ModelPublic = components['schemas']['ModelPublic'];
+// GET /api/v1/admin/usage/summary (QUOTA-1 + ADM-4): KPI tiles, the two
+// per-day series (queries_per_day, tokens_by_model_per_day), and top users.
+export type UsageSummaryOut = components['schemas']['UsageSummaryOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 

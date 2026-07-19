@@ -496,7 +496,14 @@ export interface paths {
         /** List Models */
         get: operations["list_models_api_v1_admin_models_get"];
         put?: never;
-        /** Create Model */
+        /**
+         * Create Model
+         * @description Creates the row and returns immediately; the LiteLLM replay runs as a
+         *     background task on a fresh session (each replay is N+1 HTTP calls to the
+         *     proxy, so it must not block the request). The response therefore reflects
+         *     the row's pre-sync sync_status - the admin models page polls/reloads to see
+         *     the post-replay outcome (synced|error), which is the observable contract.
+         */
         post: operations["create_model_api_v1_admin_models_post"];
         delete?: never;
         options?: never;
@@ -514,11 +521,17 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Model */
+        /**
+         * Delete Model
+         * @description See create_model docstring: sync now runs in the background.
+         */
         delete: operations["delete_model_api_v1_admin_models__model_id__delete"];
         options?: never;
         head?: never;
-        /** Patch Model */
+        /**
+         * Patch Model
+         * @description See create_model docstring: sync now runs in the background.
+         */
         patch: operations["patch_model_api_v1_admin_models__model_id__patch"];
         trace?: never;
     };
@@ -696,6 +709,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/client-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report Client Error */
+        post: operations["report_client_error_api_v1_client_errors_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/client-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Client Errors */
+        get: operations["list_client_errors_api_v1_superadmin_client_errors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Health */
+        get: operations["system_health_api_v1_superadmin_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -849,6 +913,40 @@ export interface components {
             page: number;
             /** Score */
             score: number;
+        };
+        /** ClientErrorIn */
+        ClientErrorIn: {
+            /** Message */
+            message: string;
+            /** Stack */
+            stack?: string | null;
+            /** Url */
+            url?: string | null;
+        };
+        /** ClientErrorOut */
+        ClientErrorOut: {
+            /** Message */
+            message: string;
+            /** Stack */
+            stack?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Ts */
+            ts: number;
+            /** Org Id */
+            org_id: string;
+            /** User Id */
+            user_id: string;
+        };
+        /** DayCount */
+        DayCount: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Count */
+            count: number;
         };
         /** DayUsage */
         DayUsage: {
@@ -1043,6 +1141,20 @@ export interface components {
             base_url?: string | null;
             /** Api Key */
             api_key?: string | null;
+            /** Mock Response */
+            mock_response?: string | null;
+        };
+        /** ModelDayTokens */
+        ModelDayTokens: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Model Name */
+            model_name: string;
+            /** Tokens */
+            tokens: number;
         };
         /**
          * ModelOut
@@ -1074,6 +1186,8 @@ export interface components {
              * @enum {string}
              */
             sync_status: "synced" | "error" | "pending";
+            /** Mock Response */
+            mock_response: string | null;
         };
         /** ModelPatch */
         ModelPatch: {
@@ -1085,6 +1199,8 @@ export interface components {
             enabled?: boolean | null;
             /** Api Key */
             api_key?: string | null;
+            /** Mock Response */
+            mock_response?: string | null;
         };
         /**
          * ModelPublic
@@ -1218,6 +1334,17 @@ export interface components {
             /** Domains */
             domains: string[];
         };
+        /** UsageKpis */
+        UsageKpis: {
+            /** Queries */
+            queries: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Active Users */
+            active_users: number;
+            /** No Answer Count */
+            no_answer_count: number;
+        };
         /** UsageMeterOut */
         UsageMeterOut: {
             /** Used Tokens */
@@ -1240,6 +1367,11 @@ export interface components {
             by_model: components["schemas"]["ModelUsage"][];
             /** By User */
             by_user: components["schemas"]["UserUsage"][];
+            kpis: components["schemas"]["UsageKpis"];
+            /** Queries Per Day */
+            queries_per_day: components["schemas"]["DayCount"][];
+            /** Tokens By Model Per Day */
+            tokens_by_model_per_day: components["schemas"]["ModelDayTokens"][];
         };
         /** UserOut */
         UserOut: {
@@ -1284,6 +1416,8 @@ export interface components {
             email: string;
             /** Tokens */
             tokens: number;
+            /** Queries */
+            queries: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -2878,6 +3012,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgUsage"][];
+                };
+            };
+        };
+    };
+    report_client_error_api_v1_client_errors_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientErrorIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_client_errors_api_v1_superadmin_client_errors_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientErrorOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    system_health_api_v1_superadmin_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
