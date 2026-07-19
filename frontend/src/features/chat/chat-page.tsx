@@ -172,6 +172,7 @@ export function ChatPage() {
                 content={m.content}
                 sources={chipsFor(m)}
                 stopped={m.stopped}
+                grounding={m.grounding}
                 footer={
                   <MessageActions
                     entry={entry}

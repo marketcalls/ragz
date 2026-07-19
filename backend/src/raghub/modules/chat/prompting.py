@@ -35,6 +35,18 @@ CONVERSATIONAL_SYSTEM_PROMPT = (
     "- Do not fabricate or claim document content - you were given none this turn."
 )
 
+GENERAL_KNOWLEDGE_SYSTEM_PROMPT = (
+    "You are RagHub, the assistant for this document workspace. Retrieval found "
+    "no sufficiently relevant excerpts in the workspace's documents for this "
+    "question, and this workspace allows clearly-labeled general-knowledge "
+    "answers.\n"
+    "Rules:\n"
+    "- Answer from your general knowledge, plainly and helpfully.\n"
+    "- You were given NO document excerpts this turn: never claim, quote, or "
+    "invent workspace document content, and never emit citation markers like [1].\n"
+    "- If you are not sure, say so instead of guessing."
+)
+
 TRUNCATION_NOTE = (
     "[Earlier conversation truncated: {n} older messages omitted to fit the "
     "context budget.]"
@@ -226,6 +238,29 @@ def build_messages(
     return messages
 
 
+def _build_sourceless_messages(
+    base_prompt: str,
+    *,
+    history: Sequence[tuple[str, str]],
+    user_query: str,
+    budget: int,
+    system_prompt_override: str | None,
+    model_hint: str | None,
+) -> list[dict[str, str]]:
+    """Shared body of the conversational and general-knowledge builders:
+    system (+ capped override) + budgeted history + bare question, no <data>."""
+    split = split_budget(budget)
+    system_content = _system_content(base_prompt, system_prompt_override, split.system, model_hint)
+    remaining = budget - (
+        count_tokens(system_content, model_hint) + count_tokens(user_query, model_hint)
+    )
+    kept, dropped = _budget_history(history, remaining, model_hint)
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+    messages.extend(_history_messages(kept, dropped))
+    messages.append({"role": "user", "content": user_query})
+    return messages
+
+
 def build_conversational_messages(
     *,
     history: Sequence[tuple[str, str]],
@@ -236,19 +271,26 @@ def build_conversational_messages(
 ) -> list[dict[str, str]]:
     """Small-talk sibling of build_messages. The workspace override applies here
     too (persona instructions should not vanish on greetings)."""
-    split = split_budget(budget)
-    system_content = _system_content(
-        CONVERSATIONAL_SYSTEM_PROMPT, system_prompt_override, split.system, model_hint
+    return _build_sourceless_messages(
+        CONVERSATIONAL_SYSTEM_PROMPT, history=history, user_query=user_query,
+        budget=budget, system_prompt_override=system_prompt_override, model_hint=model_hint,
     )
-    remaining = budget - (
-        count_tokens(system_content, model_hint) + count_tokens(user_query, model_hint)
-    )
-    kept, dropped = _budget_history(history, remaining, model_hint)
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
-    messages.extend(_history_messages(kept, dropped))
-    messages.append({"role": "user", "content": user_query})
-    return messages
+
+def build_general_knowledge_messages(
+    *,
+    history: Sequence[tuple[str, str]],
+    user_query: str,
+    budget: int,
+    system_prompt_override: str | None = None,
+    model_hint: str | None = None,
+) -> list[dict[str, str]]:
+    """RAG-miss fallback (design D3): answer with zero document context. The
+    workspace override still applies (persona survives the fallback)."""
+    return _build_sourceless_messages(
+        GENERAL_KNOWLEDGE_SYSTEM_PROMPT, history=history, user_query=user_query,
+        budget=budget, system_prompt_override=system_prompt_override, model_hint=model_hint,
+    )
 
 
 def parse_citation_markers(text: str, max_marker: int) -> list[int]:

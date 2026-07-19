@@ -14,6 +14,7 @@ export function StreamingMessage({ stream }: { stream: ChatStreamState }) {
           content={stream.text}
           sources={stream.sources}
           noAnswer={stream.noAnswer}
+          grounding={stream.grounding}
         />
       ) : null}
       {stream.status === 'error' ? (

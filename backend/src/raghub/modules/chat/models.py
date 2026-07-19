@@ -49,6 +49,9 @@ class Message(UUIDPk, Base):
     completion_tokens: Mapped[int | None] = mapped_column(default=None)
     stopped: Mapped[bool] = mapped_column(default=False, server_default="false")
     no_answer: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Phase 3 Plan I (design D3): "documents" | "general" - set to "general" ONLY
+    # on general-knowledge fallback answers (RAG-miss + permissive policy).
+    grounding: Mapped[str] = mapped_column(default="documents", server_default="documents")
 
 
 class Citation(UUIDPk, Base):

@@ -9,6 +9,7 @@ const base: ChatStreamState = {
   sources: [],
   citations: [],
   noAnswer: false,
+  grounding: 'documents',
   errorDetail: null,
   pendingUserContent: null,
   doneMessageId: null,

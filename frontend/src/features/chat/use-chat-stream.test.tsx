@@ -26,7 +26,13 @@ test('a stream that starts with token (no retrieval_started/sources) still rende
   const frames: ChatSseEvent[] = [
     { type: 'token', delta: 'Hi there!' },
     { type: 'citations', citations: [] },
-    { type: 'done', done: { message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false } },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'documents',
+      },
+    },
   ];
   streamChatSse.mockImplementation(
     async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
@@ -43,6 +49,34 @@ test('a stream that starts with token (no retrieval_started/sources) still rende
   expect(result.current.status).toBe('done');
   expect(result.current.text).toBe('Hi there!');
   expect(result.current.sources).toEqual([]);
+  expect(result.current.grounding).toBe('documents');
+});
+
+test('the reducer stores grounding="general" from the done frame', async () => {
+  const frames: ChatSseEvent[] = [
+    { type: 'token', delta: 'ISO 45001 is an OHS standard.' },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm2', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'general',
+      },
+    },
+  ];
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      for (const frame of frames) onEvent(frame);
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('What is ISO 45001?');
+  });
+
+  expect(result.current.status).toBe('done');
+  expect(result.current.grounding).toBe('general');
 });
 
 test('an error before any token leaves status=error with the detail and the pending user message', async () => {

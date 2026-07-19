@@ -72,6 +72,7 @@ class MessageNode(BaseModel):
     created_at: datetime
     stopped: bool = False
     no_answer: bool = False
+    grounding: str = "documents"
     citations: list[CitationOut]
     children: list["MessageNode"]
 

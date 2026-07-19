@@ -1,6 +1,7 @@
 import json
 from collections.abc import AsyncIterator
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -107,7 +108,8 @@ async def test_full_event_sequence_and_persistence(
     assert answer == "Revenue was 12M [1]."
     done = events[-1][1]
     assert done == {"message_id": done["message_id"], "prompt_tokens": 42,
-                    "completion_tokens": 7, "no_answer": False}
+                    "completion_tokens": 7, "no_answer": False,
+                    "grounding": "documents"}
 
     # Persistence: user + assistant messages, citation row for [1] only.
     msgs = list((await session.execute(select(Message))).scalars())
@@ -179,6 +181,10 @@ async def test_no_answer_path_is_honest(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     session: AsyncSession, seeded_user: User, seeded_superadmin: User,
 ) -> None:
+    """decline-policy workspace: the pre-Plan-I no-answer contract, byte-
+    identical (Plan I's default policy is general_knowledge, so this test
+    opts the workspace into decline explicitly - see
+    test_weak_retrieval_general_knowledge_fallback for the new default path)."""
     app = create_app(
         session_factory=build_session_factory(engine),
         redis_client=redis_client,
@@ -193,6 +199,11 @@ async def test_no_answer_path_is_honest(
     ) as client:
         h = await auth(client, "a@acme.com")
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r_patch = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"fallback_policy": "decline"}, headers=h,
+        )
+        assert r_patch.status_code == 200
         r = await client.post(f"/api/v1/chats/{chat_id}/messages",
                               json={"content": "quantum llamas?"}, headers=h)
     events = parse_sse(r.text)
@@ -200,6 +211,7 @@ async def test_no_answer_path_is_honest(
     assert names == ["retrieval_started", "sources", "token", "citations", "done"]
     assert events[2][1]["delta"] == NO_ANSWER_TEXT
     assert events[-1][1]["no_answer"] is True
+    assert events[-1][1]["grounding"] == "documents"
     assert len(events[1][1]["sources"]) == 2  # nearest sources still shown
 
 
@@ -455,3 +467,84 @@ async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
     assert events[-1][1]["detail"] == "streaming failed unexpectedly"
     # Verify the event sequence ends cleanly (no additional events after error)
     assert len(events[-1:]) == 1
+
+
+async def test_weak_retrieval_general_knowledge_fallback(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """Design §1: weak results + fallback_policy=general_knowledge (the default)
+    -> answer WITHOUT document context: no sources/citations frames, done
+    carries grounding='general', Message row persists it, zero citations."""
+    fake = FakeStreamer(deltas=["ISO 45001 is ", "an OHS standard."])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id, no_answer=True),
+        llm_streamer=fake, chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What is ISO 45001?"}, headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert "sources" not in names and "citations" not in names
+    done = next(d for n, d in frames if n == "done")
+    assert done["grounding"] == "general" and done["no_answer"] is False
+    # The prompt carried NO data blocks and used the GK system prompt.
+    sent = fake.calls[-1]["messages"]
+    assert all("<data" not in m["content"] for m in sent)  # type: ignore[index]
+    # Persisted row carries the flag; no citations rows.
+    msg = (
+        await session.execute(
+            select(Message).where(Message.id == UUID(done["message_id"]))
+        )
+    ).scalar_one()
+    assert msg.grounding == "general"
+    assert (
+        await session.execute(select(Citation).where(Citation.message_id == msg.id))
+    ).scalar_one_or_none() is None
+
+
+async def test_weak_retrieval_decline_workspace_unchanged(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """decline workspaces keep the exact pre-Plan-I no-answer contract:
+    sources frame present, NO_ANSWER_TEXT streamed, done.no_answer=True,
+    grounding='documents'."""
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id, no_answer=True),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r_patch = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"fallback_policy": "decline"}, headers=h_admin,
+        )
+        assert r_patch.status_code == 200
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What is ISO 45001?"}, headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert "sources" in names
+    token_text = "".join(d["delta"] for n, d in frames if n == "token")
+    assert token_text == NO_ANSWER_TEXT
+    done = next(d for n, d in frames if n == "done")
+    assert done["no_answer"] is True and done["grounding"] == "documents"

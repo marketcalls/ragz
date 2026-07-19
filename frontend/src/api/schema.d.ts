@@ -1322,6 +1322,11 @@ export interface components {
              * @default false
              */
             no_answer: boolean;
+            /**
+             * Grounding
+             * @default documents
+             */
+            grounding: string;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
             /** Children */

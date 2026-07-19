@@ -68,4 +68,5 @@ export interface DoneInfo {
   prompt_tokens: number;
   completion_tokens: number;
   no_answer: boolean;
+  grounding: 'documents' | 'general';
 }

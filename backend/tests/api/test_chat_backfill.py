@@ -74,12 +74,20 @@ async def test_no_previous_citations_still_refuses_on_empty_retrieval(
     chat_env: dict[str, Any], session: AsyncSession,
     seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
 ) -> None:
+    """Pinned to the decline policy: this test is about CHAT-9's refusal
+    mechanics, not Plan I's general-knowledge fallback (the workspace
+    default since Plan I), so it opts into decline explicitly."""
     retriever = SequenceRetriever([RetrievalResult(chunks=[], no_answer=True)])
     reader = FakeChunkReader()
     async with make_client(engine, redis_client, test_settings,
                            retriever, fake_streamer, chunk_reader=reader) as c:  # type: ignore[arg-type]
         h = await auth(c, "a@acme.com")
         chat_id = await make_model_and_chat(c, chat_env, session, seeded_superadmin, h)
+        r_patch = await c.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"fallback_policy": "decline"}, headers=h,
+        )
+        assert r_patch.status_code == 200
         r = await c.post(f"/api/v1/chats/{chat_id}/messages",
                          json={"content": "anything?"}, headers=h)
         events = parse_sse(r.text)

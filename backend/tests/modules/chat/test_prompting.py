@@ -1,6 +1,8 @@
 from raghub.modules.chat.prompting import (
+    GENERAL_KNOWLEDGE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     PromptSource,
+    build_general_knowledge_messages,
     build_messages,
     count_tokens,
     parse_citation_markers,
@@ -101,3 +103,21 @@ def test_parse_citation_markers() -> None:
     assert parse_citation_markers("Per [1] and [2], see [1] again [9]", 2) == [1, 2]
     assert parse_citation_markers("no citations here", 5) == []
     assert parse_citation_markers("[0] is invalid, [3] fine", 3) == [3]
+
+
+def test_general_knowledge_messages_have_no_data_blocks() -> None:
+    msgs = build_general_knowledge_messages(
+        history=[("user", "hi"), ("assistant", "hello")],
+        user_query="What is ISO 45001?", budget=8000,
+    )
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"].startswith(GENERAL_KNOWLEDGE_SYSTEM_PROMPT)
+    assert all("<data" not in m["content"] for m in msgs)
+    assert msgs[-1] == {"role": "user", "content": "What is ISO 45001?"}
+
+
+def test_general_knowledge_messages_apply_workspace_override() -> None:
+    msgs = build_general_knowledge_messages(
+        history=[], user_query="q", budget=8000, system_prompt_override="Be terse.",
+    )
+    assert "Be terse." in msgs[0]["content"]

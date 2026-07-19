@@ -35,8 +35,17 @@ def test_all_event_names_and_payloads() -> None:
         "marker": 1, "document_id": "d-1", "chunk_ref": "d-1:2:0",
         "page": 2, "score": 0.9, "section": "Intro > Overview", "version": 2}]}
     done = done_event(message_id="m-1", prompt_tokens=10, completion_tokens=2,
-                      no_answer=False)
+                      no_answer=False, grounding="documents")
     assert done.event == "done"
     assert done.data == {"message_id": "m-1", "prompt_tokens": 10,
-                         "completion_tokens": 2, "no_answer": False}
+                         "completion_tokens": 2, "no_answer": False,
+                         "grounding": "documents"}
     assert error_event("boom").data == {"detail": "boom"}
+
+
+def test_done_event_carries_grounding() -> None:
+    e = done_event(
+        message_id="m1", prompt_tokens=1, completion_tokens=2,
+        no_answer=False, grounding="general",
+    )
+    assert e.data["grounding"] == "general"

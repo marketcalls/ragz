@@ -111,6 +111,14 @@ async def test_huge_query_never_streams_an_answer_over_empty_sources(
                            retriever, fake_streamer, chunk_reader=reader) as c:
         h = await auth(c, "a@acme.com")
         chat_id = await make_model_and_chat(c, chat_env, session, seeded_superadmin, h)
+        # Decline explicitly: this test is about the budget/fit edge case, not
+        # Plan I's general-knowledge fallback (the workspace default since
+        # Plan I), and asserts a `sources` frame is always present.
+        r_patch = await c.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"fallback_policy": "decline"}, headers=h,
+        )
+        assert r_patch.status_code == 200
         r = await c.post(f"/api/v1/chats/{chat_id}/messages",
                          json={"content": huge_query}, headers=h)
         events = parse_sse(r.text)
@@ -142,6 +150,12 @@ async def test_huge_query_forces_no_answer_even_when_retriever_says_answerable(
                            retriever, fake_streamer, chunk_reader=reader) as c:
         h = await auth(c, "a@acme.com")
         chat_id = await make_model_and_chat(c, chat_env, session, seeded_superadmin, h)
+        # Decline explicitly: see the sibling test above for why.
+        r_patch = await c.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"fallback_policy": "decline"}, headers=h,
+        )
+        assert r_patch.status_code == 200
         r = await c.post(f"/api/v1/chats/{chat_id}/messages",
                          json={"content": huge_query}, headers=h)
         events = parse_sse(r.text)

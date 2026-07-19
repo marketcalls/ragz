@@ -59,7 +59,8 @@ def citations_event(citations: list[CitationRef]) -> SSEEvent:
 
 
 def done_event(
-    *, message_id: str, prompt_tokens: int, completion_tokens: int, no_answer: bool
+    *, message_id: str, prompt_tokens: int, completion_tokens: int, no_answer: bool,
+    grounding: str,
 ) -> SSEEvent:
     return SSEEvent(
         "done",
@@ -68,6 +69,7 @@ def done_event(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "no_answer": no_answer,
+            "grounding": grounding,
         },
     )
 

@@ -34,6 +34,7 @@ from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Messa
 from raghub.modules.chat.prompting import (
     PromptSource,
     build_conversational_messages,
+    build_general_knowledge_messages,
     build_messages,
     count_tokens,
     fit_sources,
@@ -169,7 +170,7 @@ def build_tree(
             sibling_index=m.sibling_index, role=m.role, content=m.content,
             model_id=m.model_id, prompt_tokens=m.prompt_tokens,
             completion_tokens=m.completion_tokens, created_at=m.created_at,
-            stopped=m.stopped, no_answer=m.no_answer,
+            stopped=m.stopped, no_answer=m.no_answer, grounding=m.grounding,
             citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
             children=[node(k) for k in kids],
         )
@@ -242,6 +243,7 @@ async def add_message(
     completion_tokens: int | None = None,
     stopped: bool = False,
     no_answer: bool = False,
+    grounding: str = "documents",
 ) -> Message:
     if parent is None:
         if role != ROLE_USER:
@@ -273,6 +275,7 @@ async def add_message(
         completion_tokens=completion_tokens,
         stopped=stopped,
         no_answer=no_answer,
+        grounding=grounding,
     )
     session.add(msg)
     if (
@@ -452,6 +455,7 @@ async def _persist_assistant(
     usage: LLMUsage | None,
     citations: list[CitationRef],
     no_answer: bool = False,
+    grounding: str = "documents",
 ) -> Message:
     msg = await add_message(
         session, ctx, chat, role=ROLE_ASSISTANT, content=content, parent=parent,
@@ -459,6 +463,7 @@ async def _persist_assistant(
         prompt_tokens=usage.prompt_tokens if usage else None,
         completion_tokens=usage.completion_tokens if usage else None,
         no_answer=no_answer,
+        grounding=grounding,
     )
     for c in citations:
         session.add(
@@ -597,7 +602,7 @@ async def stream_reply(
                 message_id=str(msg.id),
                 prompt_tokens=convo_usage.prompt_tokens if convo_usage else 0,
                 completion_tokens=convo_usage.completion_tokens if convo_usage else 0,
-                no_answer=False,
+                no_answer=False, grounding="documents",
             )
             return
 
@@ -638,7 +643,6 @@ async def stream_reply(
         sources, kept_sources = await _prepare_sources(
             session, ctx, merged, max_tokens=sources_budget, model_hint=model_hint,
         )
-        yield sources_event(sources)
 
         # no_answer is decided AFTER the final fit: pinned/backfilled material
         # only counts as grounding if it actually survived into kept_sources
@@ -655,7 +659,53 @@ async def stream_reply(
             result.no_answer and not ((pinned_keys | backfilled_keys) & kept_keys)
         )
 
-        if no_answer:
+        if no_answer and workspace.fallback_policy == "general_knowledge":
+            # Design §1: weak retrieval + permissive policy -> general-knowledge
+            # answer. No <data>, no sources/citations frames, nothing to cite.
+            history = [
+                (m.role, m.content) for m in path_to_root(all_messages, user_message)
+            ]
+            prompt = build_general_knowledge_messages(
+                history=history, user_query=user_message.content,
+                budget=settings.chat_context_token_budget,
+                system_prompt_override=workspace.system_prompt_override,
+                model_hint=model_hint,
+            )
+            gk_usage: LLMUsage | None = None
+            # aclosing: same deterministic-cleanup-on-abort reasoning as the
+            # conversational branch.
+            async with contextlib.aclosing(
+                streamer.stream(model=model.litellm_model_name, messages=prompt)
+            ) as llm_stream:
+                async for item in llm_stream:
+                    if isinstance(item, LLMDelta):
+                        streamed_parts.append(item.text)
+                        yield token_event(item.text)
+                    else:
+                        gk_usage = item
+            msg = await _persist_assistant(
+                session, ctx, chat, parent=user_message,
+                content="".join(streamed_parts), model_id=model.id,
+                usage=gk_usage, citations=[], grounding="general",
+            )
+            streamed_parts.clear()  # same duplicate-row guard as the other branches
+            if gk_usage is not None:
+                await quota_service.record_usage(
+                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                    feature="chat", prompt_tokens=gk_usage.prompt_tokens,
+                    completion_tokens=gk_usage.completion_tokens,
+                )
+            yield done_event(
+                message_id=str(msg.id),
+                prompt_tokens=gk_usage.prompt_tokens if gk_usage else 0,
+                completion_tokens=gk_usage.completion_tokens if gk_usage else 0,
+                no_answer=False, grounding="general",
+            )
+            return
+
+        yield sources_event(sources)
+
+        if no_answer:  # decline policy: pre-Plan-I behavior, byte-identical
             yield token_event(NO_ANSWER_TEXT)
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
@@ -663,7 +713,7 @@ async def stream_reply(
             )
             yield citations_event([])
             yield done_event(message_id=str(msg.id), prompt_tokens=0,
-                             completion_tokens=0, no_answer=True)
+                             completion_tokens=0, no_answer=True, grounding="documents")
             return
 
         history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
@@ -723,7 +773,7 @@ async def stream_reply(
             message_id=str(msg.id),
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
-            no_answer=False,
+            no_answer=False, grounding="documents",
         )
     except UpstreamError:
         # User message stays persisted; the client may retry (-> sibling).

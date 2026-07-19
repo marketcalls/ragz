@@ -29,7 +29,7 @@ test('emits typed events in order, tokens split across chunks', async () => {
         'event: token\ndata: {"del',
         'ta":"Hel"}\n\nevent: token\ndata: {"delta":"lo"}\n\n',
         'event: citations\ndata: {"citations":[{"marker":1,"document_id":"d1","chunk_ref":"d1:12","page":3,"score":0.7,"section":"Fire Safety > Evacuation","version":2}]}\n\n',
-        'event: done\ndata: {"message_id":"m1","prompt_tokens":10,"completion_tokens":5,"no_answer":false}\n\n',
+        'event: done\ndata: {"message_id":"m1","prompt_tokens":10,"completion_tokens":5,"no_answer":false,"grounding":"documents"}\n\n',
       ]),
     ),
   );
@@ -53,6 +53,26 @@ test('emits typed events in order, tokens split across chunks', async () => {
     (e): e is Extract<ChatSseEvent, { type: 'citations' }> => e.type === 'citations',
   );
   expect(citationsEvent?.citations[0]).toMatchObject({ section: 'Fire Safety > Evacuation', version: 2 });
+
+  // Plan I: grounding parses through toEvent additively.
+  const doneEvent = events.find((e): e is Extract<ChatSseEvent, { type: 'done' }> => e.type === 'done');
+  expect(doneEvent?.done.grounding).toBe('documents');
+});
+
+test('a done frame with grounding "general" parses through', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      sseResponse([
+        'event: token\ndata: {"delta":"hi"}\n\n',
+        'event: done\ndata: {"message_id":"m2","prompt_tokens":1,"completion_tokens":1,"no_answer":false,"grounding":"general"}\n\n',
+      ]),
+    ),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', { content: 'hi' }, (e) => events.push(e), new AbortController().signal);
+  const doneEvent = events.find((e): e is Extract<ChatSseEvent, { type: 'done' }> => e.type === 'done');
+  expect(doneEvent?.done.grounding).toBe('general');
 });
 
 test('non-OK response emits a terminal error event', async () => {

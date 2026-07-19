@@ -13,6 +13,7 @@ export interface ChatStreamState {
   sources: SourceRef[];
   citations: CitationRef[];
   noAnswer: boolean;
+  grounding: 'documents' | 'general';
   errorDetail: string | null;
   pendingUserContent: string | null;
   doneMessageId: string | null; // lets the page hide the streamed block once the refetched tree contains it
@@ -24,6 +25,7 @@ const IDLE: ChatStreamState = {
   sources: [],
   citations: [],
   noAnswer: false,
+  grounding: 'documents',
   errorDetail: null,
   pendingUserContent: null,
   doneMessageId: null,
@@ -44,6 +46,7 @@ function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
         ...state,
         status: 'done',
         noAnswer: event.done.no_answer,
+        grounding: event.done.grounding,
         doneMessageId: event.done.message_id,
       };
     case 'error':

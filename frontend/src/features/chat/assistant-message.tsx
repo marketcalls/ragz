@@ -11,17 +11,24 @@ export function AssistantMessage({
   sources,
   noAnswer = false,
   stopped = false,
+  grounding = 'documents',
   footer,
 }: {
   content: string;
   sources: SourceChipData[];
   noAnswer?: boolean;
   stopped?: boolean;
+  grounding?: string;
   footer?: ReactNode;
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
   return (
     <div>
+      {grounding === 'general' ? (
+        <span className="mb-2 inline-flex items-center rounded-full bg-subtle px-2 py-0.5 text-xs text-secondary">
+          General knowledge — not from your documents
+        </span>
+      ) : null}
       <CitationProvider onCitationClick={setHighlightedN} sources={sources}>
         <Markdown content={content} />
       </CitationProvider>
