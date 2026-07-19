@@ -1,5 +1,5 @@
 import { authFetch } from '@/api/client';
-import type { CitationRef, DoneInfo, SourceRef } from '@/api/types';
+import type { AgentStepInfo, CitationRef, DoneInfo, SourceRef } from '@/api/types';
 import { createSseParser, type SseMessage } from '@/lib/sse';
 
 export type ChatSseEvent =
@@ -8,7 +8,8 @@ export type ChatSseEvent =
   | { type: 'token'; delta: string }
   | { type: 'citations'; citations: CitationRef[] }
   | { type: 'done'; done: DoneInfo }
-  | { type: 'error'; detail: string };
+  | { type: 'error'; detail: string }
+  | { type: 'agent_step'; step: AgentStepInfo };
 
 function toEvent(message: SseMessage): ChatSseEvent {
   try {
@@ -26,6 +27,8 @@ function toEvent(message: SseMessage): ChatSseEvent {
         return { type: 'done', done: data as DoneInfo };
       case 'error':
         return { type: 'error', detail: (data as { detail: string }).detail };
+      case 'agent_step':
+        return { type: 'agent_step', step: data as AgentStepInfo };
       default:
         return { type: 'error', detail: `unknown event: ${message.event}` };
     }

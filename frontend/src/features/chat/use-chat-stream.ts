@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
 
-import type { CitationRef, SourceRef } from '@/api/types';
+import type { AgentStepInfo, CitationRef, SourceRef } from '@/api/types';
 
 import { streamChatSse, type ChatSseEvent } from './stream';
 
@@ -17,6 +17,7 @@ export interface ChatStreamState {
   errorDetail: string | null;
   pendingUserContent: string | null;
   doneMessageId: string | null; // lets the page hide the streamed block once the refetched tree contains it
+  agentSteps: AgentStepInfo[]; // Phase 3 (Task 10): progress line on escalated turns
 }
 
 const IDLE: ChatStreamState = {
@@ -29,6 +30,7 @@ const IDLE: ChatStreamState = {
   errorDetail: null,
   pendingUserContent: null,
   doneMessageId: null,
+  agentSteps: [],
 };
 
 function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
@@ -51,6 +53,8 @@ function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
       };
     case 'error':
       return { ...state, status: 'error', errorDetail: event.detail };
+    case 'agent_step':
+      return { ...state, status: 'retrieving', agentSteps: [...state.agentSteps, event.step] };
   }
 }
 

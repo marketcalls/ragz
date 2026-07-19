@@ -76,3 +76,10 @@ def done_event(
 
 def error_event(detail: str) -> SSEEvent:
     return SSEEvent("error", {"detail": detail})
+
+
+def agent_step_event(*, n: int, tool: str, query: str) -> SSEEvent:
+    """Phase 3 (design §2): emitted before each agent tool execution.
+    Additive — pre-Plan-I clients never see it (they receive it only on
+    escalated turns, and the frontend ships the handler in the same commit)."""
+    return SSEEvent("agent_step", {"n": n, "tool": tool, "query": query})

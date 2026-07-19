@@ -18,10 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from raghub.core.config import Settings
 from raghub.core.db import naive_utc
 from raghub.core.errors import ConflictError, NotFoundError, UpstreamError
+from raghub.modules.chat.agent import AgentGathered, AgentStep, run_agent_gather
 from raghub.modules.chat.events import (
     CitationRef,
     SourceRef,
     SSEEvent,
+    agent_step_event,
     citations_event,
     done_event,
     error_event,
@@ -29,7 +31,7 @@ from raghub.modules.chat.events import (
     sources_event,
     token_event,
 )
-from raghub.modules.chat.llm import LLMDelta, LLMStreamer, LLMUsage
+from raghub.modules.chat.llm import LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
 from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message
 from raghub.modules.chat.prompting import (
     PromptSource,
@@ -41,8 +43,9 @@ from raghub.modules.chat.prompting import (
     parse_citation_markers,
     split_budget,
 )
-from raghub.modules.chat.router import classify_query
+from raghub.modules.chat.router import classify_query, should_escalate
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
+from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
 from raghub.modules.quotas import service as quota_service
@@ -534,6 +537,7 @@ async def stream_reply(
     chunk_reader: ChunkReader,
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    completer: LLMCompleter | None = None,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -632,7 +636,58 @@ async def stream_reply(
         )
         pinned_keys = {(str(c.document_id), c.page, c.chunk_index) for c in pinned_chunks}
 
-        result = await retriever(session, ctx, chat.workspace_id, user_message.content)
+        # Phase 3 escalation (design §1): pre-trigger runs BEFORE the single
+        # retrieval shot (should_escalate on the raw question + this
+        # workspace's metadata field names); post-trigger fires only when
+        # that single shot came back weak AND the workspace permits a
+        # general-knowledge fallback AND the workspace actually has indexed
+        # content to loop over (empty workspaces fall straight through).
+        # completer=None (no injected/derived LLMCompleter) disables
+        # escalation entirely -- every pre-Plan-I call site is unaffected.
+        field_names: list[str] = []
+        if completer is not None:
+            field_names = [
+                f.name for f in await metadata_service.list_fields(session, ctx, chat.workspace_id)
+            ]
+        pre_escalate = completer is not None and should_escalate(
+            user_message.content, field_names
+        )
+        result = (
+            RetrievalResult(chunks=[], no_answer=True)
+            if pre_escalate  # the loop's first search subsumes the single shot
+            else await retriever(session, ctx, chat.workspace_id, user_message.content)
+        )
+        run_loop = pre_escalate or (
+            completer is not None
+            and result.no_answer
+            and workspace.fallback_policy == "general_knowledge"
+            and await documents_service.has_indexed_documents(session, ctx, chat.workspace_id)
+        )
+        agent_prompt_tokens = agent_completion_tokens = 0
+        if run_loop and completer is not None:
+            gathered: AgentGathered | None = None
+            async for gather_item in run_agent_gather(
+                session, ctx, workspace=workspace, question=user_message.content,
+                model=model, completer=completer, retriever=retriever,
+                chunk_reader=chunk_reader, web_searcher=None,  # Task 11 enables
+                metadata_field_names=field_names,
+            ):
+                if isinstance(gather_item, AgentStep):
+                    yield agent_step_event(
+                        n=gather_item.n, tool=gather_item.tool, query=gather_item.query
+                    )
+                else:
+                    gathered = gather_item
+            if gathered is not None:
+                agent_prompt_tokens = gathered.prompt_tokens
+                agent_completion_tokens = gathered.completion_tokens
+                result = RetrievalResult(
+                    # Loop findings outrank the stale weak single shot for the
+                    # budget fit; merge_chunks dedupes on chunk identity.
+                    chunks=merge_chunks(gathered.chunks, result.chunks),
+                    no_answer=not gathered.grounded,
+                )
+
         backfilled: list[RetrievedChunk] = []
         if len(result.chunks) < workspace.top_k:
             prev_refs = await _previous_citation_refs(session, all_messages, user_message)
@@ -686,6 +741,13 @@ async def stream_reply(
                         yield token_event(item.text)
                     else:
                         gk_usage = item
+            if agent_prompt_tokens or agent_completion_tokens:
+                gk_usage = LLMUsage(
+                    prompt_tokens=(gk_usage.prompt_tokens if gk_usage else 0)
+                    + agent_prompt_tokens,
+                    completion_tokens=(gk_usage.completion_tokens if gk_usage else 0)
+                    + agent_completion_tokens,
+                )
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message,
                 content="".join(streamed_parts), model_id=model.id,
@@ -709,14 +771,24 @@ async def stream_reply(
         yield sources_event(sources)
 
         if no_answer:  # decline policy: pre-Plan-I behavior, byte-identical
+            # -- except: the ledger still sees planner tokens spent on a
+            # loop that ultimately failed to ground the turn (spike
+            # contract: full spend recorded on every path).
             yield token_event(NO_ANSWER_TEXT)
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
                 model_id=None, usage=None, citations=[], no_answer=True,
             )
+            if agent_prompt_tokens or agent_completion_tokens:
+                await quota_service.record_usage(
+                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                    feature="chat", prompt_tokens=agent_prompt_tokens,
+                    completion_tokens=agent_completion_tokens,
+                )
             yield citations_event([])
-            yield done_event(message_id=str(msg.id), prompt_tokens=0,
-                             completion_tokens=0, no_answer=True, grounding="documents")
+            yield done_event(message_id=str(msg.id), prompt_tokens=agent_prompt_tokens,
+                             completion_tokens=agent_completion_tokens, no_answer=True,
+                             grounding="documents")
             return
 
         history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
@@ -741,6 +813,13 @@ async def stream_reply(
                     yield token_event(item.text)
                 else:
                     usage = item
+
+        if agent_prompt_tokens or agent_completion_tokens:
+            usage = LLMUsage(
+                prompt_tokens=(usage.prompt_tokens if usage else 0) + agent_prompt_tokens,
+                completion_tokens=(usage.completion_tokens if usage else 0)
+                + agent_completion_tokens,
+            )
 
         answer = "".join(streamed_parts)
         markers = parse_citation_markers(answer, len(sources))

@@ -12,7 +12,7 @@ from raghub.core.config import Settings, get_settings
 from raghub.core.errors import ConflictError
 from raghub.modules.chat import service
 from raghub.modules.chat.events import SSEEvent
-from raghub.modules.chat.llm import LiteLLMStreamer, LLMStreamer
+from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMStreamer
 from raghub.modules.chat.models import Chat
 from raghub.modules.chat.schemas import (
     ChatCreate,
@@ -154,12 +154,15 @@ async def send_message(
     user_msg = await service.add_message(
         session, ctx, chat, role=service.ROLE_USER, content=body.content, parent=parent
     )
+    streamer = await _streamer(request, session, settings, ctx)
+    completer: LLMCompleter | None = request.app.state.llm_completer
+    if completer is None and isinstance(streamer, LiteLLMStreamer):
+        completer = streamer  # same gateway client, non-streaming endpoint
     return _sse(service.stream_reply(
         session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
-        streamer=await _streamer(request, session, settings, ctx),
-        retriever=request.app.state.retriever,
+        streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
-        session_factory=request.app.state.session_factory,
+        session_factory=request.app.state.session_factory, completer=completer,
     ))
 
 
@@ -180,10 +183,13 @@ async def regenerate(
     )
     messages = await service.list_messages(session, chat.id)
     user_msg = next(m for m in messages if m.id == msg.parent_message_id)
+    streamer = await _streamer(request, session, settings, ctx)
+    completer: LLMCompleter | None = request.app.state.llm_completer
+    if completer is None and isinstance(streamer, LiteLLMStreamer):
+        completer = streamer  # same gateway client, non-streaming endpoint
     return _sse(service.stream_reply(
         session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
-        streamer=await _streamer(request, session, settings, ctx),
-        retriever=request.app.state.retriever,
+        streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
-        session_factory=request.app.state.session_factory,
+        session_factory=request.app.state.session_factory, completer=completer,
     ))

@@ -79,6 +79,63 @@ test('the reducer stores grounding="general" from the done frame', async () => {
   expect(result.current.grounding).toBe('general');
 });
 
+test('agent_step frames accumulate in order and keep status=retrieving', async () => {
+  const frames: ChatSseEvent[] = [
+    { type: 'retrieval_started' },
+    { type: 'agent_step', step: { n: 1, tool: 'search', query: 'muster point' } },
+    { type: 'agent_step', step: { n: 2, tool: 'get_document', query: 'doc-1' } },
+    { type: 'token', delta: 'Found it.' },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm3', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'documents',
+      },
+    },
+  ];
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      for (const frame of frames) onEvent(frame);
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('What is the muster point and when was it approved?');
+  });
+
+  expect(result.current.agentSteps).toEqual([
+    { n: 1, tool: 'search', query: 'muster point' },
+    { n: 2, tool: 'get_document', query: 'doc-1' },
+  ]);
+  expect(result.current.status).toBe('done');
+});
+
+test('agentSteps resets to empty on a fresh send (back to IDLE)', async () => {
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({ type: 'agent_step', step: { n: 1, tool: 'search', query: 'q' } });
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+  await act(async () => {
+    result.current.send('first');
+  });
+  expect(result.current.agentSteps).toEqual([{ n: 1, tool: 'search', query: 'q' }]);
+
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, _onEvent: (e: ChatSseEvent) => void) => {
+      // second turn never emits an agent_step
+    },
+  );
+  await act(async () => {
+    result.current.send('second');
+  });
+  expect(result.current.agentSteps).toEqual([]);
+});
+
 test('an error before any token leaves status=error with the detail and the pending user message', async () => {
   // Pre-stream failure (e.g. the refresh session died -> 401 on the POST):
   // streamChatSse emits a single error event and no token. The state must

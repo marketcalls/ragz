@@ -101,6 +101,26 @@ async def get_document_checked(
     return doc
 
 
+async def has_indexed_documents(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+) -> bool:
+    """Phase 3 escalation gate: only workspaces that actually HAVE indexed
+    content loop on weak retrieval (design §1) — empty workspaces fall
+    straight through to the fallback policy."""
+    row = (
+        await session.execute(
+            select(Document.id)
+            .where(
+                Document.org_id == ctx.org_id,
+                Document.workspace_id == workspace_id,
+                Document.status == "indexed",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
 async def set_pinned(
     session: AsyncSession, ctx: TenantContext, document_id: UUID, pinned: bool
 ) -> Document:

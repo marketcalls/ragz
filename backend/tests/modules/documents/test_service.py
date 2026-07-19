@@ -6,6 +6,7 @@ from raghub.core.config import get_settings
 from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from raghub.core.storage import build_storage
 from raghub.modules.audit.models import AuditEvent
+from raghub.modules.documents import service
 from raghub.modules.documents.service import (
     create_from_upload,
     get_document_checked,
@@ -97,3 +98,17 @@ async def test_identical_content_still_conflicts(
     with pytest.raises(ConflictError):
         await create_from_upload(session, ctx, ws.id, filename="c.pdf",
                                  mime="application/pdf", data=b"same")
+
+
+async def test_has_indexed_documents(session: AsyncSession, stack_env: None) -> None:
+    """Phase 3 escalation gate (Task 10): only a workspace with an actually
+    INDEXED document reports true — queued documents don't count."""
+    ctx, ws = await seed_workspace(session, "up9")
+    assert not await service.has_indexed_documents(session, ctx, ws.id)
+    doc = await service.create_from_upload(
+        session, ctx, ws.id, filename="a.pdf", mime="application/pdf", data=b"x"
+    )
+    assert not await service.has_indexed_documents(session, ctx, ws.id)  # not indexed yet
+    doc.status = "indexed"
+    await session.commit()
+    assert await service.has_indexed_documents(session, ctx, ws.id)

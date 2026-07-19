@@ -3,6 +3,7 @@ import json
 from raghub.modules.chat.events import (
     CitationRef,
     SourceRef,
+    agent_step_event,
     citations_event,
     done_event,
     error_event,
@@ -49,3 +50,9 @@ def test_done_event_carries_grounding() -> None:
         no_answer=False, grounding="general",
     )
     assert e.data["grounding"] == "general"
+
+
+def test_agent_step_event_shape() -> None:
+    e = agent_step_event(n=2, tool="search", query="muster point")
+    assert e.event == "agent_step"
+    assert e.data == {"n": 2, "tool": "search", "query": "muster point"}

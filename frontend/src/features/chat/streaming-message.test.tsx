@@ -13,6 +13,7 @@ const base: ChatStreamState = {
   errorDetail: null,
   pendingUserContent: null,
   doneMessageId: null,
+  agentSteps: [],
 };
 
 test('a pre-stream error (no token ever streamed) renders as a visible alert', () => {
@@ -36,4 +37,27 @@ test('a pre-stream error (no token ever streamed) renders as a visible alert', (
 test('an error without detail still renders a fallback alert message', () => {
   render(<StreamingMessage stream={{ ...base, status: 'error' }} />);
   expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong.');
+});
+
+test('a retrieving state with agentSteps renders the latest step as a progress line', () => {
+  render(
+    <StreamingMessage
+      stream={{
+        ...base,
+        status: 'retrieving',
+        agentSteps: [
+          { n: 1, tool: 'search', query: 'muster point' },
+          { n: 2, tool: 'search', query: 'evacuation plan' },
+        ],
+      }}
+    />,
+  );
+  // Only the LATEST step is shown, not every step so far.
+  expect(screen.getByText('Searching: evacuation plan')).toBeInTheDocument();
+  expect(screen.queryByText('Searching: muster point')).not.toBeInTheDocument();
+});
+
+test('a retrieving state with no agentSteps shows the spinner but no progress line', () => {
+  render(<StreamingMessage stream={{ ...base, status: 'retrieving' }} />);
+  expect(screen.getByText('Searching documents…')).toBeInTheDocument();
 });

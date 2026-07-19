@@ -32,7 +32,7 @@ from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
 from raghub.core.middleware import RequestIDMiddleware
-from raghub.modules.chat.llm import LLMStreamer
+from raghub.modules.chat.llm import LLMCompleter, LLMStreamer
 from raghub.modules.chat.prompting import warm_token_encoder
 from raghub.modules.chat.service import ChunkReader, Retriever
 from raghub.modules.models.sync import sync_models_to_litellm
@@ -67,6 +67,7 @@ def create_app(
     llm_streamer: LLMStreamer | None = None,
     chunk_reader: ChunkReader | None = None,
     oidc_transport: httpx.AsyncBaseTransport | None = None,
+    llm_completer: LLMCompleter | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -93,6 +94,7 @@ def create_app(
     app.state.llm_streamer = llm_streamer
     app.state.chunk_reader = chunk_reader if chunk_reader is not None else RetrievalChunkReader()
     app.state.oidc_transport = oidc_transport
+    app.state.llm_completer = llm_completer
 
     @app.exception_handler(RagHubError)
     async def handle_raghub_error(request: Request, exc: RagHubError) -> JSONResponse:

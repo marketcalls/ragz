@@ -70,3 +70,11 @@ export interface DoneInfo {
   no_answer: boolean;
   grounding: 'documents' | 'general';
 }
+
+// Phase 3 (design §2, Task 10): one frame per agent tool execution on an
+// escalated turn. Additive — absent entirely on non-escalated turns.
+export interface AgentStepInfo {
+  n: number;
+  tool: string;
+  query: string;
+}

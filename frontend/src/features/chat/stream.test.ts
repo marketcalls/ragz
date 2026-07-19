@@ -90,6 +90,36 @@ test('non-OK response emits a terminal error event', async () => {
   expect(events).toEqual([{ type: 'error', detail: 'workspace access denied' }]);
 });
 
+test('an agent_step frame parses to the typed event', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      sseResponse([
+        'event: retrieval_started\ndata: {}\n\n',
+        'event: agent_step\ndata: {"n":1,"tool":"search","query":"muster point"}\n\n',
+        'event: token\ndata: {"delta":"hi"}\n\n',
+        'event: done\ndata: {"message_id":"m1","prompt_tokens":1,"completion_tokens":1,"no_answer":false,"grounding":"documents"}\n\n',
+      ]),
+    ),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', { content: 'hi' }, (e) => events.push(e), new AbortController().signal);
+  const stepEvent = events.find(
+    (e): e is Extract<ChatSseEvent, { type: 'agent_step' }> => e.type === 'agent_step',
+  );
+  expect(stepEvent?.step).toEqual({ n: 1, tool: 'search', query: 'muster point' });
+});
+
+test('an unknown event name (not agent_step) still surfaces as a typed error', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => sseResponse(['event: totally_unknown\ndata: {}\n\n'])),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', {}, (e) => events.push(e), new AbortController().signal);
+  expect(events).toEqual([{ type: 'error', detail: 'unknown event: totally_unknown' }]);
+});
+
 test('malformed frames and server error events both surface as typed errors', async () => {
   vi.stubGlobal(
     'fetch',
