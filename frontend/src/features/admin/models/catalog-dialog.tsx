@@ -2,6 +2,7 @@ import { Check, Copy } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toaster';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -31,8 +32,14 @@ export function CatalogDialog({
   }, [catalog.data, filter]);
 
   const copyName = (name: string): void => {
-    void navigator.clipboard.writeText(name);
-    setCopiedName(name);
+    navigator.clipboard
+      .writeText(name)
+      .then(() => {
+        setCopiedName(name);
+        toast('Copied to clipboard');
+        setTimeout(() => setCopiedName((cur) => (cur === name ? null : cur)), 1500);
+      })
+      .catch(() => toast('Copy failed'));
   };
 
   return (
