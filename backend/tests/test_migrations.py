@@ -33,6 +33,7 @@ EXPECTED_TABLES = {
     "user_quotas",
     "usage_records",
     "model_catalog",
+    "metadata_fields",
     "alembic_version",
 }
 

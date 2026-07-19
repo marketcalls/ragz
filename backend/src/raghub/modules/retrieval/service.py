@@ -2,12 +2,11 @@
 
 `_tenant_filter` below is the only function in the codebase allowed to construct
 a Qdrant filter. Its only callers are `retrieve()`, `delete_document_points()`,
-`list_document_chunks()`, `get_chunks_by_refs()`, `update_document_acl()`, and
-`update_document_current()` — all in this module (Task 9's
-`update_document_metadata()` joins this list). The adversarial suite in
-tests/isolation/ exists to catch any regression here. `_tenant_filter`'s ACL,
-current-only, and metadata postures are decided per caller — see the caller
-table in its docstring.
+`list_document_chunks()`, `get_chunks_by_refs()`, `update_document_acl()`,
+`update_document_current()`, and `update_document_metadata()` — all in this
+module. The adversarial suite in tests/isolation/ exists to catch any
+regression here. `_tenant_filter`'s ACL, current-only, and metadata postures
+are decided per caller — see the caller table in its docstring.
 """
 
 import asyncio
@@ -87,7 +86,7 @@ def _tenant_filter(
     | `delete_document_points()` | `None` | `False` | `None` |
     | `update_document_acl()` | `None` | `False` | `None` |
     | `update_document_current()` | `None` | `False` | `None` |
-    | `update_document_metadata()` (Task 9) | `None` | `False` | `None` |
+    | `update_document_metadata()` | `None` | `False` | `None` |
 
       * acl_group_ids: None -> no ACL clause. Sanctioned for admin+ retrieval
         (RBAC-5 restricts users, not the admins who manage the library) and
@@ -504,4 +503,45 @@ async def update_document_current(org_id: UUID, document_id: UUID, *, is_current
             )
         ),
         wait=True,
+    )
+
+
+async def update_document_metadata(org_id: UUID, document_id: UUID, meta: dict[str, str]) -> None:
+    """Metadata-value payload mirror for already-indexed points (DOC-6):
+    rewrites the nested `meta` payload key in place via set_payload — no
+    re-embed. Lives here so payload/filter knowledge never leaves this module
+    (iron rule 1); mirrors update_document_acl/update_document_current's
+    shape. A missing collection means nothing indexed yet; the ingestion
+    pipeline stamps `meta` at upsert (pipeline.upsert_points)."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return
+    await client.set_payload(
+        COLLECTION,
+        payload={"meta": meta},
+        points=models.FilterSelector(
+            # maintenance path: must restamp ALL of the document's points
+            filter=_tenant_filter(
+                org_id=org_id, document_id=document_id,
+                acl_group_ids=None, current_only=False, metadata_clauses=None,
+            )
+        ),
+        wait=True,
+    )
+
+
+async def ensure_metadata_index(field_name: str, field_type: str) -> None:
+    """Payload index for a workspace metadata field (DOC-6). Index creation is
+    payload-schema work, not filtering — it lives here so no other module
+    touches Qdrant, but it constructs no filters (iron rule 1 untouched)."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return
+    schema = (
+        models.PayloadSchemaType.DATETIME
+        if field_type == "date"
+        else models.PayloadSchemaType.KEYWORD
+    )
+    await client.create_payload_index(
+        COLLECTION, field_name=f"meta.{field_name}", field_schema=schema
     )

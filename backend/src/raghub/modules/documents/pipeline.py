@@ -255,6 +255,7 @@ async def upsert_points(
     dense: list[list[float]],
     sparse: list[models.SparseVector],
     version: int,
+    meta: dict[str, str] | None,
     is_current: bool = False,
 ) -> None:
     """Upsert one batch of chunk points with the spec §2.2 payload. Constructs
@@ -263,7 +264,11 @@ async def upsert_points(
     Plan H: every point is stamped with its document's `version` and `section`
     (heading trail). `is_current` defaults False — points are invisible to
     current_only retrieval until promotion (Task 6) flips them via
-    `retrieval.service.update_document_current`."""
+    `retrieval.service.update_document_current`. `meta` (DOC-6, required — no
+    default, so every caller states its posture) is the document's metadata
+    field values, mirrored verbatim under the payload's nested `meta` key;
+    `None` becomes `{}` so every point carries the key (never a KeyError on
+    the read side)."""
     points = [
         models.PointStruct(
             id=str(uuid5(_CHUNK_NAMESPACE, f"{document_id}:{c.chunk_index}")),
@@ -281,6 +286,7 @@ async def upsert_points(
                 "section": c.section,
                 "version": version,
                 "is_current": is_current,
+                "meta": meta or {},
             },
         )
         for c, d, s in zip(chunks, dense, sparse, strict=True)

@@ -83,7 +83,7 @@ async def test_in_flight_points_invisible(
     await upsert_points(
         org_id=ctx.org_id, workspace_id=ws.id, document_id=v2.id, mime=v2.mime,
         created_at=v2.created_at, acl_group_ids=[], chunks=chunks,
-        dense=dense, sparse=sparse, version=v2.version,
+        dense=dense, sparse=sparse, version=v2.version, meta=None,
     )  # is_current defaults False -- points exist but must stay invisible
 
     result = await retrieve(session, ctx, ws.id, "the muster point is GATE 9", top_k=10)

@@ -7,9 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
+from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service
 from raghub.modules.documents.models import Document
-from raghub.modules.documents.schemas import AclUpdate, ApprovedPatch, DocumentOut, DocumentPatch
+from raghub.modules.documents.schemas import (
+    AclUpdate,
+    ApprovedPatch,
+    DocumentOut,
+    DocumentPatch,
+    MetadataFieldCreate,
+    MetadataFieldOut,
+    MetadataValuesIn,
+)
 from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
 from raghub.worker.tasks import enqueue_delete, enqueue_ingest
 
@@ -109,4 +118,41 @@ async def set_document_approved(
     document_id: UUID, body: ApprovedPatch, session: SessionDep, ctx: AdminDep
 ) -> DocumentOut:
     doc = await service.set_approved(session, ctx, document_id, body.approved)
+    return _serialize_document(doc, ctx)
+
+
+# DOC-6: metadata schema (fields) + values. AdminDep now; Task 13 moves field
+# CRUD to a "workspace.configure" permission and the value PUT to
+# "documents.upload" (declarative permission checks, not inline role checks).
+@router.get("/workspaces/{workspace_id}/metadata-fields", response_model=list[MetadataFieldOut])
+async def list_metadata_fields(
+    workspace_id: UUID, session: SessionDep, ctx: AdminDep
+) -> list[MetadataFieldOut]:
+    fields = await metadata_service.list_fields(session, ctx, workspace_id)
+    return [MetadataFieldOut.model_validate(f) for f in fields]
+
+
+@router.post(
+    "/workspaces/{workspace_id}/metadata-fields", status_code=201, response_model=MetadataFieldOut
+)
+async def create_metadata_field(
+    workspace_id: UUID, body: MetadataFieldCreate, session: SessionDep, ctx: AdminDep
+) -> MetadataFieldOut:
+    field = await metadata_service.create_field(
+        session, ctx, workspace_id,
+        name=body.name, label=body.label, field_type=body.field_type, options=body.options,
+    )
+    return MetadataFieldOut.model_validate(field)
+
+
+@router.delete("/metadata-fields/{field_id}", status_code=204)
+async def delete_metadata_field(field_id: UUID, session: SessionDep, ctx: AdminDep) -> None:
+    await metadata_service.delete_field(session, ctx, field_id)
+
+
+@router.put("/documents/{document_id}/metadata", response_model=DocumentOut)
+async def set_document_metadata(
+    document_id: UUID, body: MetadataValuesIn, session: SessionDep, ctx: CtxDep
+) -> DocumentOut:
+    doc = await metadata_service.set_document_metadata(session, ctx, document_id, body.values)
     return _serialize_document(doc, ctx)
