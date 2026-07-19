@@ -7,6 +7,7 @@ write-through so retrieval's metadata_clauses (Task 10) can filter on them.
 """
 
 import re
+from collections.abc import Mapping
 from datetime import date
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from raghub.modules.audit.service import record_audit
 from raghub.modules.documents.models import Document, MetadataField
 from raghub.modules.documents.service import get_document_checked
 from raghub.modules.retrieval import service as retrieval_service
+from raghub.modules.retrieval.service import MetadataClause
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
 from raghub.modules.tenancy.service import get_workspace_checked
@@ -191,3 +193,55 @@ async def set_document_metadata(
     await session.commit()
     await retrieval_service.update_document_metadata(ctx.org_id, doc.id, doc.meta)
     return doc
+
+
+def _date_bounds(raw: str) -> tuple[str | None, str | None]:
+    """Parse the date filter's raw string into (from, to) ISO date strings.
+
+    `"YYYY-MM-DD..YYYY-MM-DD"` splits on the literal `..`; either side may be
+    empty for an open-ended range (`"..2026-06-30"`, `"2026-01-01.."`). A bare
+    single day (no `..`) is both bounds — the whole day."""
+    if ".." in raw:
+        from_s, _, to_s = raw.partition("..")
+        return (from_s or None, to_s or None)
+    return (raw, raw)
+
+
+async def build_clauses(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, metadata: Mapping[str, str]
+) -> list[MetadataClause]:
+    """Turn a caller-supplied `{field_name: raw_value}` mapping into
+    retrieval's MetadataClause objects (DOC-6/Task 10) — the ONLY function
+    that builds them. Unknown field name -> NotFoundError (never silently
+    ignored: a typo must not silently widen the search). The `meta.` prefix
+    is applied unconditionally here, regardless of the field's own name, so
+    user-supplied filter input can never address a bare Qdrant payload key
+    (tenant_id/workspace_id/acl_groups/is_current) — those live outside
+    `meta.*` and this function only ever emits `meta.`-prefixed keys."""
+    ws = await get_workspace_checked(session, ctx, workspace_id)
+    fields = {
+        f.name: f
+        for f in (
+            await session.execute(
+                select(MetadataField).where(MetadataField.workspace_id == ws.id)
+            )
+        ).scalars()
+    }
+    clauses: list[MetadataClause] = []
+    for name, raw in metadata.items():
+        field = fields.get(name)
+        if field is None:
+            raise NotFoundError(f"unknown metadata field: {name}")
+        key = f"meta.{field.name}"
+        if field.field_type == "date":
+            from_date, to_date = _date_bounds(raw)
+            clauses.append(
+                MetadataClause(
+                    key=key, kind="date_range",
+                    gte=f"{from_date}T00:00:00Z" if from_date else None,
+                    lte=f"{to_date}T23:59:59Z" if to_date else None,
+                )
+            )
+        else:
+            clauses.append(MetadataClause(key=key, kind="eq", value=raw))
+    return clauses

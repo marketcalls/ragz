@@ -46,3 +46,68 @@ async def test_search_requires_auth(client: httpx.AsyncClient, seeded_user: User
     r = await client.post("/api/v1/workspaces/00000000-0000-0000-0000-000000000000/search",
                           json={"query": "x"})
     assert r.status_code == 401
+
+
+async def test_search_with_metadata_filter_excludes_non_matching_doc(
+    client: httpx.AsyncClient, seeded_user: User, session, qdrant_collection: None  # type: ignore[no-untyped-def]
+) -> None:
+    from sqlalchemy import select
+
+    from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+    from raghub.modules.documents.metadata import list_fields, set_document_metadata
+    from raghub.modules.documents.service import create_from_upload
+    from raghub.modules.retrieval.service import update_document_current
+    from raghub.modules.tenancy.context import TenantContext
+    from raghub.modules.tenancy.models import Workspace
+
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    ws = (await session.execute(select(Workspace))).scalar_one()
+    ws.min_score = 0.0
+    await session.commit()
+    ctx = TenantContext(user_id=seeded_user.id, org_id=seeded_user.org_id,
+                        role="admin", workspace_ids=frozenset())
+    await list_fields(session, ctx, ws.id)  # seed presets incl doc_type
+
+    async def _index(filename: str, text: str):  # type: ignore[no-untyped-def]
+        doc = await create_from_upload(
+            session, ctx, ws.id, filename=filename, mime="text/plain", data=text.encode()
+        )
+        await run_parse(doc.id)
+        await run_chunk(doc.id)
+        await run_embed_upsert(doc.id)
+        await update_document_current(ctx.org_id, doc.id, is_current=True)
+        await session.refresh(doc)
+        return doc
+
+    doc_policy = await _index("policy.txt", "quarterly safety review procedure")
+    doc_manual = await _index(
+        "manual.txt", "quarterly safety review procedure manual variant"
+    )
+    await set_document_metadata(session, ctx, doc_policy.id, {"doc_type": "policy"})
+    await set_document_metadata(session, ctx, doc_manual.id, {"doc_type": "manual"})
+
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/search", headers=h,
+        json={
+            "query": "quarterly safety review procedure manual variant",  # manual's exact lure
+            "metadata": {"doc_type": "policy"},
+        },
+    )
+    assert r.status_code == 200
+    doc_ids = {c["document_id"] for c in r.json()["chunks"]}
+    assert str(doc_manual.id) not in doc_ids
+    assert str(doc_policy.id) in doc_ids
+
+
+async def test_search_unknown_metadata_field_is_404_problem_json(
+    client: httpx.AsyncClient, seeded_user: User, qdrant_collection: None
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/search", headers=h,
+        json={"query": "anything", "metadata": {"nonexistent_field": "x"}},
+    )
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("application/problem+json")

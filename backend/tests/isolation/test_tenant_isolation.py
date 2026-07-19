@@ -3,6 +3,7 @@
 If any test here fails, treat it as a security incident, not a flake.
 """
 
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from raghub.modules.documents.ingest import run_delete
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import (
+    MetadataClause,
     _tenant_filter,
     get_chunks_by_refs,
     list_document_chunks,
@@ -152,6 +154,46 @@ def test_tenant_filter_no_current_clause_when_disabled() -> None:
         acl_group_ids=None, current_only=False, metadata_clauses=None,
     )
     assert flt.must is not None and len(flt.must) == 2  # tenant + workspace only
+
+
+def test_tenant_filter_metadata_eq_clause_shape() -> None:
+    clause = MetadataClause(key="meta.department", kind="eq", value="HSE")
+    flt = _tenant_filter(
+        org_id=uuid4(), workspace_id=uuid4(),
+        acl_group_ids=None, current_only=False, metadata_clauses=[clause],
+    )
+    assert flt.must is not None and len(flt.must) == 3
+    cond = flt.must[-1]
+    assert isinstance(cond, models.FieldCondition)
+    assert cond.key == "meta.department" and cond.match.value == "HSE"
+
+
+def test_tenant_filter_metadata_date_range_clause_shape() -> None:
+    clause = MetadataClause(
+        key="meta.revision_date", kind="date_range",
+        gte="2026-01-01T00:00:00Z", lte="2026-06-30T23:59:59Z",
+    )
+    flt = _tenant_filter(
+        org_id=uuid4(), workspace_id=uuid4(),
+        acl_group_ids=None, current_only=False, metadata_clauses=[clause],
+    )
+    cond = flt.must[-1]
+    assert isinstance(cond, models.FieldCondition) and cond.range is not None
+    # qdrant_client's DatetimeRange (pinned 1.17-1.18) coerces gte/lte str -> datetime
+    # on construction, even when passed a raw ISO string directly -- compare parsed.
+    assert cond.range.gte == datetime.fromisoformat("2026-01-01T00:00:00Z")
+
+
+def test_metadata_clauses_never_displace_tenant_conditions() -> None:
+    """Metadata clauses APPEND to must — tenant_id/workspace_id survive."""
+    clause = MetadataClause(key="meta.doc_type", kind="eq", value="policy")
+    org_id, ws_id = uuid4(), uuid4()
+    flt = _tenant_filter(
+        org_id=org_id, workspace_id=ws_id,
+        acl_group_ids=None, current_only=False, metadata_clauses=[clause],
+    )
+    keys = [c.key for c in flt.must if isinstance(c, models.FieldCondition)]
+    assert "tenant_id" in keys and "workspace_id" in keys
 
 
 async def test_non_member_workspace_retrieval_denied(

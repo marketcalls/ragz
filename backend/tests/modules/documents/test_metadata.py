@@ -6,6 +6,7 @@ from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from raghub.modules.documents.metadata import (
     PRESET_FIELDS,
+    build_clauses,
     create_field,
     list_fields,
     set_document_metadata,
@@ -139,3 +140,81 @@ async def test_set_document_metadata_valid_date_accepted(
     )
     updated = await set_document_metadata(session, ctx, doc.id, {"revision_date": "2026-05-01"})
     assert updated.meta == {"revision_date": "2026-05-01"}
+
+
+async def test_build_clauses_unknown_field_not_found(
+    session: AsyncSession, stack_env: None
+) -> None:
+    ctx, ws = await seed_workspace(session, "meta9")
+    with pytest.raises(NotFoundError):
+        await build_clauses(session, ctx, ws.id, {"nonexistent_field": "x"})
+
+
+async def test_build_clauses_prefixes_even_a_field_named_tenant_id(
+    session: AsyncSession, stack_env: None
+) -> None:
+    """The meta. prefix is applied unconditionally — a workspace admin could
+    literally create a field named 'tenant_id' (it matches the name pattern)
+    and build_clauses must still emit key 'meta.tenant_id', never bare
+    'tenant_id' (iron rule 1: user input can never address tenant keys)."""
+    ctx, ws = await seed_workspace(session, "meta10")
+    await create_field(
+        session, ctx, ws.id, name="tenant_id", label="Tenant Id",
+        field_type="text", options=None,
+    )
+    clauses = await build_clauses(session, ctx, ws.id, {"tenant_id": "evil-org"})
+    assert len(clauses) == 1
+    assert clauses[0].key == "meta.tenant_id"
+    assert clauses[0].kind == "eq" and clauses[0].value == "evil-org"
+
+
+async def test_build_clauses_eq_for_text_and_select(
+    session: AsyncSession, stack_env: None
+) -> None:
+    ctx, ws = await seed_workspace(session, "meta11")
+    await list_fields(session, ctx, ws.id)  # seed presets
+    clauses = await build_clauses(
+        session, ctx, ws.id, {"department": "HSE", "doc_type": "policy"}
+    )
+    by_key = {c.key: c for c in clauses}
+    assert by_key["meta.department"].kind == "eq"
+    assert by_key["meta.department"].value == "HSE"
+    assert by_key["meta.doc_type"].kind == "eq"
+    assert by_key["meta.doc_type"].value == "policy"
+
+
+async def test_build_clauses_date_single_day(session: AsyncSession, stack_env: None) -> None:
+    ctx, ws = await seed_workspace(session, "meta12")
+    await list_fields(session, ctx, ws.id)  # seed presets incl revision_date
+    clauses = await build_clauses(session, ctx, ws.id, {"revision_date": "2026-05-01"})
+    assert len(clauses) == 1
+    c = clauses[0]
+    assert c.key == "meta.revision_date" and c.kind == "date_range"
+    assert c.gte == "2026-05-01T00:00:00Z"
+    assert c.lte == "2026-05-01T23:59:59Z"
+
+
+async def test_build_clauses_date_range(session: AsyncSession, stack_env: None) -> None:
+    ctx, ws = await seed_workspace(session, "meta13")
+    await list_fields(session, ctx, ws.id)
+    clauses = await build_clauses(
+        session, ctx, ws.id, {"revision_date": "2026-01-01..2026-06-30"}
+    )
+    c = clauses[0]
+    assert c.gte == "2026-01-01T00:00:00Z"
+    assert c.lte == "2026-06-30T23:59:59Z"
+
+
+async def test_build_clauses_date_range_open_ended(
+    session: AsyncSession, stack_env: None
+) -> None:
+    ctx, ws = await seed_workspace(session, "meta14")
+    await list_fields(session, ctx, ws.id)
+
+    open_lower = await build_clauses(session, ctx, ws.id, {"revision_date": "..2026-06-30"})
+    assert open_lower[0].gte is None
+    assert open_lower[0].lte == "2026-06-30T23:59:59Z"
+
+    open_upper = await build_clauses(session, ctx, ws.id, {"revision_date": "2026-01-01.."})
+    assert open_upper[0].gte == "2026-01-01T00:00:00Z"
+    assert open_upper[0].lte is None
