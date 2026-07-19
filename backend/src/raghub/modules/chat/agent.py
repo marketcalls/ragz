@@ -23,7 +23,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError, UpstreamError, WorkspaceAccessDenied
+from raghub.core.errors import ConflictError, NotFoundError, UpstreamError, WorkspaceAccessDenied
 from raghub.modules.chat.web import WebResult, WebSearcher
 from raghub.modules.documents.metadata import build_clauses
 from raghub.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
@@ -241,7 +241,9 @@ async def execute_tool(
             results = await web_searcher(session, action.query)
             return ToolOutcome(web_results=results, grounded=bool(results))
         return ToolOutcome(error=f"unknown tool: {action.action}")
-    except (NotFoundError, WorkspaceAccessDenied, UpstreamError, ValueError) as exc:
+    except (
+        ConflictError, NotFoundError, WorkspaceAccessDenied, UpstreamError, ValueError,
+    ) as exc:
         # Typed, expected failures become degrade signals. Anything else is a
         # real bug and propagates to stream_reply's generic handler.
         return ToolOutcome(error=str(exc))

@@ -176,6 +176,24 @@ async def test_execute_web_search_disabled_is_error(
     assert out.error is not None
 
 
+async def test_execute_metadata_malformed_date_is_error_not_exception(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext
+) -> None:
+    """build_clauses raises ConflictError (409) on an unparsable date value for
+    a date-typed field (the preset revision_date). A wholly plausible
+    planner/user input — must degrade to ToolOutcome.error, never raise past
+    the seam (design §2's "tool failures are values" contract)."""
+    retriever = FakeRetriever(chat_env["document"].id)
+    out = await execute_tool(
+        session, ctx,
+        PlannerAction(action="search_by_metadata", query="q",
+                      filters={"revision_date": "not-a-date"}),
+        workspace=chat_env["workspace"], retriever=retriever,
+        chunk_reader=FakeChunkReader(), web_searcher=None,
+    )
+    assert out.error is not None and retriever.calls == []
+
+
 async def test_execute_unknown_action_is_error(
     session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext
 ) -> None:
