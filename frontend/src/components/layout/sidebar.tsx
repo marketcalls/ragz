@@ -1,4 +1,12 @@
-import { Activity, FileText, LayoutDashboard, ScrollText, Settings2, Users } from 'lucide-react';
+import {
+  Activity,
+  FileText,
+  LayoutDashboard,
+  ScrollText,
+  Settings2,
+  ShieldCheck,
+  Users,
+} from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
 import { cn } from '@/lib/cn';
@@ -49,6 +57,9 @@ export function Sidebar() {
         ) : null}
         {isAdmin ? (
           <SideLink to="/admin/users" label="Users" icon={<Users className="h-4 w-4" aria-hidden />} />
+        ) : null}
+        {claims?.role === 'superadmin' ? (
+          <SideLink to="/admin/roles" label="Roles" icon={<ShieldCheck className="h-4 w-4" aria-hidden />} />
         ) : null}
         {claims?.role === 'superadmin' ? (
           <SideLink to="/admin/models" label="Models" icon={<Settings2 className="h-4 w-4" aria-hidden />} />
