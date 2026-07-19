@@ -19,6 +19,9 @@ export type ModelPublic = components['schemas']['ModelPublic'];
 // GET /api/v1/admin/usage/summary (QUOTA-1 + ADM-4): KPI tiles, the two
 // per-day series (queries_per_day, tokens_by_model_per_day), and top users.
 export type UsageSummaryOut = components['schemas']['UsageSummaryOut'];
+// GET /api/v1/superadmin/client-errors (Task 6). message/stack/url are
+// attacker-controlled — render as text only, never dangerouslySetInnerHTML.
+export type ClientErrorOut = components['schemas']['ClientErrorOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 
