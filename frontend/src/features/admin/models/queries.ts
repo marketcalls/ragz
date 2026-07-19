@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
-import type { ModelOut } from '@/api/types';
+import type { CatalogOut, ModelOut } from '@/api/types';
 
 export interface ModelCreate {
   display_name: string;
@@ -57,6 +57,24 @@ export function useAdminModels() {
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/admin/models');
       if (error) throw new Error('failed to load models');
+      return data;
+    },
+  });
+}
+
+// MODEL-10/G7: LiteLLM's catalog (context window + pricing) cross-referenced
+// against the registry. `enabled` defaults to true — callers pass false to
+// skip the fetch until their own mount point is ready (e.g. a closed dialog
+// that shares this query key with the always-mounted page). staleTime keeps
+// repeat opens of the browse dialog from re-fetching the same list.
+export function useCatalog(enabled = true) {
+  return useQuery({
+    queryKey: ['admin-models-catalog'],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<CatalogOut> => {
+      const { data, error } = await api.GET('/api/v1/admin/models/catalog');
+      if (error) throw new Error('failed to load model catalog');
       return data;
     },
   });

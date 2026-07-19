@@ -535,6 +535,44 @@ export interface paths {
         patch: operations["patch_model_api_v1_admin_models__model_id__patch"];
         trace?: never;
     };
+    "/api/v1/admin/models/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalog
+         * @description MODEL-10/G7: LiteLLM's pricing/context-window catalog, cross-referenced
+         *     against the registry so the admin UI can flag models not yet added.
+         */
+        get: operations["get_catalog_api_v1_admin_models_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/models/catalog/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Force Refresh Catalog */
+        post: operations["force_refresh_catalog_api_v1_admin_models_catalog_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/models": {
         parameters: {
             query?: never;
@@ -824,6 +862,28 @@ export interface components {
         Body_upload_document_api_v1_workspaces__workspace_id__documents_post: {
             /** File */
             file: string;
+        };
+        /** CatalogEntryOut */
+        CatalogEntryOut: {
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Max Input Tokens */
+            max_input_tokens: number | null;
+            /** Input Cost Per 1M */
+            input_cost_per_1m: number | null;
+            /** Output Cost Per 1M */
+            output_cost_per_1m: number | null;
+            /** Registered */
+            registered: boolean;
+        };
+        /** CatalogOut */
+        CatalogOut: {
+            /** Entries */
+            entries: components["schemas"]["CatalogEntryOut"][];
+            /** New Available */
+            new_available: number;
         };
         /** ChatCreate */
         ChatCreate: {
@@ -2593,6 +2653,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalog_api_v1_admin_models_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogOut"];
+                };
+            };
+        };
+    };
+    force_refresh_catalog_api_v1_admin_models_catalog_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
                 };
             };
         };
