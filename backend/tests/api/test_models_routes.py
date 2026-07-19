@@ -2,6 +2,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.auth.models import User
+from raghub.modules.models.catalog import ModelCatalogEntry
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -26,7 +27,10 @@ async def test_superadmin_crud_and_key_never_returned(
     model_id = created["id"]
     # Plan D admin-page fields: fingerprint (never the key) + gateway sync outcome.
     assert created["key_fingerprint"].startswith("...-abc sha256:")
-    assert created["sync_status"] == "synced"  # stub transport replay succeeded
+    # Plan G: the LiteLLM replay is now a background task, so the create response
+    # reflects the row's pre-sync default; sync_status='synced' shows up once the
+    # replay (scheduled on the same request) has run - the admin page's next fetch.
+    assert created["sync_status"] == "pending"
 
     r = await client.patch(f"/api/v1/admin/models/{model_id}",
                            json={"enabled": False}, headers=h)
@@ -35,6 +39,7 @@ async def test_superadmin_crud_and_key_never_returned(
     listing = await client.get("/api/v1/admin/models", headers=h)
     assert "sk-live-abc" not in listing.text
     assert [m["id"] for m in listing.json()] == [model_id]
+    assert listing.json()[0]["sync_status"] == "synced"  # background replay succeeded
 
     assert (await client.delete(f"/api/v1/admin/models/{model_id}", headers=h)).status_code == 204
     assert (await client.get("/api/v1/admin/models", headers=h)).json() == []
@@ -93,3 +98,59 @@ async def test_workspace_default_model(
     r = await client.patch(f"/api/v1/workspaces/{ws_id}",
                            json={"default_model_id": bad}, headers=h_admin)
     assert r.status_code == 404
+
+
+async def test_catalog_listing_flags_unregistered_models(
+    client: httpx.AsyncClient, seeded_user: User, seeded_superadmin: User,
+    session: AsyncSession,
+) -> None:
+    """MODEL-10/G7: GET /admin/models/catalog cross-references the registry so
+    the admin UI can surface "N new models available"."""
+    h_super = await auth(client, "root@platform.example")
+    await client.post("/api/v1/admin/models", json=OPENAI_BODY, headers=h_super)  # registers it
+
+    session.add_all([
+        ModelCatalogEntry(name="gpt-4o-mini", provider="openai", max_input_tokens=128000,
+                          input_cost_per_token=0.00000015, output_cost_per_token=0.0000006,
+                          source="snapshot"),
+        ModelCatalogEntry(name="claude-3-haiku", provider="anthropic", max_input_tokens=200000,
+                          input_cost_per_token=0.00000025, output_cost_per_token=0.00000125,
+                          source="snapshot"),
+    ])
+    await session.commit()
+
+    r = await client.get("/api/v1/admin/models/catalog", headers=h_super)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["new_available"] == 1  # claude-3-haiku only; gpt-4o-mini is registered
+    by_name = {e["name"]: e for e in body["entries"]}
+    assert by_name["gpt-4o-mini"]["registered"] is True
+    assert by_name["claude-3-haiku"]["registered"] is False
+    assert by_name["claude-3-haiku"]["input_cost_per_1m"] == 0.25
+
+    h_admin = await auth(client, "a@acme.com")
+    assert (await client.get("/api/v1/admin/models/catalog",
+                             headers=h_admin)).status_code == 403
+    assert (await client.post("/api/v1/admin/models/catalog/refresh",
+                              headers=h_admin)).status_code == 403
+
+
+async def test_catalog_listing_preserves_zero_cost_entries(
+    client: httpx.AsyncClient, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """A free model (cost 0.0) must be distinguished from an unknown cost
+    (None) in the catalog response, not collapsed to null."""
+    session.add(
+        ModelCatalogEntry(
+            name="free-local-model", provider="ollama", max_input_tokens=8192,
+            input_cost_per_token=0.0, output_cost_per_token=0.0, source="snapshot",
+        )
+    )
+    await session.commit()
+
+    h_super = await auth(client, "root@platform.example")
+    r = await client.get("/api/v1/admin/models/catalog", headers=h_super)
+    assert r.status_code == 200
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert by_name["free-local-model"]["input_cost_per_1m"] == 0.0
+    assert by_name["free-local-model"]["output_cost_per_1m"] == 0.0

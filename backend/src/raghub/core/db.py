@@ -28,8 +28,13 @@ class UUIDPk:
     created_at: Mapped[datetime] = mapped_column(default=naive_utc)
 
 
-def build_engine(url: str) -> AsyncEngine:
-    return create_async_engine(url, pool_pre_ping=True)
+def build_engine(
+    url: str, *, pool_size: int = 10, max_overflow: int = 20, pool_timeout: int = 30
+) -> AsyncEngine:
+    return create_async_engine(
+        url, pool_pre_ping=True, pool_size=pool_size,
+        max_overflow=max_overflow, pool_timeout=pool_timeout,
+    )
 
 
 def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

@@ -1,4 +1,6 @@
+import { X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +9,21 @@ import { Label } from '@/components/ui/label';
 import { AuthCard } from './auth-card';
 import { useLogin, useSsoStatus } from './mutations';
 
+// Open-redirect guard: only ever navigate to a same-origin path. Rejects
+// absolute URLs, protocol-relative ("//evil.com") targets, and their
+// backslash variants ("/\evil.com") -- WHATWG URL parsing treats a leading
+// "/\" the same as "//", resolving to another host.
+export function safeReturnTo(target: unknown): string {
+  if (typeof target !== 'string' || !target.startsWith('/')) return '/';
+  return target[1] === '/' || target[1] === '\\' ? '/' : target;
+}
+
 export function LoginPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const [ssoErrorDismissed, setSsoErrorDismissed] = useState(false);
+  const showSsoError = searchParams.get('sso_error') === '1' && !ssoErrorDismissed;
   const login = useLogin();
   const sso = useSsoStatus();
   const [email, setEmail] = useState('');
@@ -15,11 +31,35 @@ export function LoginPage() {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    login.mutate({ email, password });
+    login.mutate(
+      { email, password },
+      {
+        onSuccess: () => {
+          const from = (location.state as { from?: string } | null)?.from;
+          navigate(safeReturnTo(from), { replace: true });
+        },
+      },
+    );
   };
 
   return (
     <AuthCard title="Sign in">
+      {showSsoError ? (
+        <div
+          role="alert"
+          className="mb-3 flex items-start justify-between gap-2 rounded-md bg-warning-soft px-3 py-2 text-[12px] text-warning"
+        >
+          <span>Single sign-on failed. Try again, or sign in with your password.</span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setSsoErrorDismissed(true)}
+            className="shrink-0 text-warning hover:opacity-70"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="space-y-3">
         <div>
           <Label htmlFor="email">Email</Label>

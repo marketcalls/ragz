@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,10 @@ async def _streamer(
     return LiteLLMStreamer(
         base_url=settings.litellm_url, master_key=vkey or settings.litellm_master_key,
         transport=request.app.state.litellm_transport,
+        limits=httpx.Limits(
+            max_connections=settings.httpx_max_connections,
+            max_keepalive_connections=settings.httpx_max_keepalive,
+        ),
     )
 
 
@@ -144,6 +149,7 @@ async def send_message(
         streamer=await _streamer(request, session, settings, ctx),
         retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
+        session_factory=request.app.state.session_factory,
     ))
 
 
@@ -169,4 +175,5 @@ async def regenerate(
         streamer=await _streamer(request, session, settings, ctx),
         retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
+        session_factory=request.app.state.session_factory,
     ))

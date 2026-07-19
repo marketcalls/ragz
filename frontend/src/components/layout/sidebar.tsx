@@ -1,4 +1,4 @@
-import { FileText, ScrollText, Settings2, Users } from 'lucide-react';
+import { Activity, FileText, LayoutDashboard, ScrollText, Settings2, Users } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
 import { cn } from '@/lib/cn';
@@ -41,6 +41,13 @@ export function Sidebar() {
       <nav aria-label="Sections" className="space-y-0.5 border-t border-line-faint px-1 py-2">
         <SideLink to="/documents" label="Documents" icon={<FileText className="h-4 w-4" aria-hidden />} />
         {isAdmin ? (
+          <SideLink
+            to="/admin/dashboard"
+            label="Dashboard"
+            icon={<LayoutDashboard className="h-4 w-4" aria-hidden />}
+          />
+        ) : null}
+        {isAdmin ? (
           <SideLink to="/admin/users" label="Users" icon={<Users className="h-4 w-4" aria-hidden />} />
         ) : null}
         {claims?.role === 'superadmin' ? (
@@ -48,6 +55,9 @@ export function Sidebar() {
         ) : null}
         {claims?.role === 'superadmin' ? (
           <SideLink to="/admin/audit" label="Audit" icon={<ScrollText className="h-4 w-4" aria-hidden />} />
+        ) : null}
+        {claims?.role === 'superadmin' ? (
+          <SideLink to="/admin/health" label="Health" icon={<Activity className="h-4 w-4" aria-hidden />} />
         ) : null}
       </nav>
       <UserFooter />

@@ -43,6 +43,24 @@ class Settings(BaseSettings):
     # tokens of allocation. 0 disables max_budget (local-only installs).
     litellm_usd_per_million_tokens: float = 5.0
 
+    # Plan G Task 3: connection-pool sizing (was hardcoded; now tunable per deployment).
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout_seconds: int = 30
+    redis_max_connections: int = 100
+    httpx_max_connections: int = 100
+    httpx_max_keepalive: int = 20
+
+    # Plan G Task 5: optional Sentry error reporting. Empty string = off (zero
+    # dependency cost unless sentry-sdk is also installed via the observability group).
+    sentry_dsn: str = ""
+
+    # Plan G Task 12 (MODEL-10/G7): LiteLLM's pricing/context-window catalog sync.
+    # Empty string = air-gap mode: bundled snapshot only, no network call ever.
+    model_catalog_url: str = (
+        "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

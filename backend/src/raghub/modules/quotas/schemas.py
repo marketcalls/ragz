@@ -46,12 +46,34 @@ class UserUsage(BaseModel):
     user_id: UUID
     email: str
     tokens: int
+    queries: int
+
+
+class UsageKpis(BaseModel):
+    queries: int
+    total_tokens: int
+    active_users: int
+    no_answer_count: int
+
+
+class DayCount(BaseModel):
+    day: date
+    count: int
+
+
+class ModelDayTokens(BaseModel):
+    day: date
+    model_name: str
+    tokens: int
 
 
 class UsageSummaryOut(BaseModel):
     by_day: list[DayUsage]
     by_model: list[ModelUsage]
     by_user: list[UserUsage]
+    kpis: UsageKpis
+    queries_per_day: list[DayCount]
+    tokens_by_model_per_day: list[ModelDayTokens]
 
 
 class OrgUsage(BaseModel):

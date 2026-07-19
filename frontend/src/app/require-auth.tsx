@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { refreshAccessToken, setOnAuthFailure } from '@/api/client';
 import { Spinner } from '@/components/ui/spinner';
@@ -9,6 +9,7 @@ type Gate = 'checking' | 'authed' | 'anon';
 
 export function RequireAuth() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [gate, setGate] = useState<Gate>(() => (getAccessToken() ? 'authed' : 'checking'));
 
   // Session-restore bootstrap (NOT server state — sanctioned useEffect exception):
@@ -25,7 +26,12 @@ export function RequireAuth() {
   }, [gate]);
 
   useEffect(() => {
-    setOnAuthFailure(() => navigate('/login', { replace: true }));
+    setOnAuthFailure(() =>
+      navigate('/login', {
+        replace: true,
+        state: { from: window.location.pathname + window.location.search },
+      }),
+    );
     return () => setOnAuthFailure(() => {});
   }, [navigate]);
 
@@ -36,6 +42,8 @@ export function RequireAuth() {
       </div>
     );
   }
-  if (gate === 'anon') return <Navigate to="/login" replace />;
+  if (gate === 'anon') {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
   return <Outlet />;
 }

@@ -1,7 +1,7 @@
 import { Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import type { ModelOut } from '@/api/types';
+import type { CatalogEntryOut, ModelOut } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
@@ -10,8 +10,9 @@ import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
+import { CatalogDialog } from './catalog-dialog';
 import { ModelFormDialog } from './model-form-dialog';
-import { useAdminModels, useDeleteModel, usePatchModel } from './queries';
+import { useAdminModels, useCatalog, useDeleteModel, usePatchModel } from './queries';
 
 function syncTone(status: ModelOut['sync_status']): StatusTone {
   if (status === 'synced') return 'success';
@@ -21,6 +22,7 @@ function syncTone(status: ModelOut['sync_status']): StatusTone {
 
 export function ModelsPage() {
   const models = useAdminModels();
+  const catalog = useCatalog();
   const patchModel = usePatchModel();
   const deleteModel = useDeleteModel();
   // 'create' | a specific model being edited | null (closed). `formKey` forces
@@ -29,6 +31,12 @@ export function ModelsPage() {
   const [formTarget, setFormTarget] = useState<'create' | ModelOut | null>(null);
   const [formKey, setFormKey] = useState(0);
   const [removing, setRemoving] = useState<ModelOut | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+
+  const catalogByName = useMemo(
+    () => new Map((catalog.data?.entries ?? []).map((e): [string, CatalogEntryOut] => [e.name, e])),
+    [catalog.data],
+  );
 
   const openCreate = (): void => {
     setFormTarget('create');
@@ -51,6 +59,17 @@ export function ModelsPage() {
       />
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-4xl">
+          {catalog.data && catalog.data.new_available > 0 ? (
+            <div className="mb-3 flex items-center justify-between rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-secondary">
+              <span>
+                {catalog.data.new_available} model{catalog.data.new_available === 1 ? '' : 's'}{' '}
+                available in the catalog
+              </span>
+              <Button size="sm" onClick={() => setCatalogOpen(true)}>
+                Browse catalog
+              </Button>
+            </div>
+          ) : null}
           {models.isPending ? <Spinner label="Loading models…" /> : null}
           {models.data ? (
             <Table>
@@ -66,56 +85,71 @@ export function ModelsPage() {
                 </TR>
               </THead>
               <TBody>
-                {models.data.map((model) => (
-                  <TR key={model.id}>
-                    <TD className="font-medium">{model.display_name}</TD>
-                    <TD className="text-secondary">{model.provider_kind}</TD>
-                    <TD className="font-mono text-[12px] text-secondary">
-                      {model.litellm_model_name}
-                    </TD>
-                    <TD className="font-mono text-[12px] text-muted">
-                      {model.key_fingerprint ?? '—'}
-                    </TD>
-                    <TD>
-                      <StatusPill tone={syncTone(model.sync_status)}>
-                        {model.sync_status}
-                      </StatusPill>
-                    </TD>
-                    <TD>
-                      <input
-                        type="checkbox"
-                        aria-label={`Enable ${model.display_name}`}
-                        checked={model.enabled}
-                        disabled={patchModel.isPending}
-                        onChange={(e) =>
-                          patchModel.mutate(
-                            { modelId: model.id, body: { enabled: e.target.checked } },
-                            { onError: (err) => toast.error(err.message) },
-                          )
-                        }
-                        className="h-4 w-4 accent-[var(--accent)]"
-                      />
-                    </TD>
-                    <TD className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Edit ${model.display_name}`}
-                        onClick={() => openEdit(model)}
-                      >
-                        <Pencil className="h-4 w-4" aria-hidden />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove ${model.display_name}`}
-                        onClick={() => setRemoving(model)}
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden />
-                      </Button>
-                    </TD>
-                  </TR>
-                ))}
+                {models.data.map((model) => {
+                  const catalogEntry = catalogByName.get(model.litellm_model_name);
+                  return (
+                    <TR key={model.id}>
+                      <TD className="font-medium">{model.display_name}</TD>
+                      <TD className="text-secondary">{model.provider_kind}</TD>
+                      <TD className="font-mono text-[12px] text-secondary">
+                        <div>{model.litellm_model_name}</div>
+                        {catalogEntry ? (
+                          <span className="text-xs text-muted tabular-nums">
+                            {catalogEntry.max_input_tokens
+                              ? `${Math.round(catalogEntry.max_input_tokens / 1000)}k ctx`
+                              : null}
+                            {catalogEntry.input_cost_per_1m != null
+                              ? ` · $${catalogEntry.input_cost_per_1m.toFixed(2)}/$${(
+                                  catalogEntry.output_cost_per_1m ?? 0
+                                ).toFixed(2)} per 1M`
+                              : null}
+                          </span>
+                        ) : null}
+                      </TD>
+                      <TD className="font-mono text-[12px] text-muted">
+                        {model.key_fingerprint ?? '—'}
+                      </TD>
+                      <TD>
+                        <StatusPill tone={syncTone(model.sync_status)}>
+                          {model.sync_status}
+                        </StatusPill>
+                      </TD>
+                      <TD>
+                        <input
+                          type="checkbox"
+                          aria-label={`Enable ${model.display_name}`}
+                          checked={model.enabled}
+                          disabled={patchModel.isPending}
+                          onChange={(e) =>
+                            patchModel.mutate(
+                              { modelId: model.id, body: { enabled: e.target.checked } },
+                              { onError: (err) => toast.error(err.message) },
+                            )
+                          }
+                          className="h-4 w-4 accent-[var(--accent)]"
+                        />
+                      </TD>
+                      <TD className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Edit ${model.display_name}`}
+                          onClick={() => openEdit(model)}
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove ${model.display_name}`}
+                          onClick={() => setRemoving(model)}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden />
+                        </Button>
+                      </TD>
+                    </TR>
+                  );
+                })}
               </TBody>
             </Table>
           ) : null}
@@ -149,6 +183,7 @@ export function ModelsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CatalogDialog open={catalogOpen} onOpenChange={setCatalogOpen} />
     </>
   );
 }

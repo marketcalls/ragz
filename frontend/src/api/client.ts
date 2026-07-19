@@ -26,13 +26,25 @@ async function doRefresh(): Promise<boolean> {
     setAccessToken(null);
     return false;
   }
-  const body = (await res.json()) as { access_token: string };
-  setAccessToken(body.access_token);
+  const body: unknown = await res.json().catch(() => null);
+  const token =
+    body !== null && typeof body === 'object' && 'access_token' in body
+      ? (body as { access_token: unknown }).access_token
+      : null;
+  if (typeof token !== 'string' || token === '') {
+    setAccessToken(null);
+    return false;
+  }
+  setAccessToken(token);
   return true;
 }
 
 // Endpoints where a 401 is a real answer, not an expired access token.
-const NO_REFRESH = ['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/invitations/accept'];
+const NO_REFRESH = new Set([
+  '/api/v1/auth/login',
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/invitations/accept',
+]);
 
 export async function authFetch(input: Request): Promise<Response> {
   const send = (): Promise<Response> => {
@@ -42,7 +54,7 @@ export async function authFetch(input: Request): Promise<Response> {
     return fetch(req);
   };
   let res = await send();
-  if (res.status === 401 && !NO_REFRESH.some((p) => input.url.includes(p))) {
+  if (res.status === 401 && !NO_REFRESH.has(new URL(input.url).pathname)) {
     if (await refreshAccessToken()) {
       res = await send();
     } else {

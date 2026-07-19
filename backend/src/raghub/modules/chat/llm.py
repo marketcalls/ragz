@@ -6,7 +6,7 @@ one sanctioned mock).
 """
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -29,7 +29,7 @@ class LLMUsage:
 class LLMStreamer(Protocol):
     def stream(
         self, *, model: str, messages: list[dict[str, str]]
-    ) -> AsyncIterator[LLMDelta | LLMUsage]: ...
+    ) -> AsyncGenerator[LLMDelta | LLMUsage, None]: ...
 
 
 class LiteLLMStreamer:
@@ -39,14 +39,18 @@ class LiteLLMStreamer:
         base_url: str,
         master_key: str,
         transport: httpx.AsyncBaseTransport | None = None,
+        limits: httpx.Limits | None = None,
     ) -> None:
         self._base_url = base_url
         self._master_key = master_key
         self._transport = transport
+        # httpx's own built-in default (100 connections / 20 keepalive) matches the
+        # settings defaults below - passing None here preserves that behavior.
+        self._limits = limits if limits is not None else httpx.Limits()
 
     async def stream(
         self, *, model: str, messages: list[dict[str, str]]
-    ) -> AsyncIterator[LLMDelta | LLMUsage]:
+    ) -> AsyncGenerator[LLMDelta | LLMUsage, None]:
         payload = {
             "model": model,
             "messages": messages,
@@ -57,7 +61,7 @@ class LiteLLMStreamer:
         try:
             async with httpx.AsyncClient(
                 base_url=self._base_url, transport=self._transport,
-                timeout=httpx.Timeout(120.0, connect=10.0),
+                timeout=httpx.Timeout(120.0, connect=10.0), limits=self._limits,
             ) as client:
                 async with client.stream(
                     "POST", "/v1/chat/completions", json=payload, headers=headers

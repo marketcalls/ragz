@@ -68,6 +68,8 @@ class MessageNode(BaseModel):
     prompt_tokens: int | None
     completion_tokens: int | None
     created_at: datetime
+    stopped: bool = False
+    no_answer: bool = False
     citations: list[CitationOut]
     children: list["MessageNode"]
 

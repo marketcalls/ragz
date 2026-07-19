@@ -38,6 +38,8 @@ dev = [
     "import-linter>=2.0",
     "psycopg2-binary>=2.9",
 ]
+loadtest = ["locust>=2.29"]
+observability = ["sentry-sdk>=2.8"]
 
 [build-system]
 requires = ["hatchling"]
@@ -63,7 +65,7 @@ packages = ["raghub"]
 [[tool.mypy.overrides]]
 module = [
     "celery.*", "kombu.*", "fastembed.*", "aioboto3.*", "aiobotocore.*",
-    "botocore.*", "docling.*", "docling_core.*", "authlib.*",
+    "botocore.*", "docling.*", "docling_core.*", "authlib.*", "sentry_sdk.*",
 ]
 ignore_missing_imports = true
 

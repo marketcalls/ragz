@@ -32,6 +32,7 @@ EXPECTED_TABLES = {
     "org_quotas",
     "user_quotas",
     "usage_records",
+    "model_catalog",
     "alembic_version",
 }
 

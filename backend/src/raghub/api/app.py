@@ -15,12 +15,14 @@ from raghub.api.routes.admin_secrets import router as admin_secrets_router
 from raghub.api.routes.admin_sso import router as admin_sso_router
 from raghub.api.routes.auth import router as auth_router
 from raghub.api.routes.chats import router as chats_router
+from raghub.api.routes.client_errors import router as client_errors_router
 from raghub.api.routes.documents import router as documents_router
 from raghub.api.routes.groups import router as groups_router
 from raghub.api.routes.health import router as health_router
 from raghub.api.routes.models import router as models_router
 from raghub.api.routes.oidc import router as oidc_router
 from raghub.api.routes.search import router as search_router
+from raghub.api.routes.superadmin_ops import router as superadmin_ops_router
 from raghub.api.routes.usage import router as usage_router
 from raghub.api.routes.users import router as users_router
 from raghub.api.routes.workspaces import router as workspaces_router
@@ -28,6 +30,7 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
 from raghub.core.errors import RagHubError
 from raghub.core.logging import configure_logging
+from raghub.core.middleware import RequestIDMiddleware
 from raghub.modules.chat.llm import LLMStreamer
 from raghub.modules.chat.prompting import warm_token_encoder
 from raghub.modules.chat.service import ChunkReader, Retriever
@@ -68,11 +71,21 @@ def create_app(
     app = FastAPI(
         title="RagHub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=_lifespan
     )
+    settings = get_settings()
     if session_factory is None:
-        session_factory = build_session_factory(build_engine(get_settings().database_url))
+        session_factory = build_session_factory(
+            build_engine(
+                settings.database_url,
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
+                pool_timeout=settings.db_pool_timeout_seconds,
+            )
+        )
     app.state.session_factory = session_factory
     if redis_client is None:
-        redis_client = Redis.from_url(get_settings().redis_url)
+        redis_client = Redis.from_url(
+            settings.redis_url, max_connections=settings.redis_max_connections
+        )
     app.state.redis = redis_client
     app.state.litellm_transport = litellm_transport
     app.state.retriever = retriever if retriever is not None else retrieve
@@ -132,4 +145,20 @@ def create_app(
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(chats_router, prefix="/api/v1")
     app.include_router(usage_router, prefix="/api/v1")
+    app.include_router(client_errors_router, prefix="/api/v1")
+    app.include_router(superadmin_ops_router, prefix="/api/v1")
+
+    app.add_middleware(RequestIDMiddleware)
+
+    if settings.sentry_dsn:
+        try:
+            import sentry_sdk
+
+            sentry_sdk.init(
+                dsn=settings.sentry_dsn, environment=settings.environment,
+                traces_sample_rate=0.0, send_default_pii=False,
+            )
+        except ImportError:
+            structlog.get_logger().warning("sentry_dsn set but sentry-sdk not installed")
+
     return app

@@ -16,6 +16,17 @@ export type ModelOut = components['schemas']['ModelOut'];
 // slimmer shape — id + display_name only, already filtered to enabled models
 // server-side. ModelOut (id/display_name/enabled/…) is the admin-page shape.
 export type ModelPublic = components['schemas']['ModelPublic'];
+// GET /api/v1/admin/usage/summary (QUOTA-1 + ADM-4): KPI tiles, the two
+// per-day series (queries_per_day, tokens_by_model_per_day), and top users.
+export type UsageSummaryOut = components['schemas']['UsageSummaryOut'];
+// GET /api/v1/superadmin/client-errors (Task 6). message/stack/url are
+// attacker-controlled — render as text only, never dangerouslySetInnerHTML.
+export type ClientErrorOut = components['schemas']['ClientErrorOut'];
+// GET /api/v1/admin/models/catalog (MODEL-10/G7): LiteLLM's known
+// name+provider+pricing catalog, cross-referenced against the registry.
+// Cost fields are null when unknown to LiteLLM — omit pricing, don't show $0.
+export type CatalogEntryOut = components['schemas']['CatalogEntryOut'];
+export type CatalogOut = components['schemas']['CatalogOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 

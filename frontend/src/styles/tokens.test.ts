@@ -25,6 +25,7 @@ const LIGHT: Record<string, string> = {
   '--danger-soft': '#fef2f2',
   '--warning': '#b45309',
   '--warning-soft': '#fffbeb',
+  '--scrim': 'rgba(23, 23, 23, 0.4)',
 };
 
 const DARK: Record<string, string> = {
@@ -40,6 +41,7 @@ const DARK: Record<string, string> = {
   '--accent': '#818cf8',
   '--accent-on-soft': '#a5b4fc',
   '--accent-soft': 'rgba(129, 140, 248, 0.18)',
+  '--scrim': 'rgba(0, 0, 0, 0.6)',
 };
 
 test.each(Object.entries(LIGHT))('light token %s = %s', (name, value) => {

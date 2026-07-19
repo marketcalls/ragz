@@ -169,6 +169,7 @@ export function ChatPage() {
                 key={m.id}
                 content={m.content}
                 sources={chipsFor(m)}
+                stopped={m.stopped}
                 footer={
                   <MessageActions
                     entry={entry}
@@ -188,7 +189,12 @@ export function ChatPage() {
           ) : null}
         </div>
       </div>
-      <ChatInput onSend={onSend} disabled={busy || (!chatId && createChat.isPending)} />
+      <ChatInput
+        onSend={onSend}
+        disabled={busy || (!chatId && createChat.isPending)}
+        busy={busy}
+        onStop={stream.stop}
+      />
     </>
   );
 }

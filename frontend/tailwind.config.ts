@@ -29,6 +29,7 @@ export default {
       'danger-soft': 'var(--danger-soft)',
       warning: 'var(--warning)',
       'warning-soft': 'var(--warning-soft)',
+      scrim: 'var(--scrim)',
       // primary buttons invert (theme spec §2.2): near-black on light, light on dark
       primary: 'var(--text)',
       'primary-foreground': 'var(--bg)',

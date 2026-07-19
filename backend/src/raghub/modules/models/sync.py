@@ -42,6 +42,8 @@ async def _litellm_params(
         )
     except NotFoundError:
         pass  # keyless provider (ollama / open local endpoints)
+    if model.mock_response:
+        params["mock_response"] = model.mock_response
     return params
 
 
@@ -59,10 +61,14 @@ async def sync_models_to_litellm(
     models = await list_enabled_models(session)
     all_models = await list_models(session)
     headers = {"Authorization": f"Bearer {settings.litellm_master_key}"}
+    limits = httpx.Limits(
+        max_connections=settings.httpx_max_connections,
+        max_keepalive_connections=settings.httpx_max_keepalive,
+    )
     try:
         async with httpx.AsyncClient(
             base_url=settings.litellm_url, headers=headers,
-            transport=transport, timeout=30.0,
+            transport=transport, timeout=30.0, limits=limits,
         ) as client:
             try:
                 info = await client.get("/v1/model/info")

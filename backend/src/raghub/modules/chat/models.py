@@ -47,6 +47,8 @@ class Message(UUIDPk, Base):
     model_id: Mapped[UUID | None] = mapped_column(default=None)
     prompt_tokens: Mapped[int | None] = mapped_column(default=None)
     completion_tokens: Mapped[int | None] = mapped_column(default=None)
+    stopped: Mapped[bool] = mapped_column(default=False, server_default="false")
+    no_answer: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class Citation(UUIDPk, Base):

@@ -26,3 +26,11 @@ test('whitespace-only content is not sent; disabled blocks sending', async () =>
   rerender(<ChatInput onSend={onSend} disabled />);
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
 });
+
+test('shows Stop instead of Send while busy and calls onStop', async () => {
+  const onStop = vi.fn();
+  render(<ChatInput onSend={vi.fn()} disabled busy onStop={onStop} />);
+  expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Stop generating' }));
+  expect(onStop).toHaveBeenCalledOnce();
+});

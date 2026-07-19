@@ -22,6 +22,7 @@ const fixtureModel: ModelOut = {
   enabled: true,
   key_fingerprint: 'ab12…ef90',
   sync_status: 'synced',
+  mock_response: null,
 };
 
 function renderDialog(

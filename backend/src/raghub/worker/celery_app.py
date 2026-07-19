@@ -30,6 +30,14 @@ def build_celery() -> Celery:
         task_default_queue="default",
         task_queues=(Queue("default"), Queue("interactive")),
         broker_connection_retry_on_startup=True,
+        # Plan G Task 12 (MODEL-10/G7): daily catalog sync; the 3-day cache
+        # inside refresh_catalog makes retries/redundant runs cheap.
+        beat_schedule={
+            "refresh-model-catalog": {
+                "task": "models.refresh_catalog",
+                "schedule": 24 * 60 * 60,
+            },
+        },
     )
     return app
 
