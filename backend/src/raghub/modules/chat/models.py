@@ -63,3 +63,6 @@ class Citation(UUIDPk, Base):
     page: Mapped[int]
     score: Mapped[float]
     marker: Mapped[int]  # the [n] number used in the answer text
+    # Plan H (CHAT-4): section path + the document's version at citation time.
+    section: Mapped[str | None] = mapped_column(Text(), default=None)
+    version: Mapped[int] = mapped_column(default=1)

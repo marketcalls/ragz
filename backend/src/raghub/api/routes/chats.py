@@ -27,7 +27,12 @@ from raghub.modules.models import service as models_service
 from raghub.modules.models.models import Model
 from raghub.modules.quotas import service as quota_service
 from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context, rate_limit_user
+from raghub.modules.tenancy.context import (
+    TenantContext,
+    get_tenant_context,
+    rate_limit_user,
+    require_permission,
+)
 from raghub.modules.tenancy.models import Workspace
 
 router = APIRouter(tags=["chat"])
@@ -36,6 +41,9 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 # Per-user (not per-IP) limit on message sends: 30 per 60s (iron rule 4).
 SendCtxDep = Annotated[TenantContext, Depends(rate_limit_user("chat_send", 30, 60))]
+# Task 13 (RBAC-2, H-C12): ADDED to the existing dependency list on create/send/
+# regenerate -- does not replace F's quota deps or G's rate limit above.
+_ChatUseDep = Depends(require_permission("chat.use"))
 
 _SSE_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
 
@@ -89,7 +97,9 @@ async def _resolve_workspace_and_model(
     return workspace, model
 
 
-@router.post("/chats", status_code=201, response_model=ChatOut)
+@router.post(
+    "/chats", status_code=201, response_model=ChatOut, dependencies=[_ChatUseDep]
+)
 async def create_chat(body: ChatCreate, session: SessionDep, ctx: CtxDep) -> ChatOut:
     chat = await service.create_chat(
         session, ctx, workspace_id=body.workspace_id, title=body.title
@@ -124,7 +134,7 @@ async def delete_chat(chat_id: UUID, session: SessionDep, ctx: CtxDep) -> None:
     await service.delete_chat(session, ctx, chat_id)
 
 
-@router.post("/chats/{chat_id}/messages")
+@router.post("/chats/{chat_id}/messages", dependencies=[_ChatUseDep])
 async def send_message(
     chat_id: UUID, body: MessageSend, request: Request,
     session: SessionDep, settings: SettingsDep, ctx: SendCtxDep,
@@ -153,7 +163,7 @@ async def send_message(
     ))
 
 
-@router.post("/messages/{message_id}/regenerate")
+@router.post("/messages/{message_id}/regenerate", dependencies=[_ChatUseDep])
 async def regenerate(
     message_id: UUID, request: Request,
     session: SessionDep, settings: SettingsDep, ctx: SendCtxDep,

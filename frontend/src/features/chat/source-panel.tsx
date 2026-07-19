@@ -10,6 +10,8 @@ export interface SourceChipData {
   filename: string;
   page: number;
   snippet?: string;
+  section?: string | null;
+  version?: number;
 }
 
 export function SourcePanel({
@@ -41,7 +43,11 @@ export function SourcePanel({
             </span>
             <FileText className="h-3 w-3 text-muted" aria-hidden />
             <span className="max-w-[220px] truncate">{source.filename}</span>
+            {source.version != null ? <span className="text-muted">· v{source.version}</span> : null}
             <span className="text-muted">· p. {source.page}</span>
+            {source.section ? (
+              <span className="max-w-[180px] truncate text-muted">· {source.section}</span>
+            ) : null}
           </button>
         </div>
       ))}

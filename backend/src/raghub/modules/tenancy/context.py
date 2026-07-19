@@ -15,7 +15,8 @@ from raghub.core.errors import AuthenticationError, AuthorizationError
 from raghub.core.ratelimit import check_rate_limit
 from raghub.modules.auth.models import User
 from raghub.modules.auth.tokens import decode_access_token
-from raghub.modules.tenancy.models import UserGroup, WorkspaceMember
+from raghub.modules.tenancy.models import RoleTemplate, UserGroup, WorkspaceMember
+from raghub.modules.tenancy.permissions import DEFAULT_USER_PERMISSIONS, PERMISSIONS
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,10 @@ class TenantContext:
     role: str
     workspace_ids: frozenset[UUID]
     group_ids: frozenset[UUID] = frozenset()
+    # Plan H (RBAC-2): appended LAST (H-C5 convention) so every existing
+    # construction site -- including the isolation suites' replace(...) calls --
+    # stays valid with the default.
+    permissions: frozenset[str] = frozenset()
 
 
 _bearer = HTTPBearer(auto_error=False)
@@ -52,9 +57,16 @@ async def get_tenant_context(
             select(UserGroup.group_id).where(UserGroup.user_id == user.id)
         )
     ).scalars().all()
+    if user.role in ("admin", "superadmin"):
+        perms = PERMISSIONS
+    elif user.custom_role_id is not None:
+        template = await session.get(RoleTemplate, user.custom_role_id)
+        perms = frozenset(template.permissions) if template else DEFAULT_USER_PERMISSIONS
+    else:
+        perms = DEFAULT_USER_PERMISSIONS
     return TenantContext(
         user_id=user.id, org_id=user.org_id, role=user.role,
-        workspace_ids=frozenset(ws_ids), group_ids=frozenset(group_ids),
+        workspace_ids=frozenset(ws_ids), group_ids=frozenset(group_ids), permissions=perms,
     )
 
 
@@ -62,6 +74,19 @@ def require_role(*roles: str) -> Callable[..., Awaitable[TenantContext]]:
     async def guard(ctx: Annotated[TenantContext, Depends(get_tenant_context)]) -> TenantContext:
         if ctx.role != "superadmin" and ctx.role not in roles:
             raise AuthorizationError(f"requires role in {sorted(roles)}")
+        return ctx
+
+    return guard
+
+
+def require_permission(permission: str) -> Callable[..., Awaitable[TenantContext]]:
+    """Granular guard (RBAC-2). Superadmin bypass matches require_role; admins
+    pass because get_tenant_context grants them every permission. Custom roles
+    refine the 'user' tier only."""
+
+    async def guard(ctx: Annotated[TenantContext, Depends(get_tenant_context)]) -> TenantContext:
+        if ctx.role != "superadmin" and permission not in ctx.permissions:
+            raise AuthorizationError(f"requires permission {permission}")
         return ctx
 
     return guard

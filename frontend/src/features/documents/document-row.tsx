@@ -1,26 +1,37 @@
-import { Lock, Pin, Trash2 } from 'lucide-react';
+import { Check, Lock, Pin, Tags, Trash2, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
-import type { DocumentOut } from '@/api/types';
+import type { DocumentOut, MetadataFieldOut } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { StatusPill } from '@/components/ui/status-pill';
 import { TD, TR } from '@/components/ui/table';
+import { toast } from '@/components/ui/toaster';
 
 import { useClaims } from '@/lib/use-claims';
 
 import { AclDialog } from './acl-dialog';
+import { MetadataDialog } from './metadata-dialog';
+import { useSetApproved } from './queries';
 import { formatBytes, statusPresentation } from './status';
 
 export function DocumentRow({
   doc,
+  workspaceId,
+  fields = [],
+  dimmed = false,
   onDelete,
   deleting,
   onTogglePin,
   pinning,
 }: {
   doc: DocumentOut;
+  workspaceId: string | null;
+  // Workspace metadata schema (DOC-6/Task 11) — defaults to [] so existing
+  // callers/tests that don't care about metadata don't need to pass it.
+  fields?: MetadataFieldOut[];
+  dimmed?: boolean;
   onDelete: () => void;
   deleting: boolean;
   onTogglePin: () => void;
@@ -28,13 +39,18 @@ export function DocumentRow({
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [aclOpen, setAclOpen] = useState(false);
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const claims = useClaims();
   const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
   const { tone, label } = statusPresentation(doc);
   const restricted = Boolean(doc.acl_group_ids && doc.acl_group_ids.length > 0);
+  const setApproved = useSetApproved(workspaceId);
   return (
-    <TR>
-      <TD className="max-w-[320px] truncate font-medium">{doc.filename}</TD>
+    <TR className={dimmed ? 'opacity-60' : undefined}>
+      <TD className="max-w-[320px] truncate font-medium">
+        {doc.filename}
+        <span className="ml-1.5 font-normal text-muted">v{doc.version}</span>
+      </TD>
       <TD className="text-secondary">{formatBytes(doc.size_bytes)}</TD>
       <TD className="text-secondary">{doc.page_count ?? '—'}</TD>
       <TD>
@@ -55,10 +71,20 @@ export function DocumentRow({
             <StatusPill tone={tone}>{label}</StatusPill>
           )}
           {restricted ? <StatusPill tone="warning">restricted</StatusPill> : null}
+          {doc.approved ? <StatusPill tone="success">Approved</StatusPill> : null}
         </div>
       </TD>
       <TD className="text-muted">{new Date(doc.created_at).toLocaleDateString()}</TD>
       <TD className="text-right">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Edit metadata for ${doc.filename}`}
+          title="Edit metadata"
+          onClick={() => setMetadataOpen(true)}
+        >
+          <Tags className="h-4 w-4" aria-hidden />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -83,6 +109,27 @@ export function DocumentRow({
             <Lock className={restricted ? 'h-4 w-4 text-accent' : 'h-4 w-4'} aria-hidden />
           </Button>
         ) : null}
+        {isAdmin ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={doc.approved ? `Unapprove ${doc.filename}` : `Approve ${doc.filename}`}
+            title={doc.approved ? 'Revoke approval' : 'Mark approved for retrieval'}
+            disabled={setApproved.isPending}
+            onClick={() =>
+              setApproved.mutate(
+                { documentId: doc.id, approved: !doc.approved },
+                { onError: (err) => toast.error(err.message) },
+              )
+            }
+          >
+            {doc.approved ? (
+              <Undo2 className="h-4 w-4" aria-hidden />
+            ) : (
+              <Check className="h-4 w-4" aria-hidden />
+            )}
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"
@@ -92,6 +139,13 @@ export function DocumentRow({
           <Trash2 className="h-4 w-4" aria-hidden />
         </Button>
         {isAdmin ? <AclDialog document={doc} open={aclOpen} onOpenChange={setAclOpen} /> : null}
+        <MetadataDialog
+          doc={doc}
+          fields={fields}
+          workspaceId={workspaceId}
+          open={metadataOpen}
+          onOpenChange={setMetadataOpen}
+        />
         <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
           <DialogContent
             title="Delete document"

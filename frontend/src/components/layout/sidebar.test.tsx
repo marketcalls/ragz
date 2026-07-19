@@ -51,10 +51,18 @@ test('user role sees no admin links', async () => {
   expect(screen.queryByText('Models')).not.toBeInTheDocument();
 });
 
-test('superadmin sees Users, Models, and Audit', async () => {
+test('superadmin sees Users, Roles, Models, and Audit', async () => {
   setAccessToken(tokenFor('superadmin'));
   renderSidebar();
   expect(await screen.findByText('Users')).toBeInTheDocument();
+  expect(screen.getByText('Roles')).toBeInTheDocument();
   expect(screen.getByText('Models')).toBeInTheDocument();
   expect(screen.getByText('Audit')).toBeInTheDocument();
+});
+
+test('admin (non-superadmin) does not see Roles', async () => {
+  setAccessToken(tokenFor('admin'));
+  renderSidebar();
+  expect(await screen.findByText('Users')).toBeInTheDocument();
+  expect(screen.queryByText('Roles')).not.toBeInTheDocument();
 });

@@ -20,6 +20,7 @@ dependencies = [
     "qdrant-client>=1.17,<1.19",
     "fastembed>=0.6",
     "docling>=2.15",
+    "easyocr>=1.7",
     "aioboto3>=13.0",
     "python-multipart>=0.0.9",
     "cryptography>=42.0",
@@ -33,10 +34,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "testcontainers[postgres,redis,qdrant,minio]>=4.5",
     "python-docx>=1.1",
+    "python-pptx>=1.0",
     "ruff>=0.4",
     "mypy>=1.10",
     "import-linter>=2.0",
     "psycopg2-binary>=2.9",
+    "pillow>=10.1",
 ]
 loadtest = ["locust>=2.29"]
 observability = ["sentry-sdk>=2.8"]
@@ -85,3 +88,12 @@ root_package = "raghub"
 name = "Layered architecture"
 type = "layers"
 layers = ["raghub.api", "raghub.worker", "raghub.modules", "raghub.core"]
+# DOC-5 (Plan H Task 6): promote_lineage's reindex-enqueue call is deliberately
+# a function-local import, not a design escape from the layering rule -- it
+# exists solely to break the REAL circular Python import (worker.tasks imports
+# modules.documents.ingest, which now imports modules.documents.service at
+# module scope). The layering direction itself is unchanged: this is the one
+# documented, narrow exception, not a general modules->worker allowance.
+ignore_imports = [
+    "raghub.modules.documents.service -> raghub.worker.tasks",
+]

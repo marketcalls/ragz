@@ -22,7 +22,7 @@ from raghub.modules.documents.models import Document, IngestJob
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.service import retrieve
+from raghub.modules.retrieval.service import retrieve, update_document_current
 from raghub.modules.tenancy.models import Group
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
@@ -58,6 +58,10 @@ async def test_full_runner_sequence_indexes_document(
     assert set(jobs) == {"parse", "chunk", "embed", "upsert"}
     assert all(j.finished_at is not None and j.progress == 1.0 for j in jobs.values())
 
+    # Plan H: freshly-upserted points are is_current=False (invisible) until
+    # promotion (Task 6). Real promotion doesn't exist yet, so this test
+    # stands in for it via the sanctioned update_document_current path.
+    await update_document_current(ctx.org_id, doc.id, is_current=True)
     result = await retrieve(session, ctx, ws.id, "invoice 0231")
     assert result.chunks and result.chunks[0].document_id == doc.id
 
@@ -91,6 +95,8 @@ async def test_delete_propagates_everywhere(
     await run_parse(doc.id)
     await run_chunk(doc.id)
     await run_embed_upsert(doc.id)
+    # Plan H: promote first so the delete-propagation check below is non-vacuous.
+    await update_document_current(ctx.org_id, doc.id, is_current=True)
 
     await run_delete(doc.id, ctx.user_id)
     assert (await session.execute(
@@ -211,3 +217,54 @@ async def test_embed_upsert_stamps_final_acl_after_race(
     for point in points:
         payload = point.payload or {}
         assert payload.get("acl_groups") == [str(group.id)]
+
+
+async def test_embed_upsert_stamps_final_metadata_after_race(
+    session: AsyncSession, engine: AsyncEngine, qdrant_collection: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same race as the ACL test above, for document metadata (final review):
+    a Tags PUT landing mid-ingest restamps only already-upserted points; later
+    batches carry the stale meta loaded at loop start unless the runner
+    re-stamps from the fresh row before marking indexed."""
+    ctx, ws, doc = await _upload(session, "ing7", data=BIG_TEXT)
+    await run_parse(doc.id)
+    await run_chunk(doc.id)
+
+    monkeypatch.setattr(ingest_module, "_BATCH_SIZE", 1)
+    real_embed_batch = ingest_module.embed_batch
+    calls = 0
+
+    async def racing_embed_batch(texts, dense_embedder):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            factory = build_session_factory(engine)
+            async with factory() as race_session:
+                race_doc = (
+                    await race_session.execute(
+                        select(Document).where(Document.id == doc.id)
+                    )
+                ).scalar_one()
+                race_doc.meta = {"doc_type": "policy"}
+                await race_session.commit()
+        return await real_embed_batch(texts, dense_embedder)
+
+    monkeypatch.setattr(ingest_module, "embed_batch", racing_embed_batch)
+    await run_embed_upsert(doc.id)
+    assert calls >= 2  # race landed mid-loop with batches still to run
+
+    points, _ = await get_qdrant().scroll(
+        COLLECTION,
+        scroll_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id", match=models.MatchValue(value=str(doc.id))
+                )
+            ]
+        ),
+        limit=100,
+        with_payload=True,
+    )
+    assert points
+    assert all(p.payload["meta"] == {"doc_type": "policy"} for p in points)

@@ -33,6 +33,7 @@ class UserOut(BaseModel):
     email: EmailStr
     role: Literal["admin", "user", "superadmin"]
     active: bool
+    custom_role_id: UUID | None = None
 
     model_config = {"from_attributes": True}
 

@@ -59,3 +59,41 @@ async def test_list_and_get_checked(session: AsyncSession, stack_env: None) -> N
     other_ctx, _ = await seed_workspace(session, "up5")
     with pytest.raises(NotFoundError):  # cross-org: existence never leaks
         await get_document_checked(session, other_ctx, doc.id)
+
+
+async def test_reupload_same_filename_creates_next_version(
+    session: AsyncSession, stack_env: None
+) -> None:
+    ctx, ws = await seed_workspace(session, "up6")
+    v1 = await create_from_upload(session, ctx, ws.id, filename="policy.pdf",
+                                  mime="application/pdf", data=b"v1 body")
+    assert (v1.version, v1.lineage_id, v1.supersedes_document_id) == (1, v1.id, None)
+    assert v1.is_current is False and v1.approved is False
+
+    v2 = await create_from_upload(session, ctx, ws.id, filename="policy.pdf",
+                                  mime="application/pdf", data=b"v2 body")
+    assert v2.version == 2
+    assert v2.lineage_id == v1.id
+    assert v2.supersedes_document_id == v1.id
+
+
+async def test_different_filename_starts_new_lineage(
+    session: AsyncSession, stack_env: None
+) -> None:
+    ctx, ws = await seed_workspace(session, "up7")
+    a = await create_from_upload(session, ctx, ws.id, filename="a.pdf",
+                                 mime="application/pdf", data=b"aaa")
+    b = await create_from_upload(session, ctx, ws.id, filename="b.pdf",
+                                 mime="application/pdf", data=b"bbb")
+    assert a.lineage_id != b.lineage_id and b.version == 1
+
+
+async def test_identical_content_still_conflicts(
+    session: AsyncSession, stack_env: None
+) -> None:
+    ctx, ws = await seed_workspace(session, "up8")
+    await create_from_upload(session, ctx, ws.id, filename="c.pdf",
+                             mime="application/pdf", data=b"same")
+    with pytest.raises(ConflictError):
+        await create_from_upload(session, ctx, ws.id, filename="c.pdf",
+                                 mime="application/pdf", data=b"same")

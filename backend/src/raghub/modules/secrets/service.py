@@ -68,6 +68,18 @@ async def list_secrets(session: AsyncSession) -> list[Secret]:
     return list((await session.execute(select(Secret).order_by(Secret.name))).scalars())
 
 
+async def existing_secret_names(session: AsyncSession, names: list[str]) -> set[str]:
+    """Which of `names` already have a stored secret. Existence-only (no
+    decryption), so this sits outside iron rule 3's single-decrypter allowlist --
+    callers use it to avoid touching gateway keys that were never minted."""
+    if not names:
+        return set()
+    rows = (
+        await session.execute(select(Secret.name).where(Secret.name.in_(names)))
+    ).scalars()
+    return set(rows)
+
+
 async def delete_secret(
     session: AsyncSession, *, actor_id: UUID | None, name: str, commit: bool = True
 ) -> None:

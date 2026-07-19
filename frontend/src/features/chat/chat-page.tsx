@@ -51,6 +51,8 @@ export function ChatPage() {
       document_id: c.document_id,
       filename: documentNameById.get(c.document_id) ?? 'Document',
       page: c.page,
+      section: c.section,
+      version: c.version,
     }));
 
   const workspace = workspaces?.find((w) => w.id === workspaceId);

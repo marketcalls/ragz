@@ -49,6 +49,7 @@ class PromptSource:
     filename: str
     page: int
     text: str
+    section: str | None = None
 
 
 def _attr(value: str) -> str:
@@ -76,8 +77,12 @@ _DATA_PREAMBLE = (
 
 def _render_block(s: PromptSource) -> str:
     safe = s.text.replace("</data>", "<\\/data>")
+    # Section text is document-derived (e.g. a heading path) just like the
+    # filename, so it goes through the same _attr escaping - iron rule 5's
+    # delimiter defense applies to it too.
+    section_attr = f' section="{_attr(s.section)}"' if s.section else ""
     return (
-        f'<data id="{s.marker}" source="{_attr(s.filename)}" page="{s.page}">\n'
+        f'<data id="{s.marker}" source="{_attr(s.filename)}" page="{s.page}"{section_attr}>\n'
         f"{safe}\n</data>"
     )
 

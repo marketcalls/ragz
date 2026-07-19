@@ -33,3 +33,24 @@ test('renders nothing when there are no sources', () => {
   render(<SourcePanel sources={[]} />);
   expect(screen.queryByRole('list')).not.toBeInTheDocument();
 });
+
+test('renders version and section when present (CHAT-4)', () => {
+  const withMeta: SourceChipData[] = [
+    {
+      marker: 1,
+      document_id: 'd1',
+      filename: 'evac.pdf',
+      page: 2,
+      version: 2,
+      section: 'Fire Safety > Evacuation',
+    },
+  ];
+  render(<SourcePanel sources={withMeta} />);
+  expect(screen.getByText('· v2')).toBeInTheDocument();
+  expect(screen.getByText('· Fire Safety > Evacuation')).toBeInTheDocument();
+});
+
+test('omits version/section chrome when absent', () => {
+  render(<SourcePanel sources={sources} />);
+  expect(screen.queryByText(/^· v\d/)).not.toBeInTheDocument();
+});

@@ -27,6 +27,8 @@ class SourceRef:
     chunk_index: int
     score: float
     snippet: str
+    section: str | None
+    version: int
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,8 @@ class CitationRef:
     chunk_ref: str
     page: int
     score: float
+    section: str | None
+    version: int
 
 
 def retrieval_started_event() -> SSEEvent:

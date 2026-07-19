@@ -75,6 +75,15 @@ def delete_task(self: Task, document_id: str, actor_id: str | None = None) -> No
         raise self.retry(exc=exc, countdown=2 ** self.request.retries) from exc
 
 
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES, name="documents.reindex")
+def reindex_task(self: Task, document_id: str) -> str:
+    """Re-run embed+upsert from stored chunks.json (deterministic point ids
+    make this idempotent) when promote_lineage picks a winner whose points
+    were previously deleted (DOC-5). Its tail re-runs promote_lineage."""
+    _run(self, lambda: ingest.run_embed_upsert(UUID(document_id)))
+    return document_id
+
+
 def select_queue(size_bytes: int) -> str:
     """Uploads under the interactive threshold jump the bulk queue (spec §3.2)."""
     limit = get_settings().interactive_upload_mb * 1024 * 1024
@@ -95,6 +104,10 @@ def enqueue_ingest(document_id: UUID, size_bytes: int) -> None:
 
 def enqueue_delete(document_id: UUID, actor_id: UUID) -> None:
     delete_task.si(str(document_id), str(actor_id)).apply_async(queue="interactive")
+
+
+def enqueue_reindex(document_id: UUID) -> None:
+    reindex_task.si(str(document_id)).apply_async(queue="interactive")
 
 
 @celery_app.task(name="models.refresh_catalog")

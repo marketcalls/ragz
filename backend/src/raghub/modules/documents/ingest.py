@@ -17,6 +17,7 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory, naive_utc
 from raghub.core.storage import ObjectStorage, build_storage
 from raghub.modules.audit.service import record_audit
+from raghub.modules.documents import service as documents_service
 from raghub.modules.documents.models import Document, IngestJob
 from raghub.modules.documents.pipeline import (
     Chunk,
@@ -33,6 +34,7 @@ from raghub.modules.retrieval.service import (
     delete_document_points,
     ensure_collection,
     update_document_acl,
+    update_document_metadata,
 )
 
 _BATCH_SIZE = 32
@@ -89,7 +91,12 @@ async def run_parse(document_id: UUID) -> None:
         storage = _storage()
         try:
             data = await storage.get(doc.storage_key)
-            blocks = await asyncio.to_thread(parse_bytes, data, doc.filename)
+            settings = get_settings()
+            blocks = await asyncio.to_thread(
+                parse_bytes, data, doc.filename,
+                ocr_enabled=settings.ocr_enabled,
+                ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+            )
         except IngestFailure as exc:
             await _fail(session, doc, job, str(exc))
             raise
@@ -150,7 +157,8 @@ async def run_embed_upsert(document_id: UUID) -> None:
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
                 mime=doc.mime, created_at=doc.created_at,
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
-                chunks=batch, dense=dense, sparse=sparse,
+                chunks=batch, dense=dense, sparse=sparse, version=doc.version,
+                meta=doc.meta,
             )
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)
@@ -185,6 +193,10 @@ async def run_embed_upsert(document_id: UUID) -> None:
         # reflects the latest PG state before the document is marked indexed
         # and becomes retrievable.
         await update_document_acl(org_id, document_id, still_exists.acl_group_ids)
+        # Same race, same cure for metadata: a Tags PUT mid-ingest restamps
+        # only already-upserted points; later batches carry the stale meta
+        # loaded at task start. Re-stamp from the fresh row (final review).
+        await update_document_metadata(org_id, document_id, still_exists.meta or {})
 
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.
@@ -195,8 +207,10 @@ async def run_embed_upsert(document_id: UUID) -> None:
         )
 
         doc.status = "indexed"
+        doc.vectors_present = True
         await _finish_stage(session, embed_job)
         await _finish_stage(session, upsert_job)
+        await documents_service.promote_lineage(session, org_id, doc.lineage_id)
 
 
 async def run_delete(document_id: UUID, actor_id: UUID | None) -> None:
@@ -208,6 +222,8 @@ async def run_delete(document_id: UUID, actor_id: UUID | None) -> None:
         ).scalar_one_or_none()
         if doc is None:
             return
+        org_id = doc.org_id  # captured before the row is gone
+        lineage_id = doc.lineage_id
         await delete_document_points(doc.org_id, document_id)
         storage = _storage()
         for key in (doc.storage_key, doc.storage_key + ".blocks.json",
@@ -219,6 +235,9 @@ async def run_delete(document_id: UUID, actor_id: UUID | None) -> None:
                            target_id=str(document_id))
         await session.delete(doc)
         await session.commit()
+        # Plan H: deleting the current version leaves the lineage without one
+        # until a survivor is promoted (DOC-5).
+        await documents_service.promote_lineage(session, org_id, lineage_id)
 
 
 async def mark_failed(document_id: UUID, reason: str) -> None:

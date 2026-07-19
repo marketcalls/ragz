@@ -2,15 +2,17 @@
 
 `_tenant_filter` below is the only function in the codebase allowed to construct
 a Qdrant filter. Its only callers are `retrieve()`, `delete_document_points()`,
-`list_document_chunks()`, `get_chunks_by_refs()`, and `update_document_acl()` —
-all in this module. The adversarial suite in tests/isolation/ exists to catch
-any regression here. `_tenant_filter`'s ACL posture is decided per caller via
-`_ctx_acl` for user-facing reads and `None` for the two maintenance paths.
+`list_document_chunks()`, `get_chunks_by_refs()`, `update_document_acl()`,
+`update_document_current()`, and `update_document_metadata()` — all in this
+module. The adversarial suite in tests/isolation/ exists to catch any
+regression here. `_tenant_filter`'s ACL, current-only, and metadata postures
+are decided per caller — see the caller table in its docstring.
 """
 
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import date, datetime
 from uuid import UUID
 
 import structlog
@@ -33,6 +35,8 @@ class RetrievedChunk:
     chunk_index: int
     text: str
     score: float
+    section: str | None = None
+    version: int = 1
 
 
 @dataclass(frozen=True)
@@ -41,24 +45,65 @@ class RetrievalResult:
     no_answer: bool
 
 
+@dataclass(frozen=True)
+class MetadataClause:
+    """Declarative metadata condition (DOC-6). Built ONLY by
+    modules/documents/metadata.py::build_clauses (owns field-type knowledge);
+    consumed ONLY by _tenant_filter (owns filter syntax). `key` is always
+    'meta.'-prefixed by its builder — user input can never target tenant keys."""
+
+    key: str
+    kind: str  # "eq" | "date_range"
+    value: str | None = None
+    gte: str | None = None  # RFC 3339 / ISO date
+    lte: str | None = None
+
+
+def _parse_iso(value: str | None) -> datetime | date | None:
+    """MetadataClause carries RFC 3339 / ISO date strings (declarative,
+    builder-agnostic); DatetimeRange wants datetime|date objects."""
+    return datetime.fromisoformat(value) if value is not None else None
+
+
 def _tenant_filter(
     *,
     org_id: UUID,
     workspace_id: UUID | None = None,
     document_id: UUID | None = None,
     acl_group_ids: frozenset[UUID] | None,
+    current_only: bool,
+    metadata_clauses: Sequence[MetadataClause] | None,
 ) -> models.Filter:
-    """The ONE Qdrant filter builder. tenant_id is always a must-condition.
+    """The ONE Qdrant filter builder (iron rule 1). tenant_id is always a
+    must-condition. acl_group_ids, current_only, and metadata_clauses are all
+    REQUIRED (no defaults) so every caller states its full posture explicitly:
 
-    acl_group_ids is REQUIRED (no default) so every caller states its ACL
-    posture explicitly:
-      * None      -> no ACL clause. Sanctioned for admin+ retrieval (RBAC-5
-                     restricts users, not the admins who manage the library)
-                     and for maintenance paths already scoped tenant+document.
-      * frozenset -> nested must-clause: acl_groups IS EMPTY (unrestricted;
-                     also matches every pre-Phase-2 point, ingested as []) OR
-                     intersects the caller's groups. An empty set emits
-                     IsEmpty only — fail closed, never MatchAny(any=[]).
+    | caller | acl_group_ids | current_only | metadata_clauses |
+    |---|---|---|---|
+    | `retrieve()` | `_ctx_acl(ctx)` | `True` | caller param |
+    | `list_document_chunks()` | `_ctx_acl(ctx)` | `False` (pinned doc served mid-swap) | `None` |
+    | `get_chunks_by_refs()` | `_ctx_acl(ctx)` | `False` (citation backfill resolves) | `None` |
+    | `delete_document_points()` | `None` | `False` | `None` |
+    | `update_document_acl()` | `None` | `False` | `None` |
+    | `update_document_current()` | `None` | `False` | `None` |
+    | `update_document_metadata()` | `None` | `False` | `None` |
+
+      * acl_group_ids: None -> no ACL clause. Sanctioned for admin+ retrieval
+        (RBAC-5 restricts users, not the admins who manage the library) and
+        for maintenance paths already scoped tenant+document. frozenset ->
+        nested must-clause: acl_groups IS EMPTY (unrestricted; also matches
+        every pre-Phase-2 point, ingested as []) OR intersects the caller's
+        groups. An empty set emits IsEmpty only — fail closed, never
+        MatchAny(any=[]).
+      * current_only: True -> nested must-clause: is_current == true OR the
+        is_current key is absent entirely (legacy pre-H points — safe because
+        promotion *deletes* demoted points, so an existing keyless point can
+        only belong to a current version; no payload backfill job needed).
+        False -> no current-only clause (maintenance paths and pinned-document/
+        citation reads that must keep resolving mid-version-swap).
+      * metadata_clauses: per-clause eq (MatchValue) or date_range
+        (DatetimeRange) FieldConditions, all top-level must-conditions (no
+        nesting needed — every clause narrows, none widen).
     """
     must: list[models.Condition] = [
         models.FieldCondition(key="tenant_id", match=models.MatchValue(value=str(org_id)))
@@ -87,6 +132,35 @@ def _tenant_filter(
                 )
             )
         must.append(models.Filter(should=acl_should))
+    if current_only:
+        must.append(
+            models.Filter(
+                should=[
+                    models.FieldCondition(
+                        key="is_current", match=models.MatchValue(value=True)
+                    ),
+                    models.IsEmptyCondition(is_empty=models.PayloadField(key="is_current")),
+                ]
+            )
+        )
+    for clause in metadata_clauses or ():
+        if clause.kind == "eq":
+            must.append(
+                models.FieldCondition(
+                    key=clause.key, match=models.MatchValue(value=clause.value or "")
+                )
+            )
+        elif clause.kind == "date_range":
+            must.append(
+                models.FieldCondition(
+                    key=clause.key,
+                    range=models.DatetimeRange(
+                        gte=_parse_iso(clause.gte), lte=_parse_iso(clause.lte)
+                    ),
+                )
+            )
+        else:  # pragma: no cover - MetadataClause is built by one function
+            raise ValueError(f"unknown metadata clause kind: {clause.kind}")
     return models.Filter(must=must)
 
 
@@ -118,11 +192,18 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
             await client.create_payload_index(
                 COLLECTION, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
             )
+        await client.create_payload_index(
+            COLLECTION, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
+        )
     else:
-        # Heal collections created before Phase 2: acl_groups gains its keyword
-        # index on first touch (create_payload_index is idempotent in Qdrant).
+        # Heal collections created before Phase 2/H: acl_groups and is_current
+        # gain their indexes on first touch (create_payload_index is idempotent
+        # in Qdrant).
         await client.create_payload_index(
             COLLECTION, field_name="acl_groups", field_schema=models.PayloadSchemaType.KEYWORD
+        )
+        await client.create_payload_index(
+            COLLECTION, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
         )
     return COLLECTION
 
@@ -138,6 +219,8 @@ def _chunk_from_point(point: models.ScoredPoint) -> RetrievedChunk:
         chunk_index=int(payload["chunk_index"]),
         text=str(payload["text"]),
         score=float(point.score),
+        section=payload.get("section"),
+        version=int(payload.get("version", 1)),
     )
 
 
@@ -147,6 +230,7 @@ async def retrieve(
     workspace_id: UUID,
     query: str,
     top_k: int | None = None,
+    metadata_clauses: Sequence[MetadataClause] | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval — the one code path (spec §3.3), Plan E additions:
 
@@ -161,13 +245,19 @@ async def retrieve(
        space — revisit min_score when flipping rerank_enabled.
     5. Reranker down → structlog warning and EXACTLY the pre-rerank behavior:
        fusion order, no_answer via best dense cosine (NFR graceful degradation).
+    6. Plan H: current_only=True — only the current version of each document
+       (or legacy pre-H points) is ever retrievable; metadata_clauses narrow
+       further per Task 10's route wiring.
     """
     ws = await get_workspace_checked(session, ctx, workspace_id)
     k = top_k if top_k is not None else ws.top_k
     await ensure_collection(ws.embedding_model)
     dense_vec = (await get_dense_embedder().embed([query]))[0]
     sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
-    flt = _tenant_filter(org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx))
+    flt = _tenant_filter(
+        org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx),
+        current_only=True, metadata_clauses=metadata_clauses,
+    )
     client = get_qdrant()
     fetch_k = _RERANK_PREFETCH if ws.rerank_enabled else k
     prefetch_limit = max(fetch_k, k * 4)
@@ -233,7 +323,7 @@ async def list_document_chunks(
         return []
     flt = _tenant_filter(
         org_id=ctx.org_id, workspace_id=workspace_id, document_id=document_id,
-        acl_group_ids=_ctx_acl(ctx),
+        acl_group_ids=_ctx_acl(ctx), current_only=False, metadata_clauses=None,
     )
     chunks: list[RetrievedChunk] = []
     offset: models.ExtendedPointId | None = None
@@ -251,6 +341,8 @@ async def list_document_chunks(
                     chunk_index=int(payload["chunk_index"]),
                     text=str(payload["text"]),
                     score=1.0,
+                    section=payload.get("section"),
+                    version=int(payload.get("version", 1)),
                 )
             )
         if offset is None:
@@ -301,7 +393,7 @@ async def get_chunks_by_refs(
     for doc_id, wanted in wanted_indices.items():
         flt = _tenant_filter(
             org_id=ctx.org_id, workspace_id=workspace_id, document_id=doc_id,
-            acl_group_ids=_ctx_acl(ctx),
+            acl_group_ids=_ctx_acl(ctx), current_only=False, metadata_clauses=None,
         )
         offset: models.ExtendedPointId | None = None
         for _ in range(_SCROLL_PAGE_CAP):
@@ -317,6 +409,8 @@ async def get_chunks_by_refs(
                     chunk_index=int(payload["chunk_index"]),
                     text=str(payload["text"]),
                     score=0.0,
+                    section=payload.get("section"),
+                    version=int(payload.get("version", 1)),
                 )
                 found[(chunk.document_id, chunk.page, chunk.chunk_index)] = chunk
             found_for_doc = {
@@ -353,7 +447,10 @@ async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
         COLLECTION,
         points_selector=models.FilterSelector(
             # maintenance path: must remove ALL of the document's points
-            filter=_tenant_filter(org_id=org_id, document_id=document_id, acl_group_ids=None)
+            filter=_tenant_filter(
+                org_id=org_id, document_id=document_id,
+                acl_group_ids=None, current_only=False, metadata_clauses=None,
+            )
         ),
         wait=True,
     )
@@ -381,7 +478,70 @@ async def update_document_acl(
         payload={"acl_groups": sorted(str(g) for g in (acl_group_ids or []))},
         points=models.FilterSelector(
             # maintenance path: must restamp ALL of the document's points
-            filter=_tenant_filter(org_id=org_id, document_id=document_id, acl_group_ids=None)
+            filter=_tenant_filter(
+                org_id=org_id, document_id=document_id,
+                acl_group_ids=None, current_only=False, metadata_clauses=None,
+            )
         ),
         wait=True,
+    )
+
+
+async def update_document_current(org_id: UUID, document_id: UUID, *, is_current: bool) -> None:
+    """Promotion/demotion visibility flip — set_payload under the tenant filter
+    (mirrors update_document_acl). No-op when the collection doesn't exist."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return
+    await client.set_payload(
+        COLLECTION,
+        payload={"is_current": is_current},
+        points=models.FilterSelector(
+            filter=_tenant_filter(
+                org_id=org_id, document_id=document_id,
+                acl_group_ids=None, current_only=False, metadata_clauses=None,
+            )
+        ),
+        wait=True,
+    )
+
+
+async def update_document_metadata(org_id: UUID, document_id: UUID, meta: dict[str, str]) -> None:
+    """Metadata-value payload mirror for already-indexed points (DOC-6):
+    rewrites the nested `meta` payload key in place via set_payload — no
+    re-embed. Lives here so payload/filter knowledge never leaves this module
+    (iron rule 1); mirrors update_document_acl/update_document_current's
+    shape. A missing collection means nothing indexed yet; the ingestion
+    pipeline stamps `meta` at upsert (pipeline.upsert_points)."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return
+    await client.set_payload(
+        COLLECTION,
+        payload={"meta": meta},
+        points=models.FilterSelector(
+            # maintenance path: must restamp ALL of the document's points
+            filter=_tenant_filter(
+                org_id=org_id, document_id=document_id,
+                acl_group_ids=None, current_only=False, metadata_clauses=None,
+            )
+        ),
+        wait=True,
+    )
+
+
+async def ensure_metadata_index(field_name: str, field_type: str) -> None:
+    """Payload index for a workspace metadata field (DOC-6). Index creation is
+    payload-schema work, not filtering — it lives here so no other module
+    touches Qdrant, but it constructs no filters (iron rule 1 untouched)."""
+    client = get_qdrant()
+    if not await client.collection_exists(COLLECTION):
+        return
+    schema = (
+        models.PayloadSchemaType.DATETIME
+        if field_type == "date"
+        else models.PayloadSchemaType.KEYWORD
+    )
+    await client.create_payload_index(
+        COLLECTION, field_name=f"meta.{field_name}", field_schema=schema
     )

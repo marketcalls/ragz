@@ -208,6 +208,23 @@ export interface paths {
         patch: operations["patch_user_api_v1_users__user_id__patch"];
         trace?: never;
     };
+    "/api/v1/users/{user_id}/custom-role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Assign Custom Role */
+        put: operations["assign_custom_role_api_v1_users__user_id__custom_role_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces": {
         parameters: {
             query?: never;
@@ -313,6 +330,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}/approved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Document Approved */
+        put: operations["set_document_approved_api_v1_documents__document_id__approved_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/metadata-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Metadata Fields */
+        get: operations["list_metadata_fields_api_v1_workspaces__workspace_id__metadata_fields_get"];
+        put?: never;
+        /** Create Metadata Field */
+        post: operations["create_metadata_field_api_v1_workspaces__workspace_id__metadata_fields_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metadata-fields/{field_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Metadata Field */
+        delete: operations["delete_metadata_field_api_v1_metadata_fields__field_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Document Metadata */
+        put: operations["set_document_metadata_api_v1_documents__document_id__metadata_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/groups": {
         parameters: {
             query?: never;
@@ -394,7 +480,8 @@ export interface paths {
         /** Put Secret */
         put: operations["put_secret_api_v1_admin_secrets__name__put"];
         post?: never;
-        delete?: never;
+        /** Delete Secret */
+        delete: operations["delete_secret_api_v1_admin_secrets__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -484,6 +571,42 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Role Templates */
+        get: operations["list_role_templates_api_v1_admin_roles_get"];
+        put?: never;
+        /** Create Role Template */
+        post: operations["create_role_template_api_v1_admin_roles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/roles/{role_template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Role Template */
+        delete: operations["delete_role_template_api_v1_admin_roles__role_template_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Role Template */
+        patch: operations["patch_role_template_api_v1_admin_roles__role_template_id__patch"];
         trace?: never;
     };
     "/api/v1/admin/models": {
@@ -828,6 +951,11 @@ export interface components {
             /** Acl Group Ids */
             acl_group_ids: string[] | null;
         };
+        /** ApprovedPatch */
+        ApprovedPatch: {
+            /** Approved */
+            approved: boolean;
+        };
         /** AuditEventOut */
         AuditEventOut: {
             /**
@@ -957,6 +1085,10 @@ export interface components {
             text: string;
             /** Score */
             score: number;
+            /** Section */
+            section: string | null;
+            /** Version */
+            version: number;
         };
         /** CitationOut */
         CitationOut: {
@@ -973,6 +1105,10 @@ export interface components {
             page: number;
             /** Score */
             score: number;
+            /** Section */
+            section: string | null;
+            /** Version */
+            version: number;
         };
         /** ClientErrorIn */
         ClientErrorIn: {
@@ -997,6 +1133,11 @@ export interface components {
             org_id: string;
             /** User Id */
             user_id: string;
+        };
+        /** CustomRoleAssign */
+        CustomRoleAssign: {
+            /** Role Template Id */
+            role_template_id: string | null;
         };
         /** DayCount */
         DayCount: {
@@ -1046,6 +1187,23 @@ export interface components {
             pinned: boolean;
             /** Acl Group Ids */
             acl_group_ids?: string[] | null;
+            /** Version */
+            version: number;
+            /**
+             * Lineage Id
+             * Format: uuid
+             */
+            lineage_id: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Approved */
+            approved: boolean;
+            /** Supersedes Document Id */
+            supersedes_document_id: string | null;
+            /** Meta */
+            meta?: {
+                [key: string]: string;
+            } | null;
         };
         /** DocumentPatch */
         DocumentPatch: {
@@ -1185,6 +1343,48 @@ export interface components {
             parent_message_id?: string | null;
             /** Model Id */
             model_id?: string | null;
+        };
+        /**
+         * MetadataFieldCreate
+         * @description POST /workspaces/{id}/metadata-fields body (DOC-6).
+         */
+        MetadataFieldCreate: {
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /** Field Type */
+            field_type: string;
+            /** Options */
+            options?: string[] | null;
+        };
+        /** MetadataFieldOut */
+        MetadataFieldOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /** Field Type */
+            field_type: string;
+            /** Options */
+            options: string[] | null;
+            /** Position */
+            position: number;
+        };
+        /**
+         * MetadataValuesIn
+         * @description PUT /documents/{id}/metadata body — full replacement of doc.meta.
+         */
+        MetadataValuesIn: {
+            /** Values */
+            values: {
+                [key: string]: string;
+            };
         };
         /** ModelCreate */
         ModelCreate: {
@@ -1340,12 +1540,51 @@ export interface components {
             /** Model Id */
             model_id?: string | null;
         };
+        /** RoleTemplateCreate */
+        RoleTemplateCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Permissions */
+            permissions: string[];
+        };
+        /** RoleTemplateOut */
+        RoleTemplateOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Permissions */
+            permissions: string[];
+        };
+        /** RoleTemplatePatch */
+        RoleTemplatePatch: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Permissions */
+            permissions?: string[] | null;
+        };
         /** SearchRequest */
         SearchRequest: {
             /** Query */
             query: string;
             /** Top K */
             top_k?: number | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: string;
+            } | null;
         };
         /** SearchResponse */
         SearchResponse: {
@@ -1452,6 +1691,8 @@ export interface components {
             role: "admin" | "user" | "superadmin";
             /** Active */
             active: boolean;
+            /** Custom Role Id */
+            custom_role_id?: string | null;
         };
         /** UserPatch */
         UserPatch: {
@@ -1873,6 +2114,39 @@ export interface operations {
             };
         };
     };
+    assign_custom_role_api_v1_users__user_id__custom_role_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomRoleAssign"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list__api_v1_workspaces_get: {
         parameters: {
             query?: never;
@@ -2163,6 +2437,171 @@ export interface operations {
             };
         };
     };
+    set_document_approved_api_v1_documents__document_id__approved_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovedPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_metadata_fields_api_v1_workspaces__workspace_id__metadata_fields_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataFieldOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_metadata_field_api_v1_workspaces__workspace_id__metadata_fields_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataFieldCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataFieldOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_metadata_field_api_v1_metadata_fields__field_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                field_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_document_metadata_api_v1_documents__document_id__metadata_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetadataValuesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_groups_api_v1_groups_get: {
         parameters: {
             query?: never;
@@ -2375,6 +2814,35 @@ export interface operations {
             };
         };
     };
+    delete_secret_api_v1_admin_secrets__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_secrets_api_v1_admin_secrets_get: {
         parameters: {
             query?: never;
@@ -2527,6 +2995,123 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_role_templates_api_v1_admin_roles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleTemplateOut"][];
+                };
+            };
+        };
+    };
+    create_role_template_api_v1_admin_roles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleTemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleTemplateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_role_template_api_v1_admin_roles__role_template_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_role_template_api_v1_admin_roles__role_template_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleTemplatePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleTemplateOut"];
                 };
             };
             /** @description Validation Error */

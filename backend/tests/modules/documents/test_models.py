@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,9 +25,11 @@ async def test_document_and_job_roundtrip(session: AsyncSession) -> None:
     org, ws, user = await _seed(session)
     doc = Document(org_id=org.id, workspace_id=ws.id, filename="a.pdf",
                    mime="application/pdf", size_bytes=10, content_hash="h1",
-                   storage_key=f"{org.id}/{ws.id}/x/a.pdf", created_by=user.id)
+                   storage_key=f"{org.id}/{ws.id}/x/a.pdf", created_by=user.id,
+                   lineage_id=uuid4())
     session.add(doc)
     await session.flush()
+    doc.lineage_id = doc.id  # v1 row's own id, mirroring service.create_from_upload
     session.add(IngestJob(document_id=doc.id, stage="parse"))
     await session.commit()
 
@@ -39,7 +43,7 @@ async def test_content_hash_unique_per_workspace(session: AsyncSession) -> None:
     org, ws, user = await _seed(session)
     common = dict(org_id=org.id, workspace_id=ws.id, filename="a.pdf",
                   mime="application/pdf", size_bytes=10, content_hash="dup",
-                  storage_key="k", created_by=user.id)
+                  storage_key="k", created_by=user.id, lineage_id=uuid4())
     session.add(Document(**common))
     await session.commit()
     session.add(Document(**common))

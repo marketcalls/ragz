@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,7 +57,7 @@ async def test_list_pinned_only_returns_indexed(
     processing = Document(org_id=seeded_user.org_id, workspace_id=ws.id,
                           filename="wip.pdf", mime="application/pdf", size_bytes=1,
                           content_hash="h2", status="processing", storage_key="k2",
-                          created_by=seeded_user.id, pinned=True)
+                          created_by=seeded_user.id, pinned=True, lineage_id=uuid4())
     session.add(processing)
     await session.commit()
     ctx = TenantContext(user_id=seeded_user.id, org_id=seeded_user.org_id,

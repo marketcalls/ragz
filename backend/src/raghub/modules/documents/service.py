@@ -1,5 +1,5 @@
 import hashlib
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,13 +35,26 @@ async def create_from_upload(
     ).scalar_one_or_none()
     if dup is not None:
         raise ConflictError(f"identical content already uploaded as document {dup.id}")
+    predecessor = (
+        await session.execute(
+            select(Document)
+            .where(Document.workspace_id == ws.id, Document.filename == filename)
+            .order_by(Document.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     doc = Document(
         org_id=ctx.org_id, workspace_id=ws.id, filename=filename, mime=mime,
         size_bytes=len(data), content_hash=content_hash, storage_key="",
         created_by=ctx.user_id,
+        version=(predecessor.version + 1) if predecessor else 1,
+        lineage_id=predecessor.lineage_id if predecessor else uuid4(),  # placeholder, fixed below
+        supersedes_document_id=predecessor.id if predecessor else None,
     )
     session.add(doc)
     await session.flush()  # assigns doc.id for the storage key
+    if predecessor is None:
+        doc.lineage_id = doc.id
     doc.storage_key = f"{ctx.org_id}/{ws.id}/{doc.id}/{filename}"
     storage = build_storage(get_settings())
     await storage.ensure_bucket()
@@ -150,4 +163,85 @@ async def set_document_acl(
     # PG; on Qdrant failure the route 502s and the admin retries (set_payload
     # is idempotent).
     await retrieval_service.update_document_acl(ctx.org_id, doc.id, doc.acl_group_ids)
+    return doc
+
+
+async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID) -> None:
+    """Converge one lineage on its effective current version (DOC-5).
+
+    effective = highest-version APPROVED indexed row if any indexed row is
+    approved, else highest-version indexed row. Exactly one row ends with
+    is_current=True. Qdrant holds points only for the effective version:
+    promotion flips the winner visible FIRST, then deletes demoted points
+    (momentary double-serve beats momentary blackout). A winner whose points
+    were deleted earlier (approval flipped back to an old version) is
+    re-indexed from its stored chunks.json; promotion re-runs on completion.
+
+    Locking: the row select uses FOR UPDATE so concurrent promotions of the
+    same lineage serialize -- a second caller blocks until the first commits
+    its is_current flip, then re-reads the now-committed state here and
+    re-converges from there. Without this, two versions promoting at once
+    could each compute a stale "effective" row and both end up is_current
+    (pattern precedent: chat/service.py's add_message, auth/service.py's
+    rotate_refresh).
+    """
+    rows = list(
+        (
+            await session.execute(
+                select(Document)
+                .where(Document.lineage_id == lineage_id, Document.status == "indexed")
+                .with_for_update()
+            )
+        ).scalars()
+    )
+    if not rows:
+        await session.commit()  # release the (empty) lock scope
+        return
+    approved_rows = [r for r in rows if r.approved]
+    effective = max(approved_rows or rows, key=lambda d: d.version)
+
+    if not effective.vectors_present:
+        # Points were deleted when this version was demoted. Rebuild first;
+        # the reindex task ends by calling promote_lineage again. Commit BEFORE
+        # enqueueing: it releases the FOR UPDATE locks (the reindex task opens
+        # its own session and re-runs promotion -- holding the locks here would
+        # deadlock an eager worker) and makes the enqueue-after-state durable.
+        # local import: avoids the real ingest<->service circular import;
+        # explicitly allow-listed in pyproject.toml's import-linter
+        # ignore_imports.
+        # TODO(plan-h-followup): invert to remove ignore_imports exception --
+        # have promote_lineage return the needs-reindex document id and let
+        # the entrypoints (ingest tail / route) enqueue, so modules/ never
+        # imports worker/.
+        await session.commit()
+        from raghub.worker.tasks import enqueue_reindex
+
+        enqueue_reindex(effective.id)
+        return
+
+    for row in rows:
+        row.is_current = row.id == effective.id
+    await session.commit()
+
+    await retrieval_service.update_document_current(org_id, effective.id, is_current=True)
+    for row in rows:
+        if row.id != effective.id and row.vectors_present:
+            await retrieval_service.delete_document_points(org_id, row.id)
+            row.vectors_present = False
+    await session.commit()
+
+
+async def set_approved(
+    session: AsyncSession, ctx: TenantContext, document_id: UUID, approved: bool
+) -> Document:
+    doc = await get_document_checked(session, ctx, document_id)
+    doc.approved = approved
+    await record_audit(
+        session, org_id=ctx.org_id, actor_id=ctx.user_id,
+        action="document.approved" if approved else "document.unapproved",
+        target_type="document", target_id=str(doc.id),
+    )
+    await session.commit()
+    await promote_lineage(session, ctx.org_id, doc.lineage_id)
+    await session.refresh(doc)
     return doc

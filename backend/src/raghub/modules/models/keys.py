@@ -5,6 +5,7 @@ outbound gateway authentication, decrypt-in-memory, use-immediately, never
 returned to clients or logs. Named in the allowlist test.
 """
 
+from collections.abc import Iterable
 from uuid import UUID
 
 import httpx
@@ -16,6 +17,18 @@ from raghub.core.errors import NotFoundError
 from raghub.modules.secrets import service as secrets_service
 
 _VKEY_PREFIX = "vkey:"
+
+
+async def filter_users_with_vkey(
+    session: AsyncSession, user_ids: Iterable[UUID]
+) -> set[UUID]:
+    """Which of `user_ids` already hold a minted gateway vkey. Existence-only
+    (via secrets.existing_secret_names, no decryption) -- lets callers avoid
+    calling update_user_budget for users who were never minted a key."""
+    ids = list(user_ids)
+    names = [f"{_VKEY_PREFIX}{uid}" for uid in ids]
+    existing = await secrets_service.existing_secret_names(session, names)
+    return {uid for uid in ids if f"{_VKEY_PREFIX}{uid}" in existing}
 
 
 def _max_budget(monthly_tokens: int | None, settings: Settings) -> float | None:

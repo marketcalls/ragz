@@ -61,6 +61,10 @@ class Settings(BaseSettings):
         "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
     )
 
+    # Plan H: OCR (DOC-3)
+    ocr_enabled: bool = True  # kill-switch; detection itself is automatic
+    ocr_min_chars_per_page: int = 200
+
 
 @lru_cache
 def get_settings() -> Settings:

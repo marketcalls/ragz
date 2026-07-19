@@ -27,6 +27,13 @@ export type ClientErrorOut = components['schemas']['ClientErrorOut'];
 // Cost fields are null when unknown to LiteLLM — omit pricing, don't show $0.
 export type CatalogEntryOut = components['schemas']['CatalogEntryOut'];
 export type CatalogOut = components['schemas']['CatalogOut'];
+// Per-workspace metadata schema (DOC-6, Task 9/11): field_type is
+// 'text' | 'date' | 'select'; options is populated only for 'select'.
+export type MetadataFieldOut = components['schemas']['MetadataFieldOut'];
+// GET/POST /api/v1/admin/roles (Task 12/14): superadmin-authored custom role
+// templates. `permissions` is a flat list of dotted flags (see
+// PERMISSION_LABELS in features/admin/roles/role-form-dialog.tsx).
+export type RoleTemplateOut = components['schemas']['RoleTemplateOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 
@@ -42,6 +49,8 @@ export interface SourceRef {
   chunk_index: number;
   score: number;
   snippet: string;
+  section: string | null;
+  version: number;
 }
 
 export interface CitationRef {
@@ -50,6 +59,8 @@ export interface CitationRef {
   chunk_ref: string;
   page: number;
   score: number;
+  section: string | null;
+  version: number;
 }
 
 export interface DoneInfo {

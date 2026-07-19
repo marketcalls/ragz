@@ -3,7 +3,7 @@ import { useRef, useState, type DragEvent } from 'react';
 
 import { cn } from '@/lib/cn';
 
-const ACCEPT = '.pdf,.docx,.xlsx,.csv,.txt,.md';
+const ACCEPT = '.pdf,.docx,.xlsx,.pptx,.csv,.txt,.md';
 
 export function Dropzone({
   onFiles,
@@ -46,7 +46,7 @@ export function Dropzone({
         <span className="text-[13px] font-medium text-ink">
           Drop files here or click to upload
         </span>
-        <span className="text-[12px] text-muted">PDF, DOCX, XLSX, CSV, TXT, MD</span>
+        <span className="text-[12px] text-muted">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD</span>
       </button>
       <input
         ref={inputRef}

@@ -185,6 +185,33 @@ async def set_org_quota(
     return row
 
 
+async def org_member_effective_allocations(
+    session: AsyncSession, org_id: UUID
+) -> dict[UUID, int | None]:
+    """Every org member's effective monthly allocation right now: their
+    UserQuota override if one exists, else the org's current default. Used by
+    the org-quota route to re-mirror gateway budgets (a stale mirror otherwise
+    hard-blocks a user whose allocation was just raised) -- callers filter this
+    down to users who actually hold a vkey before touching the gateway."""
+    org_quota = (
+        await session.execute(select(OrgQuota).where(OrgQuota.org_id == org_id))
+    ).scalar_one_or_none()
+    default_tokens = org_quota.default_user_monthly_tokens if org_quota is not None else None
+    member_ids = (
+        await session.execute(select(User.id).where(User.org_id == org_id))
+    ).scalars().all()
+    if not member_ids:
+        return {}
+    override_rows = (
+        await session.execute(
+            select(UserQuota.user_id, UserQuota.monthly_tokens)
+            .where(UserQuota.user_id.in_(member_ids))
+        )
+    ).all()
+    overrides: dict[UUID, int] = {uid: tokens for uid, tokens in override_rows}
+    return {uid: overrides.get(uid, default_tokens) for uid in member_ids}
+
+
 async def set_user_quota(
     session: AsyncSession, ctx: TenantContext, user_id: UUID, monthly_tokens: int | None
 ) -> None:

@@ -39,6 +39,10 @@ async def test_history_crud_and_tree_shape(
         assert child["parent_message_id"] == root["id"]
         assert child["children"] == []
         assert [c["marker"] for c in child["citations"]] == [1]
+        # CHAT-4: section/version ride the persisted CitationOut too (no
+        # section on FakeRetriever's default chunks; document defaults to v1).
+        assert child["citations"][0]["section"] is None
+        assert child["citations"][0]["version"] == 1
 
     r = await chat_client.patch(f"/api/v1/chats/{chat_id}",
                                 json={"title": "Renamed"}, headers=h)

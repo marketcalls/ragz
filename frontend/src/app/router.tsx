@@ -5,6 +5,7 @@ import { AuditPage } from '@/features/admin/audit/audit-page';
 import { DashboardPage } from '@/features/admin/dashboard/dashboard-page';
 import { HealthPage } from '@/features/admin/health/health-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
+import { RolesPage } from '@/features/admin/roles/roles-page';
 import { UsersPage } from '@/features/admin/users/users-page';
 import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
 import { LoginPage } from '@/features/auth/login-page';
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
             element: <RequireRole role="superadmin" />,
             children: [
               { path: '/admin/models', element: <ModelsPage /> },
+              { path: '/admin/roles', element: <RolesPage /> },
               { path: '/admin/audit', element: <AuditPage /> },
               { path: '/admin/health', element: <HealthPage /> },
             ],

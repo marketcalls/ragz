@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator, Iterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -274,7 +274,7 @@ async def chat_env(
     doc = Document(org_id=seeded_user.org_id, workspace_id=ws.id,
                    filename="report.pdf", mime="application/pdf", size_bytes=10,
                    content_hash="h", status="indexed", storage_key="k",
-                   created_by=seeded_user.id)
+                   created_by=seeded_user.id, lineage_id=uuid4())
     session.add(doc)
     await session.commit()
     return {"workspace": ws, "document": doc}

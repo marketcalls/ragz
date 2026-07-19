@@ -394,21 +394,27 @@ async def _previous_citation_refs(
 async def _source_refs(
     session: AsyncSession, ctx: TenantContext, chunks: Sequence[RetrievedChunk]
 ) -> list[SourceRef]:
-    filenames: dict[UUID, str] = {}
+    # (filename, version) from the SAME get_document_checked fetch: version is
+    # the document ROW's own version (each version lineage is its own row,
+    # DOC-5), the canonical answer - not a chunk-local guess.
+    docs: dict[UUID, tuple[str, int]] = {}
     refs: list[SourceRef] = []
     for marker, chunk in enumerate(chunks, start=1):
-        if chunk.document_id not in filenames:
+        if chunk.document_id not in docs:
             doc = await documents_service.get_document_checked(session, ctx, chunk.document_id)
-            filenames[chunk.document_id] = doc.filename
+            docs[chunk.document_id] = (doc.filename, doc.version)
+        filename, doc_version = docs[chunk.document_id]
         refs.append(
             SourceRef(
                 marker=marker,
                 document_id=str(chunk.document_id),
-                filename=filenames[chunk.document_id],
+                filename=filename,
                 page=chunk.page,
                 chunk_index=chunk.chunk_index,
                 score=chunk.score,
                 snippet=chunk.text[:_SNIPPET_CHARS],
+                section=chunk.section,
+                version=doc_version,
             )
         )
     return refs
@@ -428,7 +434,7 @@ async def _prepare_sources(
     refs = await _source_refs(session, ctx, chunks)
     prompt_sources = [
         PromptSource(marker=r.marker, filename=r.filename, page=r.page,
-                     text=chunks[i].text)
+                     text=chunks[i].text, section=r.section)
         for i, r in enumerate(refs)
     ]
     kept = fit_sources(prompt_sources, max_tokens, model_hint)
@@ -459,6 +465,7 @@ async def _persist_assistant(
             Citation(
                 message_id=msg.id, document_id=UUID(c.document_id),
                 chunk_ref=c.chunk_ref, page=c.page, score=c.score, marker=c.marker,
+                section=c.section, version=c.version,
             )
         )
     await session.commit()
@@ -693,6 +700,8 @@ async def stream_reply(
                           f"{by_marker[n].chunk_index}",
                 page=by_marker[n].page,
                 score=by_marker[n].score,
+                section=by_marker[n].section,
+                version=by_marker[n].version,
             )
             for n in markers
         ]

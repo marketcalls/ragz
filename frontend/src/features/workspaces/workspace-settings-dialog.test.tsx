@@ -20,13 +20,21 @@ const ws: WorkspaceOut = {
 function stubFetch(responseBody: WorkspaceOut) {
   vi.stubGlobal(
     'fetch',
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify(responseBody), {
+    vi.fn(async (req: Request) => {
+      // MetadataFieldsSection (H-C8 mount point) fetches its own field list
+      // on mount — stub it to an empty schema so it doesn't interfere with
+      // these settings-form assertions.
+      if (req.url.includes('/metadata-fields')) {
+        return new Response(JSON.stringify([]), {
           status: 200,
           headers: { 'content-type': 'application/json' },
-        }),
-    ),
+        });
+      }
+      return new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }),
   );
 }
 
@@ -37,6 +45,15 @@ function renderDialog(workspace: WorkspaceOut = ws, responseBody: WorkspaceOut =
       <WorkspaceSettingsDialog workspace={workspace} open onOpenChange={vi.fn()} />
     </QueryClientProvider>,
   );
+}
+
+// MetadataFieldsSection now shares this dialog and fires its own GET on
+// mount, so "the PATCH request" is no longer necessarily fetch call #0 —
+// find it by method instead.
+function findPatch(): Request {
+  const call = vi.mocked(fetch).mock.calls.find(([req]) => (req as Request).method === 'PATCH');
+  if (!call) throw new Error('no PATCH request was made');
+  return call[0] as Request;
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -50,10 +67,13 @@ test('shows current values and PATCHes only the edited settings', async () => {
   await user.type(topK, '12');
   await user.click(screen.getByLabelText('Rerank with cross-encoder'));
   await user.click(screen.getByRole('button', { name: 'Save settings' }));
-  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
   // openapi-fetch invokes fetch(Request) with a single argument.
-  const req = vi.mocked(fetch).mock.calls[0]![0] as Request;
-  expect(req.method).toBe('PATCH');
+  const req = findPatch();
   const body = (await req.clone().json()) as Record<string, unknown>;
   // Only the two fields the user actually touched are sent — untouched fields
   // (min_score, system_prompt_override) must be absent, not just unchanged, so
@@ -68,8 +88,12 @@ test('leaves an untouched field out of the PATCH body entirely', async () => {
   await user.clear(topK);
   await user.type(topK, '12');
   await user.click(screen.getByRole('button', { name: 'Save settings' }));
-  await waitFor(() => expect(fetch).toHaveBeenCalled());
-  const req = vi.mocked(fetch).mock.calls[0]![0] as Request;
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
   const body = (await req.clone().json()) as Record<string, unknown>;
   expect(body).toStrictEqual({ top_k: 12 });
   expect('min_score' in body).toBe(false);
@@ -87,9 +111,12 @@ test('submits successfully when min_score is a non-step-aligned value and only t
   await user.click(screen.getByRole('button', { name: 'Save settings' }));
   // With step="any" the 0.33-valued min_score input never blocks native form
   // validation, so the PATCH fires.
-  await waitFor(() => expect(fetch).toHaveBeenCalled());
-  const req = vi.mocked(fetch).mock.calls[0]![0] as Request;
-  expect(req.method).toBe('PATCH');
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
   const body = (await req.clone().json()) as Record<string, unknown>;
   expect(body).toStrictEqual({ top_k: 9 });
 });
@@ -97,8 +124,13 @@ test('submits successfully when min_score is a non-step-aligned value and only t
 test('closes without PATCHing when nothing changed', async () => {
   const user = userEvent.setup();
   renderDialog();
+  // MetadataFieldsSection's own GET still fires on mount — only the
+  // workspace-settings PATCH must stay suppressed.
+  await screen.findByText('No metadata fields yet.');
   await user.click(screen.getByRole('button', { name: 'Save settings' }));
-  expect(fetch).not.toHaveBeenCalled();
+  expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+    false,
+  );
 });
 
 test('clearing the system prompt override sends an explicit null only when it changed', async () => {
@@ -108,8 +140,12 @@ test('clearing the system prompt override sends an explicit null only when it ch
   const textarea = screen.getByLabelText('System prompt additions');
   await user.clear(textarea);
   await user.click(screen.getByRole('button', { name: 'Save settings' }));
-  await waitFor(() => expect(fetch).toHaveBeenCalled());
-  const req = vi.mocked(fetch).mock.calls[0]![0] as Request;
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
   const body = (await req.clone().json()) as Record<string, unknown>;
   expect(body).toStrictEqual({ system_prompt_override: null });
 });

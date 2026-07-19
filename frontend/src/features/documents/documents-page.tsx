@@ -1,10 +1,11 @@
-import { SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react';
+import { Fragment, useState } from 'react';
 
+import type { DocumentOut } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { Table, TBody, TH, THead, TR } from '@/components/ui/table';
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
 import { useWorkspace } from '@/features/workspaces/workspace-context';
@@ -15,8 +16,10 @@ import { useClaims } from '@/lib/use-claims';
 
 import { DocumentRow } from './document-row';
 import { Dropzone } from './dropzone';
-import { useDeleteDocument, useDocuments, usePinDocument } from './queries';
+import { matchesMetadataFilter, MetadataFilterBar } from './metadata-filter-bar';
+import { useDeleteDocument, useDocuments, useMetadataFields, usePinDocument } from './queries';
 import { uploadDocuments } from './upload';
+import { groupByLineage } from './versions';
 
 interface UploadItem {
   key: string;
@@ -29,12 +32,22 @@ export function DocumentsPage() {
   const documents = useDocuments(workspaceId);
   const deleteDocument = useDeleteDocument(workspaceId);
   const pinDocument = usePinDocument(workspaceId);
+  const metadataFields = useMetadataFields(workspaceId);
+  const fields = metadataFields.data ?? [];
+  const [metadataFilter, setMetadataFilter] = useState<Record<string, string>>({});
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const claims = useClaims();
   const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
   const { data: workspaces } = useWorkspaces();
   const workspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const groups = documents.data
+    ? groupByLineage(documents.data).filter(({ current }) =>
+        matchesMetadataFilter(current.meta, fields, metadataFilter),
+      )
+    : [];
 
   const onFiles = (files: File[]): void => {
     if (!workspaceId) return;
@@ -87,7 +100,10 @@ export function DocumentsPage() {
             </div>
           ))}
           {documents.isPending && workspaceId ? <Spinner label="Loading documents…" /> : null}
-          {documents.data && documents.data.length > 0 ? (
+          {documents.data && documents.data.length > 0 && fields.length > 0 ? (
+            <MetadataFilterBar fields={fields} value={metadataFilter} onChange={setMetadataFilter} />
+          ) : null}
+          {groups.length > 0 ? (
             <Table>
               <THead>
                 <TR>
@@ -100,29 +116,76 @@ export function DocumentsPage() {
                 </TR>
               </THead>
               <TBody>
-                {documents.data.map((doc) => (
-                  <DocumentRow
-                    key={doc.id}
-                    doc={doc}
-                    deleting={deleteDocument.isPending}
-                    onDelete={() =>
-                      deleteDocument.mutate(doc.id, { onError: (err) => toast.error(err.message) })
-                    }
-                    pinning={pinDocument.isPending}
-                    onTogglePin={() =>
-                      pinDocument.mutate(
-                        { documentId: doc.id, pinned: !doc.pinned },
-                        { onError: (err) => toast.error(err.message) },
-                      )
-                    }
-                  />
-                ))}
+                {groups.map(({ current, older }) => {
+                  const isExpanded = expanded.has(current.lineage_id);
+                  const renderRow = (doc: DocumentOut, dimmed: boolean) => (
+                    <DocumentRow
+                      key={doc.id}
+                      doc={doc}
+                      workspaceId={workspaceId}
+                      fields={fields}
+                      dimmed={dimmed}
+                      deleting={deleteDocument.isPending}
+                      onDelete={() =>
+                        deleteDocument.mutate(doc.id, {
+                          onError: (err) => toast.error(err.message),
+                        })
+                      }
+                      pinning={pinDocument.isPending}
+                      onTogglePin={() =>
+                        pinDocument.mutate(
+                          { documentId: doc.id, pinned: !doc.pinned },
+                          { onError: (err) => toast.error(err.message) },
+                        )
+                      }
+                    />
+                  );
+                  return (
+                    <Fragment key={current.lineage_id}>
+                      {renderRow(current, false)}
+                      {older.length > 0 ? (
+                        <TR>
+                          <TD colSpan={6} className="py-1.5">
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 text-[12px] text-secondary hover:text-ink"
+                              onClick={() =>
+                                setExpanded((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(current.lineage_id)) {
+                                    next.delete(current.lineage_id);
+                                  } else {
+                                    next.add(current.lineage_id);
+                                  }
+                                  return next;
+                                })
+                              }
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                              )}
+                              {older.length} older version{older.length === 1 ? '' : 's'}
+                            </button>
+                          </TD>
+                        </TR>
+                      ) : null}
+                      {isExpanded ? older.map((doc) => renderRow(doc, true)) : null}
+                    </Fragment>
+                  );
+                })}
               </TBody>
             </Table>
           ) : null}
           {documents.data?.length === 0 && uploads.length === 0 ? (
             <p className="pt-4 text-center text-[13px] text-secondary">
               No documents yet — upload some to make them searchable.
+            </p>
+          ) : null}
+          {documents.data && documents.data.length > 0 && groups.length === 0 ? (
+            <p className="pt-4 text-center text-[13px] text-secondary">
+              No documents match the current filters.
             </p>
           ) : null}
         </div>

@@ -12,6 +12,7 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
 import { GroupsDialog } from '../groups/groups-dialog';
+import { useAssignCustomRole, useRoles } from '../roles/queries';
 
 import { InviteDialog } from './invite-dialog';
 import { usePatchUser, useUsers } from './queries';
@@ -19,7 +20,9 @@ import { UserGroupsCell } from './user-groups-cell';
 
 export function UsersPage() {
   const users = useUsers();
+  const roles = useRoles();
   const patchUser = usePatchUser();
+  const assignCustomRole = useAssignCustomRole();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [confirmUser, setConfirmUser] = useState<UserOut | null>(null);
@@ -48,6 +51,7 @@ export function UsersPage() {
                 <TR>
                   <TH>Email</TH>
                   <TH>Role</TH>
+                  <TH>Custom role</TH>
                   <TH>Status</TH>
                   <TH>Groups</TH>
                   <TH />
@@ -79,6 +83,31 @@ export function UsersPage() {
                           <option value="user">User</option>
                           <option value="admin">Admin</option>
                         </NativeSelect>
+                      )}
+                    </TD>
+                    <TD>
+                      {user.role === 'user' ? (
+                        <NativeSelect
+                          aria-label={`Custom role for ${user.email}`}
+                          className="w-32"
+                          value={user.custom_role_id ?? ''}
+                          disabled={assignCustomRole.isPending}
+                          onChange={(e) =>
+                            assignCustomRole.mutate(
+                              { userId: user.id, roleTemplateId: e.target.value || null },
+                              { onError: (err) => toast.error(err.message) },
+                            )
+                          }
+                        >
+                          <option value="">Default</option>
+                          {(roles.data ?? []).map((role) => (
+                            <option key={role.id} value={role.id}>
+                              {role.name}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      ) : (
+                        <span className="text-secondary">—</span>
                       )}
                     </TD>
                     <TD>
