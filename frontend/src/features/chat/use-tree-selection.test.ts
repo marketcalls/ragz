@@ -16,6 +16,7 @@ const base = {
   stopped: false,
   no_answer: false,
   grounding: 'documents',
+  validation_failed: false,
 };
 const roots = [
   { ...base, id: 'u1', sibling_index: 0, content: 'q' },

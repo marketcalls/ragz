@@ -42,7 +42,7 @@ def test_all_event_names_and_payloads() -> None:
     assert done.event == "done"
     assert done.data == {"message_id": "m-1", "prompt_tokens": 10,
                          "completion_tokens": 2, "no_answer": False,
-                         "grounding": "documents"}
+                         "grounding": "documents", "validation_failed": False}
     assert error_event("boom").data == {"detail": "boom"}
 
 
@@ -65,3 +65,15 @@ def test_source_ref_carries_web_url() -> None:
                     chunk_index=0, score=0.0, snippet="text", section=None, version=0,
                     url="https://x.test")
     assert asdict(src)["url"] == "https://x.test"
+
+
+def test_done_event_defaults_validation_failed_false() -> None:
+    e = done_event(message_id="m1", prompt_tokens=1, completion_tokens=2,
+                   no_answer=False, grounding="documents")
+    assert e.data["validation_failed"] is False
+
+
+def test_done_event_carries_validation_failed_true() -> None:
+    e = done_event(message_id="m1", prompt_tokens=1, completion_tokens=2,
+                   no_answer=False, grounding="documents", validation_failed=True)
+    assert e.data["validation_failed"] is True

@@ -14,10 +14,17 @@ from raghub.core.config import Settings, get_settings
 from raghub.core.db import build_session_factory
 from raghub.core.errors import UpstreamError
 from raghub.modules.auth.models import User
+from raghub.modules.chat.llm import LLMCompletion, LLMUsage
 from raghub.modules.chat.models import Citation, Message
 from raghub.modules.chat.service import NO_ANSWER_TEXT
 from raghub.modules.retrieval.service import RetrievedChunk
-from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_litellm_handler
+from tests.conftest import (
+    FakeChunkReader,
+    FakeCompleter,
+    FakeRetriever,
+    FakeStreamer,
+    _stub_litellm_handler,
+)
 
 
 def parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
@@ -109,7 +116,7 @@ async def test_full_event_sequence_and_persistence(
     done = events[-1][1]
     assert done == {"message_id": done["message_id"], "prompt_tokens": 42,
                     "completion_tokens": 7, "no_answer": False,
-                    "grounding": "documents"}
+                    "grounding": "documents", "validation_failed": False}
 
     # Persistence: user + assistant messages, citation row for [1] only.
     msgs = list((await session.execute(select(Message))).scalars())
@@ -622,3 +629,187 @@ async def test_no_answer_does_not_enqueue_audit(
     done = next(d for n, d in frames if n == "done")
     assert done["no_answer"] is True and done["grounding"] == "documents"
     assert enqueued == []
+
+
+async def test_strict_mode_passing_answer_streams_once_unflagged(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """Design D4/§3: a strict_mode workspace with a designated utility model
+    engages the Gatekeeper. A passing verdict streams the WHOLE synthesized
+    answer as a SINGLE token frame (not incremental deltas -- validating
+    before display requires the full text first) and validation_failed stays
+    False end to end (wire + persisted row)."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text="Revenue was 12M [1].", tool_calls=[],
+            usage=LLMUsage(prompt_tokens=20, completion_tokens=5),
+        ),
+        LLMCompletion(
+            text='{"passed": true, "critique": ""}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=15, completion_tokens=3),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"strict_mode": True}, headers=h,
+        )
+        assert r_ws.status_code == 200
+        h_super = await auth(client, "root@platform.example")
+        r_model = await client.post(
+            "/api/v1/admin/models",
+            json={"litellm_model_name": "utility-model", "display_name": "Utility",
+                  "provider_kind": "ollama", "base_url": "http://ollama:11434"},
+            headers=h_super,
+        )
+        r_patch = await client.patch(
+            f"/api/v1/admin/models/{r_model.json()['id']}",
+            json={"is_utility": True}, headers=h_super,
+        )
+        assert r_patch.status_code == 200
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    events = parse_sse(r.text)
+    token_frames = [d for e, d in events if e == "token"]
+    assert len(token_frames) == 1  # the whole answer arrives as ONE frame
+    assert token_frames[0]["delta"] == "Revenue was 12M [1]."
+    done = next(d for e, d in events if e == "done")
+    assert done["validation_failed"] is False
+    assert [c["model"] for c in completer.calls] == ["llama3", "utility-model"]
+
+    msg = (
+        await session.execute(select(Message).where(Message.id == UUID(done["message_id"])))
+    ).scalar_one()
+    assert msg.validation_failed is False
+
+
+async def test_strict_mode_failing_answer_regenerates_and_flags(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """A failing verdict triggers exactly ONE critique-guided regeneration. The
+    client only ever sees the SECOND synth's text (never the rejected first
+    draft) and validation_failed is True on both the wire and the persisted
+    row -- "not re-verified", not "known wrong" (design §3). completer.calls
+    has exactly 3 entries: synth1, judge, synth2 -- no second judge call."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text="Revenue was 12M [1].", tool_calls=[],
+            usage=LLMUsage(prompt_tokens=20, completion_tokens=5),
+        ),
+        LLMCompletion(
+            text='{"passed": false, "critique": "not grounded enough"}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=15, completion_tokens=3),
+        ),
+        LLMCompletion(
+            text="Revenue was actually 12M, per [1].", tool_calls=[],
+            usage=LLMUsage(prompt_tokens=25, completion_tokens=8),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"strict_mode": True}, headers=h,
+        )
+        assert r_ws.status_code == 200
+        h_super = await auth(client, "root@platform.example")
+        r_model = await client.post(
+            "/api/v1/admin/models",
+            json={"litellm_model_name": "utility-model", "display_name": "Utility",
+                  "provider_kind": "ollama", "base_url": "http://ollama:11434"},
+            headers=h_super,
+        )
+        r_patch = await client.patch(
+            f"/api/v1/admin/models/{r_model.json()['id']}",
+            json={"is_utility": True}, headers=h_super,
+        )
+        assert r_patch.status_code == 200
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    events = parse_sse(r.text)
+    token_frames = [d for e, d in events if e == "token"]
+    assert len(token_frames) == 1
+    assert token_frames[0]["delta"] == "Revenue was actually 12M, per [1]."
+    done = next(d for e, d in events if e == "done")
+    assert done["validation_failed"] is True
+    assert len(completer.calls) == 3
+
+    msg = (
+        await session.execute(select(Message).where(Message.id == UUID(done["message_id"])))
+    ).scalar_one()
+    assert msg.validation_failed is True
+    assert msg.content == "Revenue was actually 12M, per [1]."
+
+
+async def test_strict_mode_without_utility_model_streams_normally(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: User, seeded_superadmin: User, session: AsyncSession,
+) -> None:
+    """strict_mode=True with NO designated utility model is inert: the
+    Gatekeeper never engages (use_gatekeeper requires all three of strict_mode,
+    a completer, and a utility model), so the document-answer branch streams
+    incremental deltas exactly as it did pre-Plan-J, at zero extra completer
+    spend (no wasted synth/judge calls for an inert strict_mode toggle)."""
+    fake_streamer = FakeStreamer()
+    completer = FakeCompleter([])
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=fake_streamer,
+        chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"strict_mode": True}, headers=h,
+        )
+        assert r_ws.status_code == 200
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    events = parse_sse(r.text)
+    token_frames = [d for e, d in events if e == "token"]
+    assert len(token_frames) == len(fake_streamer.deltas) == 2  # incremental, not one frame
+    assert "".join(t["delta"] for t in token_frames) == "Revenue was 12M [1]."
+    done = next(d for e, d in events if e == "done")
+    assert done["validation_failed"] is False
+    assert completer.calls == []  # no extra spend for an inert strict_mode

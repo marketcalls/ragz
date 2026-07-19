@@ -14,6 +14,9 @@ export interface ChatStreamState {
   citations: CitationRef[];
   noAnswer: boolean;
   grounding: 'documents' | 'general';
+  // Phase 3 Plan J (design D4/§3): true only when a strict_mode workspace's
+  // Gatekeeper regenerated once and never re-verified the retry.
+  validationFailed: boolean;
   errorDetail: string | null;
   pendingUserContent: string | null;
   doneMessageId: string | null; // lets the page hide the streamed block once the refetched tree contains it
@@ -27,6 +30,7 @@ const IDLE: ChatStreamState = {
   citations: [],
   noAnswer: false,
   grounding: 'documents',
+  validationFailed: false,
   errorDetail: null,
   pendingUserContent: null,
   doneMessageId: null,
@@ -49,6 +53,7 @@ function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
         status: 'done',
         noAnswer: event.done.no_answer,
         grounding: event.done.grounding,
+        validationFailed: event.done.validation_failed,
         doneMessageId: event.done.message_id,
       };
     case 'error':

@@ -1358,6 +1358,11 @@ export interface components {
             grounding_score?: number | null;
             /** Completeness Score */
             completeness_score?: number | null;
+            /**
+             * Validation Failed
+             * @default false
+             */
+            validation_failed: boolean;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
             /** Children */

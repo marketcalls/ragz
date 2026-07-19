@@ -23,3 +23,15 @@ test('stopped=false (the default) does not render the Stopped chip', () => {
   render(<AssistantMessage content="The muster point is the NORTH CARPARK." sources={[]} />);
   expect(screen.queryByText('Stopped')).not.toBeInTheDocument();
 });
+
+test('validationFailed=true renders the "not re-verified" badge', () => {
+  render(
+    <AssistantMessage content="Revenue was actually 12M, per [1]." sources={[]} validationFailed={true} />,
+  );
+  expect(screen.getByText('Not re-verified after revision')).toBeInTheDocument();
+});
+
+test('validationFailed=false (the default) does not render the badge', () => {
+  render(<AssistantMessage content="Revenue was 12M [1]." sources={[]} />);
+  expect(screen.queryByText('Not re-verified after revision')).not.toBeInTheDocument();
+});

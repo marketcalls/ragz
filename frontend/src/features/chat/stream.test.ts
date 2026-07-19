@@ -75,6 +75,22 @@ test('a done frame with grounding "general" parses through', async () => {
   expect(doneEvent?.done.grounding).toBe('general');
 });
 
+test('a done frame with "validation_failed":true (Plan J Task 7) parses through', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      sseResponse([
+        'event: token\ndata: {"delta":"Revenue was actually 12M, per [1]."}\n\n',
+        'event: done\ndata: {"message_id":"m4","prompt_tokens":1,"completion_tokens":1,"no_answer":false,"grounding":"documents","validation_failed":true}\n\n',
+      ]),
+    ),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', { content: 'hi' }, (e) => events.push(e), new AbortController().signal);
+  const doneEvent = events.find((e): e is Extract<ChatSseEvent, { type: 'done' }> => e.type === 'done');
+  expect(doneEvent?.done.validation_failed).toBe(true);
+});
+
 test('non-OK response emits a terminal error event', async () => {
   vi.stubGlobal(
     'fetch',

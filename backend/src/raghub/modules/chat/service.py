@@ -47,7 +47,11 @@ from raghub.modules.chat.prompting import (
 )
 from raghub.modules.chat.router import classify_query, should_escalate
 from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
-from raghub.modules.chat.validation import build_auditor_messages, parse_auditor_scores
+from raghub.modules.chat.validation import (
+    build_auditor_messages,
+    parse_auditor_scores,
+    synthesize_with_gatekeeper,
+)
 from raghub.modules.chat.web import TAVILY_SECRET_NAME, WebResult, WebSearcher
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service as documents_service
@@ -181,6 +185,7 @@ def build_tree(
             completion_tokens=m.completion_tokens, created_at=m.created_at,
             stopped=m.stopped, no_answer=m.no_answer, grounding=m.grounding,
             grounding_score=m.grounding_score, completeness_score=m.completeness_score,
+            validation_failed=m.validation_failed,
             citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
             children=[node(k) for k in kids],
         )
@@ -254,6 +259,7 @@ async def add_message(
     stopped: bool = False,
     no_answer: bool = False,
     grounding: str = "documents",
+    validation_failed: bool = False,
 ) -> Message:
     if parent is None:
         if role != ROLE_USER:
@@ -286,6 +292,7 @@ async def add_message(
         stopped=stopped,
         no_answer=no_answer,
         grounding=grounding,
+        validation_failed=validation_failed,
     )
     session.add(msg)
     if (
@@ -487,6 +494,7 @@ async def _persist_assistant(
     citations: list[CitationRef],
     no_answer: bool = False,
     grounding: str = "documents",
+    validation_failed: bool = False,
 ) -> Message:
     msg = await add_message(
         session, ctx, chat, role=ROLE_ASSISTANT, content=content, parent=parent,
@@ -495,6 +503,7 @@ async def _persist_assistant(
         completion_tokens=usage.completion_tokens if usage else None,
         no_answer=no_answer,
         grounding=grounding,
+        validation_failed=validation_failed,
     )
     for c in citations:
         session.add(
@@ -972,18 +981,56 @@ async def stream_reply(
             model_hint=model_hint,
         )
 
+        # Phase 3 Plan J Task 7 (design D4/§3): the Gatekeeper engages ONLY for
+        # a strict_mode workspace that also has a completer AND a designated
+        # utility model -- with any of those false, this streams exactly as
+        # it did pre-Plan-J (byte-identical, including token-by-token
+        # deltas). get_utility_model is only queried when a completer exists
+        # at all, so non-agentic call sites (completer=None) never pay for
+        # the lookup.
+        utility_model = (
+            await get_utility_model(session) if completer is not None else None
+        )
+        use_gatekeeper = (
+            workspace.strict_mode and completer is not None and utility_model is not None
+        )
+        validation_failed = False
         usage: LLMUsage | None = None
-        # See the aclosing note in the conversational branch above - same
-        # deterministic-cleanup-on-abort reasoning applies here.
-        async with contextlib.aclosing(
-            streamer.stream(model=model.litellm_model_name, messages=prompt)
-        ) as llm_stream:
-            async for item in llm_stream:
-                if isinstance(item, LLMDelta):
-                    streamed_parts.append(item.text)
-                    yield token_event(item.text)
-                else:
-                    usage = item
+        if use_gatekeeper and completer is not None and utility_model is not None:
+            # Gatekeeper answers are synthesized non-streaming (one synth +
+            # one judge call, possibly one critique-guided retry), so the
+            # client only ever sees the FINAL text -- as a single token
+            # frame, not incremental deltas. Deliberate v1 tradeoff (design
+            # §3): validating before display requires the full text first.
+            gatekept = await synthesize_with_gatekeeper(
+                completer, chat_model_name=model.litellm_model_name,
+                utility_model_name=utility_model.litellm_model_name, prompt=prompt,
+                question=user_message.content, sources=kept_sources,
+                system_prompt_override=workspace.system_prompt_override,
+                rebuild_prompt=lambda override: build_messages(
+                    sources=kept_sources, history=history, user_query=user_message.content,
+                    budget=settings.chat_context_token_budget,
+                    system_prompt_override=override, model_hint=model_hint,
+                ),
+            )
+            streamed_parts.append(gatekept.text)
+            yield token_event(gatekept.text)
+            usage = gatekept.usage
+            validation_failed = gatekept.validation_failed
+            agent_prompt_tokens += gatekept.extra_prompt_tokens
+            agent_completion_tokens += gatekept.extra_completion_tokens
+        else:
+            # See the aclosing note in the conversational branch above - same
+            # deterministic-cleanup-on-abort reasoning applies here.
+            async with contextlib.aclosing(
+                streamer.stream(model=model.litellm_model_name, messages=prompt)
+            ) as llm_stream:
+                async for item in llm_stream:
+                    if isinstance(item, LLMDelta):
+                        streamed_parts.append(item.text)
+                        yield token_event(item.text)
+                    else:
+                        usage = item
 
         if agent_prompt_tokens or agent_completion_tokens:
             usage = LLMUsage(
@@ -1015,7 +1062,7 @@ async def stream_reply(
         ]
         msg = await _persist_assistant(
             session, ctx, chat, parent=user_message, content=answer, model_id=model.id,
-            usage=usage, citations=citation_refs,
+            usage=usage, citations=citation_refs, validation_failed=validation_failed,
         )
         # Same rationale as the conversational branch above: clear before the
         # next await/yield point so a late abort can't duplicate this row.
@@ -1031,7 +1078,7 @@ async def stream_reply(
             message_id=str(msg.id),
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
-            no_answer=False, grounding="documents",
+            no_answer=False, grounding="documents", validation_failed=validation_failed,
         )
     except UpstreamError:
         # User message stays persisted; the client may retry (-> sibling).

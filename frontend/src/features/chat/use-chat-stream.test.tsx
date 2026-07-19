@@ -30,7 +30,7 @@ test('a stream that starts with token (no retrieval_started/sources) still rende
       type: 'done',
       done: {
         message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
-        grounding: 'documents',
+        grounding: 'documents', validation_failed: false,
       },
     },
   ];
@@ -59,7 +59,7 @@ test('the reducer stores grounding="general" from the done frame', async () => {
       type: 'done',
       done: {
         message_id: 'm2', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
-        grounding: 'general',
+        grounding: 'general', validation_failed: false,
       },
     },
   ];
@@ -79,6 +79,57 @@ test('the reducer stores grounding="general" from the done frame', async () => {
   expect(result.current.grounding).toBe('general');
 });
 
+test('the reducer stores validationFailed=true from the done frame and resets on the next send', async () => {
+  const failingFrames: ChatSseEvent[] = [
+    { type: 'token', delta: 'Revenue was actually 12M, per [1].' },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm4', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'documents', validation_failed: true,
+      },
+    },
+  ];
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      for (const frame of failingFrames) onEvent(frame);
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('what was revenue?');
+  });
+
+  expect(result.current.status).toBe('done');
+  expect(result.current.validationFailed).toBe(true);
+
+  // A fresh send resets back to IDLE (validationFailed=false) before the
+  // next stream's events land.
+  const passingFrames: ChatSseEvent[] = [
+    { type: 'token', delta: 'Revenue was 12M [1].' },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm5', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'documents', validation_failed: false,
+      },
+    },
+  ];
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      for (const frame of passingFrames) onEvent(frame);
+    },
+  );
+
+  await act(async () => {
+    result.current.send('what was revenue again?');
+  });
+
+  expect(result.current.validationFailed).toBe(false);
+});
+
 test('agent_step frames accumulate in order and keep status=retrieving', async () => {
   const frames: ChatSseEvent[] = [
     { type: 'retrieval_started' },
@@ -89,7 +140,7 @@ test('agent_step frames accumulate in order and keep status=retrieving', async (
       type: 'done',
       done: {
         message_id: 'm3', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
-        grounding: 'documents',
+        grounding: 'documents', validation_failed: false,
       },
     },
   ];

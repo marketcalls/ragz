@@ -12,6 +12,7 @@ export function AssistantMessage({
   noAnswer = false,
   stopped = false,
   grounding = 'documents',
+  validationFailed = false,
   footer,
 }: {
   content: string;
@@ -19,6 +20,7 @@ export function AssistantMessage({
   noAnswer?: boolean;
   stopped?: boolean;
   grounding?: string;
+  validationFailed?: boolean;
   footer?: ReactNode;
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
@@ -46,6 +48,11 @@ export function AssistantMessage({
       {stopped ? (
         <span className="mt-2 inline-flex items-center rounded-full bg-subtle px-2 py-0.5 text-xs text-secondary">
           Stopped
+        </span>
+      ) : null}
+      {validationFailed ? (
+        <span className="mb-2 ml-1 inline-flex items-center rounded-full bg-warning/20 px-2 py-0.5 text-xs text-warning">
+          Not re-verified after revision
         </span>
       ) : null}
       {footer}

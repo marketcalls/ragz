@@ -76,6 +76,7 @@ class MessageNode(BaseModel):
     grounding: str = "documents"
     grounding_score: float | None = None
     completeness_score: float | None = None
+    validation_failed: bool = False
     citations: list[CitationOut]
     children: list["MessageNode"]
 

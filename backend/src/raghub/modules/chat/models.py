@@ -56,6 +56,9 @@ class Message(UUIDPk, Base):
     # (no utility model designated, or this message isn't grounding="documents").
     grounding_score: Mapped[float | None] = mapped_column(default=None)
     completeness_score: Mapped[float | None] = mapped_column(default=None)
+    # Phase 3 Plan J (design D4/§3): the SECOND Gatekeeper attempt was
+    # streamed (win or lose - see validation.synthesize_with_gatekeeper).
+    validation_failed: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class Citation(UUIDPk, Base):

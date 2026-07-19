@@ -81,6 +81,10 @@ export interface DoneInfo {
   completion_tokens: number;
   no_answer: boolean;
   grounding: 'documents' | 'general';
+  // Phase 3 Plan J (design D4/§3): true only when the Gatekeeper's second
+  // (critique-guided retry) attempt is what streamed — win or lose, it was
+  // never re-verified by a second judge call.
+  validation_failed: boolean;
 }
 
 // Phase 3 (design §2, Task 10): one frame per agent tool execution on an
