@@ -26,7 +26,10 @@ async def test_superadmin_crud_and_key_never_returned(
     model_id = created["id"]
     # Plan D admin-page fields: fingerprint (never the key) + gateway sync outcome.
     assert created["key_fingerprint"].startswith("...-abc sha256:")
-    assert created["sync_status"] == "synced"  # stub transport replay succeeded
+    # Plan G: the LiteLLM replay is now a background task, so the create response
+    # reflects the row's pre-sync default; sync_status='synced' shows up once the
+    # replay (scheduled on the same request) has run - the admin page's next fetch.
+    assert created["sync_status"] == "pending"
 
     r = await client.patch(f"/api/v1/admin/models/{model_id}",
                            json={"enabled": False}, headers=h)
@@ -35,6 +38,7 @@ async def test_superadmin_crud_and_key_never_returned(
     listing = await client.get("/api/v1/admin/models", headers=h)
     assert "sk-live-abc" not in listing.text
     assert [m["id"] for m in listing.json()] == [model_id]
+    assert listing.json()[0]["sync_status"] == "synced"  # background replay succeeded
 
     assert (await client.delete(f"/api/v1/admin/models/{model_id}", headers=h)).status_code == 204
     assert (await client.get("/api/v1/admin/models", headers=h)).json() == []

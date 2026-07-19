@@ -68,11 +68,21 @@ def create_app(
     app = FastAPI(
         title="RagHub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=_lifespan
     )
+    settings = get_settings()
     if session_factory is None:
-        session_factory = build_session_factory(build_engine(get_settings().database_url))
+        session_factory = build_session_factory(
+            build_engine(
+                settings.database_url,
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_max_overflow,
+                pool_timeout=settings.db_pool_timeout_seconds,
+            )
+        )
     app.state.session_factory = session_factory
     if redis_client is None:
-        redis_client = Redis.from_url(get_settings().redis_url)
+        redis_client = Redis.from_url(
+            settings.redis_url, max_connections=settings.redis_max_connections
+        )
     app.state.redis = redis_client
     app.state.litellm_transport = litellm_transport
     app.state.retriever = retriever if retriever is not None else retrieve

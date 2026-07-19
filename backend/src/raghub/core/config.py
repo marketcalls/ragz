@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # tokens of allocation. 0 disables max_budget (local-only installs).
     litellm_usd_per_million_tokens: float = 5.0
 
+    # Plan G Task 3: connection-pool sizing (was hardcoded; now tunable per deployment).
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout_seconds: int = 30
+    redis_max_connections: int = 100
+    httpx_max_connections: int = 100
+    httpx_max_keepalive: int = 20
+
 
 @lru_cache
 def get_settings() -> Settings:
