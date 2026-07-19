@@ -37,6 +37,9 @@ class ModelPatch(BaseModel):
     mock_response: str | None = None
     # Phase 3 Plan I (MODEL-3): superadmin toggle for the JSON-planner fallback.
     tools_unreliable: bool | None = None
+    # Phase 3 Plan J (D5/§4): setting True clears every OTHER model's flag in
+    # the same transaction (service.update_model) — exactly one utility model.
+    is_utility: bool | None = None
 
 
 SyncStatus = Literal["synced", "error", "pending"]
@@ -57,6 +60,9 @@ class ModelOut(BaseModel):
     # Phase 3 Plan I (MODEL-3): agent loop (Task 9) uses this to skip native
     # tool-calling and fall back to the JSON-planner protocol.
     tools_unreliable: bool
+    # Phase 3 Plan J (D5/§4): superadmin-designated utility model. Exactly
+    # one row is True at a time — enforced in service.update_model.
+    is_utility: bool
 
 
 class ModelPublic(BaseModel):

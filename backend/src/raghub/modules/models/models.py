@@ -19,3 +19,11 @@ class Model(UUIDPk, Base):
     # Phase 3 Plan I (MODEL-3): model can't do native tool calling reliably;
     # the agent loop uses the JSON-planner protocol for it instead.
     tools_unreliable: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Phase 3 Plan J (D5/§4): superadmin-designated utility model for
+    # validation/eval-judging/enrichment/memory. Exactly one row may be True
+    # at a time — enforced in service.update_model, not by a DB constraint
+    # (a partial unique index on a boolean is possible but the "clear
+    # others in the same transaction" rule is simpler to reason about and
+    # test at the service layer, matching update_document_current's
+    # promotion-flip precedent rather than adding new SQL).
+    is_utility: Mapped[bool] = mapped_column(default=False, server_default="false")

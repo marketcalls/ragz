@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select, true
+from sqlalchemy import select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import Settings
@@ -70,6 +70,7 @@ async def to_model_out(session: AsyncSession, models: list[Model]) -> list[Model
             sync_status=m.sync_status,  # type: ignore[arg-type]
             mock_response=m.mock_response,
             tools_unreliable=m.tools_unreliable,
+            is_utility=m.is_utility,
         )
         for m in models
     ]
@@ -118,6 +119,7 @@ async def update_model(
     settings: Settings,
     mock_response: str | None = None,
     tools_unreliable: bool | None = None,
+    is_utility: bool | None = None,
 ) -> Model:
     model = await get_model(session, model_id)
     if display_name is not None:
@@ -130,6 +132,17 @@ async def update_model(
         model.mock_response = mock_response
     if tools_unreliable is not None:
         model.tools_unreliable = tools_unreliable
+    if is_utility is not None:
+        if is_utility:
+            # "exactly one" (design D5): clear every OTHER row in the same
+            # transaction before setting this one, so two concurrent PATCHes
+            # can never both land True — last committer wins, cleanly.
+            await session.execute(
+                update(Model).where(Model.id != model_id).values(is_utility=False)
+            )
+            model.is_utility = True
+        else:
+            model.is_utility = False
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.updated",
                        target_type="model", target_id=str(model.id))
     if api_key is not None:

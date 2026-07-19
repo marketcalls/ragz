@@ -172,6 +172,41 @@ async def test_tools_unreliable_flag_roundtrip(
     assert r.json()["tools_unreliable"] is True
 
 
+async def test_patch_is_utility_roundtrip_and_exclusivity(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h_super = await auth(client, "root@platform.example")
+
+    async def _create(name: str) -> dict:  # type: ignore[type-arg]
+        r = await client.post(
+            "/api/v1/admin/models",
+            json={"litellm_model_name": name, "display_name": name,
+                  "provider_kind": "ollama", "base_url": "http://ollama:11434"},
+            headers=h_super,
+        )
+        return r.json()  # type: ignore[no-any-return]
+
+    a = await _create("util-a")
+    b = await _create("util-b")
+    assert a["is_utility"] is False  # default
+
+    r = await client.patch(
+        f"/api/v1/admin/models/{a['id']}", json={"is_utility": True}, headers=h_super
+    )
+    assert r.status_code == 200 and r.json()["is_utility"] is True
+
+    r = await client.patch(
+        f"/api/v1/admin/models/{b['id']}", json={"is_utility": True}, headers=h_super
+    )
+    assert r.json()["is_utility"] is True
+
+    listed = (await client.get("/api/v1/admin/models", headers=h_super)).json()
+    a_row = next(m for m in listed if m["id"] == a["id"])
+    b_row = next(m for m in listed if m["id"] == b["id"])
+    assert a_row["is_utility"] is False  # exactly one, enforced
+    assert b_row["is_utility"] is True
+
+
 async def test_catalog_listing_preserves_zero_cost_entries(
     client: httpx.AsyncClient, seeded_superadmin: User, session: AsyncSession,
 ) -> None:

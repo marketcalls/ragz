@@ -24,6 +24,7 @@ const fixtureModel: ModelOut = {
   sync_status: 'synced',
   mock_response: null,
   tools_unreliable: false,
+  is_utility: false,
 };
 
 // Entries as the API returns them: provider ASC, position DESC (newest first).

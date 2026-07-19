@@ -1464,6 +1464,8 @@ export interface components {
             mock_response: string | null;
             /** Tools Unreliable */
             tools_unreliable: boolean;
+            /** Is Utility */
+            is_utility: boolean;
         };
         /** ModelPatch */
         ModelPatch: {
@@ -1479,6 +1481,8 @@ export interface components {
             mock_response?: string | null;
             /** Tools Unreliable */
             tools_unreliable?: boolean | null;
+            /** Is Utility */
+            is_utility?: boolean | null;
         };
         /**
          * ModelPublic

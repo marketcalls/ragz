@@ -68,6 +68,7 @@ export function ModelsPage() {
                   <TH>Key</TH>
                   <TH>Gateway</TH>
                   <TH>Enabled</TH>
+                  <TH>Utility</TH>
                   <TH />
                 </TR>
               </THead>
@@ -116,6 +117,22 @@ export function ModelsPage() {
                           className="h-4 w-4 accent-[var(--accent)]"
                         />
                       </TD>
+                      <TD>
+                        <input
+                          type="radio"
+                          name="utility-model"
+                          aria-label={`Use ${model.display_name} as the utility model`}
+                          checked={model.is_utility}
+                          disabled={patchModel.isPending}
+                          onChange={() =>
+                            patchModel.mutate(
+                              { modelId: model.id, body: { is_utility: true } },
+                              { onError: (err) => toast.error(err.message) },
+                            )
+                          }
+                          className="h-4 w-4 accent-[var(--accent)]"
+                        />
+                      </TD>
                       <TD className="text-right">
                         <Button
                           variant="ghost"
@@ -140,6 +157,10 @@ export function ModelsPage() {
               </TBody>
             </Table>
           ) : null}
+          <p className="mt-2 text-[12px] text-muted">
+            The utility model powers answer-quality scoring, evals, and (later) enrichment and
+            memory. Choosing a new one replaces the current designation immediately.
+          </p>
         </div>
       </div>
       <ModelFormDialog

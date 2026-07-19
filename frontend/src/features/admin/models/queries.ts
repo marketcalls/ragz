@@ -25,6 +25,11 @@ export interface ModelPatchInput {
   enabled?: boolean;
   api_key?: string; // write-only: sent, never read back
   tools_unreliable?: boolean;
+  // Phase 3 Plan J (D5/§4): setting true designates this model as THE utility
+  // model, clearing every other row's flag server-side in the same
+  // transaction — callers only ever send `true`, never `false` (the backend
+  // owns exclusivity; see models-page.tsx's radio).
+  is_utility?: boolean;
 }
 
 // A 502 on these routes means the LOCAL write already succeeded and only the

@@ -84,6 +84,7 @@ async def patch_model(
         session, ctx, model_id, display_name=body.display_name, base_url=body.base_url,
         enabled=body.enabled, api_key=body.api_key, settings=settings,
         mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
+        is_utility=body.is_utility,
     )
     _schedule_sync(background_tasks, request, settings)
     return (await service.to_model_out(session, [model]))[0]
