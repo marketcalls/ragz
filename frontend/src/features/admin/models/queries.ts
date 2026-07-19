@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
+import type { ModelOut } from '@/api/types';
 
 export interface ModelCreate {
   display_name: string;
@@ -30,6 +31,16 @@ function mutationError(response: Response | undefined): Error {
   return new Error('request failed');
 }
 
+// Mutations now return before the background LiteLLM replay completes, so a
+// created/patched/deleted row can sit at sync_status="pending" for a beat.
+// Poll while any row is still pending so the eventual "synced"/"error"
+// outcome becomes visible without a manual refresh (mirrors the documents
+// feature's shouldPoll pattern in features/documents/queries.ts, via
+// features/documents/status.ts).
+export function adminModelsRefetchInterval(models: ModelOut[] | undefined): number | false {
+  return (models ?? []).some((m) => m.sync_status === 'pending') ? 2000 : false;
+}
+
 function useInvalidateModels() {
   const queryClient = useQueryClient();
   return () => {
@@ -41,6 +52,8 @@ function useInvalidateModels() {
 export function useAdminModels() {
   return useQuery({
     queryKey: ['admin-models'],
+    refetchInterval: (query) =>
+      adminModelsRefetchInterval(query.state.data as ModelOut[] | undefined),
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/admin/models');
       if (error) throw new Error('failed to load models');

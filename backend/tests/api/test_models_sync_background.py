@@ -1,5 +1,13 @@
-import httpx
+from collections.abc import AsyncIterator
 
+import httpx
+import pytest
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from raghub.api.app import create_app
+from raghub.core.config import Settings, get_settings
+from raghub.core.db import build_session_factory
 from raghub.modules.auth.models import User
 
 OPENAI_BODY = {
@@ -11,6 +19,52 @@ OPENAI_BODY = {
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": "pw123456"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+def _failing_litellm_handler(request: httpx.Request) -> httpx.Response:
+    """Stub a proxy that accepts the model list but rejects every replay
+    write, so sync_models_to_litellm's httpx.HTTPStatusError path fires and
+    the whole replay is persisted as sync_status='error'."""
+    if request.url.path == "/v1/model/info":
+        return httpx.Response(200, json={"data": []})
+    if request.url.path == "/model/new":
+        return httpx.Response(500, json={"error": "boom"})
+    return httpx.Response(200, json={})
+
+
+@pytest.fixture
+async def failing_sync_client(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings
+) -> AsyncIterator[httpx.AsyncClient]:
+    """Same wiring as the `client` fixture in tests/conftest.py, except the
+    LiteLLM transport fails every replay write - used to exercise the
+    `except UpstreamError: pass` background-task path in
+    api/routes/models.py::_background_sync at the route level."""
+    app = create_app(
+        session_factory=build_session_factory(engine),
+        redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_failing_litellm_handler),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def test_model_create_sync_failure_still_returns_201(
+    failing_sync_client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    """The background replay failing must not surface as a 5xx on the
+    request that scheduled it: POST still returns 201 with the row's
+    pre-sync status, and the failure is only observable on a later GET as
+    sync_status='error' (persisted by sync_models_to_litellm itself)."""
+    h = await auth(failing_sync_client, "root@platform.example")
+    r = await failing_sync_client.post("/api/v1/admin/models", json=OPENAI_BODY, headers=h)
+    assert r.status_code == 201
+    assert r.json()["sync_status"] == "pending"
+
+    listing = await failing_sync_client.get("/api/v1/admin/models", headers=h)
+    assert listing.json()[0]["sync_status"] == "error"
 
 
 async def test_model_create_returns_before_sync_completes(
