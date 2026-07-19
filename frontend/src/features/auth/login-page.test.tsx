@@ -180,3 +180,13 @@ test('hides the "Continue with SSO" button when the status request errors', asyn
   await screen.findByLabelText('Email');
   expect(screen.queryByRole('button', { name: 'Continue with SSO' })).not.toBeInTheDocument();
 });
+
+test('safeReturnTo rejects protocol-relative and backslash host-escape targets', async () => {
+  const { safeReturnTo } = await import('./login-page');
+  expect(safeReturnTo('/documents?x=1')).toBe('/documents?x=1');
+  expect(safeReturnTo('https://evil.example.com')).toBe('/');
+  expect(safeReturnTo('//evil.com')).toBe('/');
+  expect(safeReturnTo('/\\evil.com')).toBe('/');
+  expect(safeReturnTo('\\\\evil.com')).toBe('/');
+  expect(safeReturnTo(42)).toBe('/');
+});

@@ -10,10 +10,12 @@ import { AuthCard } from './auth-card';
 import { useLogin, useSsoStatus } from './mutations';
 
 // Open-redirect guard: only ever navigate to a same-origin path. Rejects
-// absolute URLs and protocol-relative ("//evil.com") targets, which start
-// with '/' but browsers resolve as scheme-relative to another host.
-function safeReturnTo(target: unknown): string {
-  return typeof target === 'string' && target.startsWith('/') && !target.startsWith('//') ? target : '/';
+// absolute URLs, protocol-relative ("//evil.com") targets, and their
+// backslash variants ("/\evil.com") -- WHATWG URL parsing treats a leading
+// "/\" the same as "//", resolving to another host.
+export function safeReturnTo(target: unknown): string {
+  if (typeof target !== 'string' || !target.startsWith('/')) return '/';
+  return target[1] === '/' || target[1] === '\\' ? '/' : target;
 }
 
 export function LoginPage() {
