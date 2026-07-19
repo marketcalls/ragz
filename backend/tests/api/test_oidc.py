@@ -121,7 +121,17 @@ async def test_full_flow_jit_provisions_and_sets_refresh_cookie(
     assert r3.status_code == 200 and r3.json()["access_token"]
 
 
-async def test_state_is_single_use(sso_client: httpx.AsyncClient) -> None:
+def _assert_sso_error_redirect(r: httpx.Response, test_settings: Settings) -> None:
+    """Contract C7: callback failures are a top-level browser navigation, so
+    they redirect back to the login page (never raw problem+json) -- and the
+    failure reason never leaks into the redirect URL, only into structlog."""
+    assert r.status_code == 302
+    assert r.headers["location"] == f"{test_settings.frontend_base_url}/login?sso_error=1"
+
+
+async def test_state_is_single_use(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
     r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
     q = parse_qs(urlparse(r.headers["location"]).query)
     _nonce_box["nonce"] = q["nonce"][0]
@@ -130,13 +140,30 @@ async def test_state_is_single_use(sso_client: httpx.AsyncClient) -> None:
         await sso_client.get(f"/api/v1/auth/oidc/callback?code=abc&state={state}",
                              follow_redirects=False)
     ).status_code == 302
-    assert (
+    _assert_sso_error_redirect(
         await sso_client.get(f"/api/v1/auth/oidc/callback?code=abc&state={state}",
-                             follow_redirects=False)
-    ).status_code == 401  # replayed state
+                             follow_redirects=False),
+        test_settings,
+    )  # replayed state
 
 
-async def test_unlisted_domain_rejected(sso_client: httpx.AsyncClient) -> None:
+async def test_unknown_state_redirects_to_login(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
+    """An expired/never-issued state must not render problem+json to the
+    browser -- it lands back on the login page with a generic error flag."""
+    _assert_sso_error_redirect(
+        await sso_client.get(
+            "/api/v1/auth/oidc/callback?code=abc&state=totally-unknown-state",
+            follow_redirects=False,
+        ),
+        test_settings,
+    )
+
+
+async def test_unlisted_domain_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
     # handler signs whatever nonce we stash; swap the email via a wrapped handler
     # by pointing the box at a domain no org claims
     r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
@@ -148,12 +175,14 @@ async def test_unlisted_domain_rejected(sso_client: httpx.AsyncClient) -> None:
             f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
             follow_redirects=False,
         )
-        assert r2.status_code == 401
+        _assert_sso_error_redirect(r2, test_settings)
     finally:
         _nonce_box.pop("email_override", None)
 
 
-async def test_bad_signature_rejected(sso_client: httpx.AsyncClient) -> None:
+async def test_bad_signature_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
     """ID token signed by a key the published JWKS never advertises must be
     rejected -- otherwise anyone able to reach the token endpoint (or a
     replayed/forged response) could mint tokens for any identity."""
@@ -166,13 +195,14 @@ async def test_bad_signature_rejected(sso_client: httpx.AsyncClient) -> None:
             f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
             follow_redirects=False,
         )
-        assert r2.status_code == 401
-        assert r2.json()["detail"] == "invalid ID token"
+        _assert_sso_error_redirect(r2, test_settings)
     finally:
         _nonce_box.pop("key_override", None)
 
 
-async def test_wrong_audience_rejected(sso_client: httpx.AsyncClient) -> None:
+async def test_wrong_audience_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
     """An ID token issued for a different client_id (aud) must be rejected --
     otherwise a token minted for another relying party on the same IdP could
     be replayed here."""
@@ -185,13 +215,14 @@ async def test_wrong_audience_rejected(sso_client: httpx.AsyncClient) -> None:
             f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
             follow_redirects=False,
         )
-        assert r2.status_code == 401
-        assert r2.json()["detail"] == "invalid ID token"
+        _assert_sso_error_redirect(r2, test_settings)
     finally:
         _nonce_box.pop("aud_override", None)
 
 
-async def test_wrong_issuer_rejected(sso_client: httpx.AsyncClient) -> None:
+async def test_wrong_issuer_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
     """An ID token claiming a different issuer than the one discovered and
     configured must be rejected -- otherwise a compromised/lookalike IdP
     response could impersonate the trusted issuer."""
@@ -204,13 +235,14 @@ async def test_wrong_issuer_rejected(sso_client: httpx.AsyncClient) -> None:
             f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
             follow_redirects=False,
         )
-        assert r2.status_code == 401
-        assert r2.json()["detail"] == "invalid ID token"
+        _assert_sso_error_redirect(r2, test_settings)
     finally:
         _nonce_box.pop("iss_override", None)
 
 
-async def test_nonce_mismatch_rejected(sso_client: httpx.AsyncClient) -> None:
+async def test_nonce_mismatch_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
     """The ID token's nonce must match the one this app stashed in Redis for
     the state at login time -- otherwise a token obtained for an unrelated
     login attempt could be replayed into this callback (CSRF-ish token
@@ -225,5 +257,4 @@ async def test_nonce_mismatch_rejected(sso_client: httpx.AsyncClient) -> None:
         f"/api/v1/auth/oidc/callback?code=abc&state={q['state'][0]}",
         follow_redirects=False,
     )
-    assert r2.status_code == 401
-    assert r2.json()["detail"] == "SSO nonce mismatch"
+    _assert_sso_error_redirect(r2, test_settings)

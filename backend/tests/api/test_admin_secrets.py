@@ -30,3 +30,29 @@ async def test_admin_role_is_denied(client: httpx.AsyncClient, seeded_user: User
     assert (await client.get("/api/v1/admin/secrets", headers=h)).status_code == 403
     r = await client.put("/api/v1/admin/secrets/x", json={"value": "v"}, headers=h)
     assert r.status_code == 403
+
+
+async def test_delete_secret(client: httpx.AsyncClient, superadmin_headers: dict[str, str]) -> None:
+    await client.put("/api/v1/admin/secrets/smtp_password",
+                     json={"value": "x"}, headers=superadmin_headers)
+    r = await client.delete("/api/v1/admin/secrets/smtp_password", headers=superadmin_headers)
+    assert r.status_code == 204
+    names = [s["name"] for s in (
+        await client.get("/api/v1/admin/secrets", headers=superadmin_headers)
+    ).json()]
+    assert "smtp_password" not in names
+
+
+async def test_delete_missing_404(
+    client: httpx.AsyncClient, superadmin_headers: dict[str, str]
+) -> None:
+    assert (await client.delete("/api/v1/admin/secrets/nope",
+                                headers=superadmin_headers)).status_code == 404
+
+
+async def test_bad_name_rejected(
+    client: httpx.AsyncClient, superadmin_headers: dict[str, str]
+) -> None:
+    r = await client.put("/api/v1/admin/secrets/bad%2Fname",
+                         json={"value": "x"}, headers=superadmin_headers)
+    assert r.status_code == 422

@@ -68,8 +68,21 @@ async def list_secrets(session: AsyncSession) -> list[Secret]:
     return list((await session.execute(select(Secret).order_by(Secret.name))).scalars())
 
 
-async def delete_secret(session: AsyncSession, *, name: str, commit: bool = True) -> None:
+async def delete_secret(
+    session: AsyncSession, *, actor_id: UUID | None, name: str, commit: bool = True
+) -> None:
+    row = (await session.execute(select(Secret).where(Secret.name == name))).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError(f"secret {name!r} not set")
     await session.execute(sa_delete(Secret).where(Secret.name == name))
+    await record_audit(
+        session,
+        org_id=None,
+        actor_id=actor_id,
+        action="secret.deleted",
+        target_type="secret",
+        target_id=name,
+    )
     if commit:
         await session.commit()
     else:

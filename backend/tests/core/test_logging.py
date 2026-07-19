@@ -14,3 +14,9 @@ def test_configure_logging_idempotent() -> None:
     configure_logging()
     configure_logging()
     assert structlog.is_configured()
+
+
+def test_redaction_does_not_eat_innocent_key_suffixes() -> None:
+    event = redact_sensitive(None, "", {"monkey": "bars", "api_key": "sk-1", "kek_file": "p"})
+    assert event["monkey"] == "bars"          # 'monkey' ends in 'key' but is not a secret
+    assert event["api_key"] == "[REDACTED]"

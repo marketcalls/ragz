@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 
-_SENSITIVE = re.compile(r"password|secret|token|api_key|key$", re.IGNORECASE)
+_SENSITIVE = re.compile(r"password|secret|token|api_key|(?:^|_)key$", re.IGNORECASE)
 
 
 def redact_sensitive(

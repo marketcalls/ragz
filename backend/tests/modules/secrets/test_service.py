@@ -65,8 +65,16 @@ async def test_wrong_kek_fails_closed(
         await _get_secret_decrypted(session, name="k", settings=bad)
 
 
-async def test_delete_secret_idempotent(session: AsyncSession, settings: Settings) -> None:
+async def test_delete_secret_removes_and_audits(session: AsyncSession, settings: Settings) -> None:
     await set_secret(session, actor_id=None, name="k", value="v", settings=settings)
-    await delete_secret(session, name="k")
-    await delete_secret(session, name="k")
+    await delete_secret(session, actor_id=None, name="k")
     assert await list_secrets(session) == []
+    actions = [
+        e.action for e in (await session.execute(select(AuditEvent))).scalars()
+    ]
+    assert actions == ["secret.written", "secret.deleted"]
+
+
+async def test_delete_secret_missing_raises(session: AsyncSession, settings: Settings) -> None:
+    with pytest.raises(NotFoundError):
+        await delete_secret(session, actor_id=None, name="ghost")
