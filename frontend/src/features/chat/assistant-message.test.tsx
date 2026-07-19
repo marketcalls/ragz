@@ -13,3 +13,13 @@ test('grounding="documents" (the default) does not render the banner', () => {
   render(<AssistantMessage content="Revenue was 12M [1]." sources={[]} />);
   expect(screen.queryByText(BANNER_TEXT)).not.toBeInTheDocument();
 });
+
+test('stopped=true renders the Stopped chip', () => {
+  render(<AssistantMessage content="The muster point is the" sources={[]} stopped={true} />);
+  expect(screen.getByText('Stopped')).toBeInTheDocument();
+});
+
+test('stopped=false (the default) does not render the Stopped chip', () => {
+  render(<AssistantMessage content="The muster point is the NORTH CARPARK." sources={[]} />);
+  expect(screen.queryByText('Stopped')).not.toBeInTheDocument();
+});
