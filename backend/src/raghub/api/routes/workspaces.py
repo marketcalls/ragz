@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.modules.tenancy import service
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
+from raghub.modules.tenancy.context import (
+    TenantContext,
+    get_tenant_context,
+    require_permission,
+    require_role,
+)
 from raghub.modules.tenancy.schemas import (
     MemberAdd,
     WorkspaceCreate,
@@ -18,6 +23,9 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
+# Task 13 (RBAC-2): PATCH (settings) is workspace configuration, distinct from
+# org administration (POST /workspaces, POST .../members stay AdminDep).
+ConfigureDep = Annotated[TenantContext, Depends(require_permission("workspace.configure"))]
 
 
 @router.post("", status_code=201, response_model=WorkspaceOut)
@@ -43,7 +51,7 @@ _SETTINGS_FIELDS = ("top_k", "min_score", "rerank_enabled", "system_prompt_overr
 
 @router.patch("/{workspace_id}", response_model=WorkspaceOut)
 async def patch_workspace(
-    workspace_id: UUID, body: WorkspacePatch, session: SessionDep, ctx: AdminDep
+    workspace_id: UUID, body: WorkspacePatch, session: SessionDep, ctx: ConfigureDep
 ) -> WorkspaceOut:
     ws = None
     has_changes = False

@@ -16,7 +16,12 @@ from raghub.modules.quotas.schemas import (
     UsageSummaryOut,
     UserQuotaIn,
 )
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
+from raghub.modules.tenancy.context import (
+    TenantContext,
+    get_tenant_context,
+    require_permission,
+    require_role,
+)
 
 router = APIRouter(tags=["usage"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -24,6 +29,9 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 SuperDep = Annotated[TenantContext, Depends(require_role("superadmin"))]
+# Task 13 (RBAC-2): org-scoped analytics dashboard narrows/widens independently
+# of admin role; GET .../orgs (platform-wide, superadmin) is unchanged.
+AnalyticsDep = Annotated[TenantContext, Depends(require_permission("analytics.view"))]
 
 
 @router.get("/admin/orgs/{org_id}/quota", response_model=OrgQuotaOut | None)
@@ -85,7 +93,7 @@ async def usage_me(request: Request, session: SessionDep, ctx: CtxDep) -> UsageM
 
 @router.get("/admin/usage/summary", response_model=UsageSummaryOut)
 async def usage_summary(
-    session: SessionDep, ctx: AdminDep,
+    session: SessionDep, ctx: AnalyticsDep,
     days: Annotated[int, Query(ge=1, le=365)] = 30,
 ) -> UsageSummaryOut:
     return UsageSummaryOut.model_validate(

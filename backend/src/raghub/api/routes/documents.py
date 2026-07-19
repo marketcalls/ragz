@@ -19,13 +19,24 @@ from raghub.modules.documents.schemas import (
     MetadataFieldOut,
     MetadataValuesIn,
 )
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_role
+from raghub.modules.tenancy.context import (
+    TenantContext,
+    get_tenant_context,
+    require_permission,
+    require_role,
+)
 from raghub.worker.tasks import enqueue_delete, enqueue_ingest
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
+# Task 13 (RBAC-2): granular guards layered ON TOP of (not instead of) the
+# workspace-membership/ACL checks inside the service layer -- get_workspace_checked
+# etc. still run unconditionally.
+UploadDep = Annotated[TenantContext, Depends(require_permission("documents.upload"))]
+DeleteDep = Annotated[TenantContext, Depends(require_permission("documents.delete"))]
+ConfigureDep = Annotated[TenantContext, Depends(require_permission("workspace.configure"))]
 
 
 def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
@@ -43,7 +54,7 @@ def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
 @router.post("/workspaces/{workspace_id}/documents", status_code=201,
              response_model=DocumentOut)
 async def upload_document(
-    workspace_id: UUID, session: SessionDep, ctx: CtxDep,
+    workspace_id: UUID, session: SessionDep, ctx: UploadDep,
     request: Request, file: Annotated[UploadFile, File()],
 ) -> DocumentOut:
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
@@ -84,7 +95,7 @@ async def list_workspace_documents(
 
 @router.delete("/documents/{document_id}", status_code=202)
 async def delete_document(
-    document_id: UUID, session: SessionDep, ctx: CtxDep
+    document_id: UUID, session: SessionDep, ctx: DeleteDep
 ) -> dict[str, str]:
     doc = await service.get_document_checked(session, ctx, document_id)
     # Flip status before enqueueing so a delete failure is visible: if the
@@ -121,9 +132,9 @@ async def set_document_approved(
     return _serialize_document(doc, ctx)
 
 
-# DOC-6: metadata schema (fields) + values. POST/DELETE stay AdminDep; Task 13
-# moves field CRUD to a "workspace.configure" permission and the value PUT to
-# "documents.upload" (declarative permission checks, not inline role checks).
+# DOC-6: metadata schema (fields) + values. Task 13 moves field CRUD to a
+# "workspace.configure" permission and the value PUT to "documents.upload"
+# (declarative permission checks, not inline role checks).
 # GET is member-gated (CtxDep): the filter bar and per-doc Tags dialog need the
 # field list for ANY workspace member, not just admins. list_fields already
 # runs get_workspace_checked, which fences org + membership for role=user.
@@ -139,7 +150,7 @@ async def list_metadata_fields(
     "/workspaces/{workspace_id}/metadata-fields", status_code=201, response_model=MetadataFieldOut
 )
 async def create_metadata_field(
-    workspace_id: UUID, body: MetadataFieldCreate, session: SessionDep, ctx: AdminDep
+    workspace_id: UUID, body: MetadataFieldCreate, session: SessionDep, ctx: ConfigureDep
 ) -> MetadataFieldOut:
     field = await metadata_service.create_field(
         session, ctx, workspace_id,
@@ -149,13 +160,13 @@ async def create_metadata_field(
 
 
 @router.delete("/metadata-fields/{field_id}", status_code=204)
-async def delete_metadata_field(field_id: UUID, session: SessionDep, ctx: AdminDep) -> None:
+async def delete_metadata_field(field_id: UUID, session: SessionDep, ctx: ConfigureDep) -> None:
     await metadata_service.delete_field(session, ctx, field_id)
 
 
 @router.put("/documents/{document_id}/metadata", response_model=DocumentOut)
 async def set_document_metadata(
-    document_id: UUID, body: MetadataValuesIn, session: SessionDep, ctx: CtxDep
+    document_id: UUID, body: MetadataValuesIn, session: SessionDep, ctx: UploadDep
 ) -> DocumentOut:
     doc = await metadata_service.set_document_metadata(session, ctx, document_id, body.values)
     return _serialize_document(doc, ctx)
