@@ -33,6 +33,15 @@ class Document(UUIDPk, Base):
     acl_group_ids: Mapped[list[UUID] | None] = mapped_column(
         ARRAY(PG_UUID(as_uuid=True)), default=None
     )
+    # Plan H (DOC-5): version lineage
+    version: Mapped[int] = mapped_column(default=1)
+    lineage_id: Mapped[UUID] = mapped_column(index=True)  # v1 row's own id; no FK (self-ref churn)
+    supersedes_document_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), default=None
+    )
+    is_current: Mapped[bool] = mapped_column(default=False, index=True)
+    approved: Mapped[bool] = mapped_column(default=False)
+    vectors_present: Mapped[bool] = mapped_column(default=False)
 
 
 class IngestJob(UUIDPk, Base):

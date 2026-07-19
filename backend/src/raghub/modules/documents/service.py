@@ -1,5 +1,5 @@
 import hashlib
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,13 +35,26 @@ async def create_from_upload(
     ).scalar_one_or_none()
     if dup is not None:
         raise ConflictError(f"identical content already uploaded as document {dup.id}")
+    predecessor = (
+        await session.execute(
+            select(Document)
+            .where(Document.workspace_id == ws.id, Document.filename == filename)
+            .order_by(Document.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     doc = Document(
         org_id=ctx.org_id, workspace_id=ws.id, filename=filename, mime=mime,
         size_bytes=len(data), content_hash=content_hash, storage_key="",
         created_by=ctx.user_id,
+        version=(predecessor.version + 1) if predecessor else 1,
+        lineage_id=predecessor.lineage_id if predecessor else uuid4(),  # placeholder, fixed below
+        supersedes_document_id=predecessor.id if predecessor else None,
     )
     session.add(doc)
     await session.flush()  # assigns doc.id for the storage key
+    if predecessor is None:
+        doc.lineage_id = doc.id
     doc.storage_key = f"{ctx.org_id}/{ws.id}/{doc.id}/{filename}"
     storage = build_storage(get_settings())
     await storage.ensure_bucket()

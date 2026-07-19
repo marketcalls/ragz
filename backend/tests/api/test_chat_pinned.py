@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from redis.asyncio import Redis
@@ -26,7 +27,7 @@ async def seed_pinned_doc(
     doc = Document(org_id=seeded_user.org_id, workspace_id=chat_env["workspace"].id,
                    filename="policy.pdf", mime="application/pdf", size_bytes=10,
                    content_hash="hp", status="indexed", storage_key="kp",
-                   created_by=seeded_user.id, pinned=True)
+                   created_by=seeded_user.id, pinned=True, lineage_id=uuid4())
     session.add(doc)
     await session.commit()
     reader.document_chunks[doc.id] = [

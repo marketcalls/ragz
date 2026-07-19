@@ -17,6 +17,11 @@ class DocumentOut(BaseModel):
     # Invariant: acl_group_ids is None === unrestricted (every workspace
     # member may read it). [] is never a valid payload value — see AclUpdate.
     acl_group_ids: list[UUID] | None = None
+    version: int
+    lineage_id: UUID
+    is_current: bool
+    approved: bool
+    supersedes_document_id: UUID | None
 
     model_config = {"from_attributes": True}
 
