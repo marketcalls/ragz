@@ -31,10 +31,24 @@ async def test_inbound_request_id_with_control_bytes_is_sanitized(
     """Control/high bytes and whitespace must never reach the echoed header --
     h11 can raise on invalid header bytes (self-inflicted 500), and unsanitized
     bytes must not be bound into contextvars either."""
-    r = await client.get("/healthz", headers={"X-Request-ID": "abc\x01\ndef ghi"})
+    from raghub.core import middleware as mw
+
+    bound: dict[str, object] = {}
+    orig_bind = mw.bind_contextvars
+
+    def spy_bind(**kw: object) -> object:
+        bound.update(kw)
+        return orig_bind(**kw)
+
+    mw.bind_contextvars = spy_bind  # type: ignore[assignment]
+    try:
+        r = await client.get("/healthz", headers={"X-Request-ID": "abc\x01\ndef ghi"})
+    finally:
+        mw.bind_contextvars = orig_bind  # type: ignore[assignment]
     value = r.headers["x-request-id"]
     assert ALLOWLIST.match(value)
     assert value == "abcdefghi"  # disallowed chars dropped, rest preserved in order
+    assert bound.get("request_id") == value  # same sanitized value reaches the logs
 
 
 async def test_inbound_request_id_entirely_invalid_mints_uuid(
@@ -50,7 +64,11 @@ async def test_inbound_request_id_entirely_invalid_mints_uuid(
 async def test_inbound_request_id_cap_enforced_after_sanitization(
     client: httpx.AsyncClient,
 ) -> None:
-    """The 64-char cap must still apply post-sanitization."""
-    r = await client.get("/healthz", headers={"X-Request-ID": "a" * 100})
+    """The 64-char cap must apply AFTER stripping, so invalid bytes never eat
+    into the budget of surviving characters: with 60 valid + 10 invalid + 20
+    valid chars, strip-then-cap yields 64 survivors while cap-then-strip would
+    truncate first and yield only 60 -- the assertion distinguishes them."""
+    raw = "a" * 60 + "\x01" * 10 + "b" * 20
+    r = await client.get("/healthz", headers={"X-Request-ID": raw})
     value = r.headers["x-request-id"]
-    assert value == "a" * 64
+    assert value == "a" * 60 + "b" * 4  # 64 survivors; cap-then-strip would give "a"*60
