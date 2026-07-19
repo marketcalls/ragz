@@ -195,7 +195,8 @@ async def synthesize_with_gatekeeper(
     reason = verdict.critique or "it was not sufficiently grounded in the source excerpts"
     critique_note = (
         (f"{system_prompt_override.strip()}\n\n" if system_prompt_override else "")
-        + f"An internal reviewer rejected your previous answer: {reason}. Revise the answer so "
+        + "An internal reviewer rejected your previous answer: "
+        f"{wrap_untrusted_block('critique', reason)}. Revise the answer so "
         "every claim is directly supported by the numbered excerpts and it directly addresses "
         "the question."
     )
