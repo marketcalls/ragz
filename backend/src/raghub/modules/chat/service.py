@@ -46,7 +46,7 @@ from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
 from raghub.modules.documents import service as documents_service
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
 from raghub.modules.quotas import service as quota_service
-from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
+from raghub.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
@@ -303,7 +303,9 @@ _SNIPPET_CHARS = 300
 
 
 class Retriever(Protocol):
-    """Plan B's single retrieval code path, as an injectable seam for tests."""
+    """Plan B's single retrieval code path, as an injectable seam for tests.
+    Plan I: metadata_clauses pass-through for the agent's search_by_metadata
+    tool (real retrieve() already accepts it)."""
 
     async def __call__(
         self,
@@ -312,6 +314,7 @@ class Retriever(Protocol):
         workspace_id: UUID,
         query: str,
         top_k: int | None = None,
+        metadata_clauses: Sequence[MetadataClause] | None = None,
     ) -> RetrievalResult: ...
 
 

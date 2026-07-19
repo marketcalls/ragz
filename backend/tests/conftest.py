@@ -247,10 +247,12 @@ class FakeRetriever:
         self.document_id = document_id
         self.no_answer = no_answer
         self.chunks: list[RetrievedChunk] | None = None  # tests may script these
+        self.calls: list[dict[str, object]] = []
 
     async def __call__(
-        self, session, ctx, workspace_id, query, top_k=None  # type: ignore[no-untyped-def]
+        self, session, ctx, workspace_id, query, top_k=None, metadata_clauses=None  # type: ignore[no-untyped-def]
     ) -> RetrievalResult:
+        self.calls.append({"query": query, "metadata_clauses": metadata_clauses})
         if self.chunks is not None:
             return RetrievalResult(no_answer=self.no_answer, chunks=list(self.chunks))
         chunks = [

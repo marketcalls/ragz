@@ -18,6 +18,17 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Protocol
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from raghub.core.errors import NotFoundError, UpstreamError, WorkspaceAccessDenied
+from raghub.modules.chat.web import WebResult, WebSearcher
+from raghub.modules.documents.metadata import build_clauses
+from raghub.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
+from raghub.modules.tenancy.context import TenantContext
+from raghub.modules.tenancy.models import Workspace
 
 AGENT_MAX_ITERATIONS = 4
 PLANNER_TOOLS = ("search", "search_by_metadata", "get_document", "web_search")
@@ -152,3 +163,85 @@ def native_tool_specs(
         for name in tool_names
         if name in catalog
     ]
+
+
+class RetrieverSeam(Protocol):
+    """Structural mirror of chat.service.Retriever (Plan B's single retrieval
+    code path). Defined locally rather than imported: importing from
+    chat.service would create a service->agent->service cycle once Task 10
+    wires the agent loop into stream_reply. service.py's Retriever remains
+    the canonical seam; this shape must stay in lockstep with it."""
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        ctx: TenantContext,
+        workspace_id: UUID,
+        query: str,
+        top_k: int | None = None,
+        metadata_clauses: Sequence[MetadataClause] | None = None,
+    ) -> RetrievalResult: ...
+
+
+class ChunkReaderSeam(Protocol):
+    """Structural mirror of chat.service.ChunkReader, for the same
+    import-cycle reason as RetrieverSeam above."""
+
+    async def list_document_chunks(
+        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID
+    ) -> list[RetrievedChunk]: ...
+
+    async def get_chunks_by_refs(
+        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+    ) -> list[RetrievedChunk]: ...
+
+
+@dataclass(frozen=True)
+class ToolOutcome:
+    chunks: list[RetrievedChunk] = field(default_factory=list)
+    web_results: list[WebResult] = field(default_factory=list)
+    grounded: bool = False  # a search cleared the workspace threshold / a read returned content
+    error: str | None = None
+
+
+async def execute_tool(
+    session: AsyncSession,
+    ctx: TenantContext,
+    action: PlannerAction,
+    *,
+    workspace: Workspace,
+    retriever: RetrieverSeam,
+    chunk_reader: ChunkReaderSeam,
+    web_searcher: WebSearcher | None,
+) -> ToolOutcome:
+    """THE tool-execution seam (design §2): all four read-only tools, one
+    funnel. Failures come back as ToolOutcome.error — the loop degrades to
+    single-shot RAG on them (never a dead end). Isolation holds by
+    construction: document reads only ever go through retrieve()/ChunkReader.
+    search_by_metadata's filters go through build_clauses (the `meta.` jail)
+    — never constructed here."""
+    try:
+        if action.action == "search":
+            result = await retriever(session, ctx, workspace.id, action.query)
+            return ToolOutcome(chunks=result.chunks, grounded=not result.no_answer)
+        if action.action == "search_by_metadata":
+            clauses = await build_clauses(session, ctx, workspace.id, action.filters)
+            result = await retriever(
+                session, ctx, workspace.id, action.query, metadata_clauses=clauses
+            )
+            return ToolOutcome(chunks=result.chunks, grounded=not result.no_answer)
+        if action.action == "get_document":
+            chunks = await chunk_reader.list_document_chunks(
+                ctx, workspace.id, UUID(action.document_id)
+            )
+            return ToolOutcome(chunks=chunks, grounded=bool(chunks))
+        if action.action == "web_search":
+            if web_searcher is None:
+                return ToolOutcome(error="web search is not enabled for this workspace")
+            results = await web_searcher(session, action.query)
+            return ToolOutcome(web_results=results, grounded=bool(results))
+        return ToolOutcome(error=f"unknown tool: {action.action}")
+    except (NotFoundError, WorkspaceAccessDenied, UpstreamError, ValueError) as exc:
+        # Typed, expected failures become degrade signals. Anything else is a
+        # real bug and propagates to stream_reply's generic handler.
+        return ToolOutcome(error=str(exc))
