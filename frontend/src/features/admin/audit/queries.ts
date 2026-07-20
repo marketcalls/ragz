@@ -34,7 +34,16 @@ export function useAuditLog(filters: AuditFilters) {
           },
         },
       });
-      if (error) throw new Error('failed to load audit log');
+      // openapi-fetch can resolve `error` as a falsy value (e.g. `""`) when
+      // the server (or a dev proxy) sends a malformed non-JSON error body --
+      // `if (error)` alone misses that case and would let `data` (also
+      // undefined) flow back as this page's data. useInfiniteQuery has no
+      // "data cannot be undefined" rescue the way plain useQuery does, so an
+      // undefined page here throws inside getNextPageParam instead of
+      // surfacing a normal isError state. Guard on `!data` too so the
+      // queryFn itself always throws a real Error and never returns
+      // undefined, regardless of that internal React Query behavior.
+      if (error || !data) throw new Error('failed to load audit log');
       return data;
     },
     getNextPageParam: (last) => last.next_cursor ?? undefined,
