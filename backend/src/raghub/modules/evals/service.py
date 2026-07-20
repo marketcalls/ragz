@@ -169,15 +169,19 @@ async def latest_eval_run_per_workspace(session: AsyncSession, org_id: UUID) -> 
 
 
 async def delete_golden_query(session: AsyncSession, ctx: TenantContext, query_id: UUID) -> None:
+    """Looks up the query first (unscoped -- a query_id that doesn't exist at
+    all is a 404, not a 403), then checks the query's OWNING workspace via
+    get_workspace_checked -- the same membership-aware gate
+    create_golden_query/list_golden_queries/list_eval_runs use -- rather than
+    a bare Workspace.org_id join. A same-org custom-role "user" who isn't a
+    member of the query's workspace must be rejected exactly like they are
+    for the create/list paths, not merely for cross-org access."""
     gq = (
-        await session.execute(
-            select(GoldenQuery)
-            .join(Workspace, Workspace.id == GoldenQuery.workspace_id)
-            .where(GoldenQuery.id == query_id, Workspace.org_id == ctx.org_id)
-        )
+        await session.execute(select(GoldenQuery).where(GoldenQuery.id == query_id))
     ).scalar_one_or_none()
     if gq is None:
         raise NotFoundError("golden query not found")
+    await get_workspace_checked(session, ctx, gq.workspace_id)
     await session.delete(gq)
     await record_audit(
         session, org_id=ctx.org_id, actor_id=ctx.user_id, action="golden_query.deleted",

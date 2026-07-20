@@ -3,7 +3,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError
+from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.evals import service
 from raghub.modules.evals.models import EvalRun
@@ -52,6 +52,54 @@ async def test_delete_golden_query(
     )
     await service.delete_golden_query(session, ctx, gq.id)
     assert await service.list_golden_queries(session, ctx, ws.id) == []
+
+
+async def test_delete_golden_query_missing_id_is_not_found(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    from uuid import uuid4
+
+    with pytest.raises(NotFoundError):
+        await service.delete_golden_query(session, ctx, uuid4())
+
+
+async def test_delete_golden_query_rejects_sibling_workspace_non_member(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    """Review-fix regression test: delete_golden_query must reuse
+    get_workspace_checked (as create_golden_query/list_golden_queries/
+    list_eval_runs all do) rather than a bare Workspace.org_id join, so a
+    same-org custom-role "user" who isn't a member of the query's OWNING
+    workspace can't delete it just by guessing its UUID -- even though they
+    ARE a member of some other workspace in the same org."""
+    from raghub.modules.tenancy.models import WorkspaceMember
+
+    sibling_ws = Workspace(org_id=ctx.org_id, name="sibling-ws")
+    session.add(sibling_ws)
+    await session.flush()
+    await session.commit()
+    gq = await service.create_golden_query(
+        session, ctx, sibling_ws.id, question="sibling question", expected_document_ids=[]
+    )
+
+    from raghub.modules.auth.models import User
+
+    member_user = User(
+        org_id=ctx.org_id, email="member-only-ws@acme.com", password_hash="x", role="user",  # noqa: S106
+    )
+    session.add(member_user)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=member_user.id))
+    await session.commit()
+    member_ctx = TenantContext(
+        user_id=member_user.id, org_id=ctx.org_id, role="user",
+        workspace_ids=frozenset({ws.id}),
+    )
+
+    with pytest.raises(WorkspaceAccessDenied):
+        await service.delete_golden_query(session, member_ctx, gq.id)
+    # never post-filtered / silently dropped -- the query still exists
+    assert await service.list_golden_queries(session, ctx, sibling_ws.id) == [gq]
 
 
 async def test_workspace_ids_with_golden_queries_excludes_workspaces_without_any(
