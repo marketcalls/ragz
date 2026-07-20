@@ -11,12 +11,19 @@ import { useWorkspaces } from '@/features/workspaces/queries';
 import { useWorkspace } from '@/features/workspaces/workspace-context';
 
 import { AssistantMessage } from './assistant-message';
+import { AttachmentUpload } from './attachment-upload';
 import { ChatInput } from './chat-input';
 import { EditMessageForm } from './edit-message-form';
 import { EffortSelector, type ReasoningEffort } from './effort-selector';
 import { MessageActions } from './message-actions';
 import { ModelSelector } from './model-selector';
-import { useChat, useClearMessageFeedback, useCreateChat, useSetMessageFeedback } from './queries';
+import {
+  useChat,
+  useClearMessageFeedback,
+  useCreateChat,
+  useSetMessageFeedback,
+  useUploadAttachment,
+} from './queries';
 import type { SourceChipData } from './source-panel';
 import { StreamingMessage } from './streaming-message';
 import { treeContains } from './tree';
@@ -41,6 +48,8 @@ export function ChatPage() {
   const [modelId, setModelId] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('off');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
+  const uploadAttachment = useUploadAttachment(chatId);
 
   // Persisted citations (MessageNode.citations) → source chips; filenames
   // resolved from the workspace's document list (shared query cache).
@@ -102,7 +111,8 @@ export function ChatPage() {
   useEffect(() => {
     if (chatId && initialMessage && !initialSentRef.current) {
       initialSentRef.current = true;
-      stream.send(initialMessage, undefined, effectiveModelId, reasoningEffort); // omit parent → append to leaf
+      stream.send(initialMessage, undefined, effectiveModelId, reasoningEffort, pendingAttachmentIds); // omit parent → append to leaf
+      setPendingAttachmentIds([]);
       navigate(location.pathname, { replace: true, state: null }); // consume the state
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount/handoff
@@ -122,7 +132,8 @@ export function ChatPage() {
 
   const onSend = (content: string): void => {
     if (chatId) {
-      stream.send(content, undefined, effectiveModelId, reasoningEffort); // omit parent → append to leaf
+      stream.send(content, undefined, effectiveModelId, reasoningEffort, pendingAttachmentIds); // omit parent → append to leaf
+      setPendingAttachmentIds([]);
       return;
     }
     if (!workspaceId) return;
@@ -167,7 +178,14 @@ export function ChatPage() {
                       // Sibling of the edited message: same parent (phase1 spec §2.1).
                       // For a ROOT message this passes explicit null — which the backend
                       // reads as "new root sibling" (presence semantics, chat/schemas.py).
-                      stream.send(content, m.parent_message_id ?? null, effectiveModelId, reasoningEffort);
+                      stream.send(
+                        content,
+                        m.parent_message_id ?? null,
+                        effectiveModelId,
+                        reasoningEffort,
+                        pendingAttachmentIds,
+                      );
+                      setPendingAttachmentIds([]);
                     }}
                   />
                 );
@@ -217,6 +235,17 @@ export function ChatPage() {
             </p>
           ) : null}
         </div>
+      </div>
+      <div className="mx-auto flex w-full max-w-thread items-center justify-between gap-2 px-4">
+        <AttachmentUpload
+          onUpload={(f) => uploadAttachment.mutateAsync(f)}
+          onUploaded={(id) => setPendingAttachmentIds((ids) => [...ids, id])}
+        />
+        {pendingAttachmentIds.length > 0 ? (
+          <span className="text-[12px] text-muted">
+            {pendingAttachmentIds.length} attachment{pendingAttachmentIds.length > 1 ? 's' : ''} ready
+          </span>
+        ) : null}
       </div>
       <ChatInput
         onSend={onSend}

@@ -289,3 +289,25 @@ test('send omits reasoning_effort from the body when "off" or absent', async () 
   const [, body] = streamChatSse.mock.calls[0]!;
   expect(body).not.toHaveProperty('reasoning_effort');
 });
+
+test('send includes attachment_ids in the body when provided', async () => {
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({
+        type: 'done',
+        done: {
+          message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+          grounding: 'documents', validation_failed: false,
+        },
+      });
+    },
+  );
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('hi', undefined, 'model-1', 'off', ['a1', 'a2']);
+  });
+
+  const [, body] = streamChatSse.mock.calls[0]!;
+  expect(body).toMatchObject({ attachment_ids: ['a1', 'a2'] });
+});

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { api } from '@/api/client';
+import { api, authFetch } from '@/api/client';
 
 export function useChats(workspaceId: string | null) {
   return useQuery({
@@ -97,5 +97,31 @@ export function useDeleteChat() {
       if (error) throw new Error('failed to delete chat');
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chats'] }),
+  });
+}
+
+// Bypasses the generated `api.POST` client (JSON-body-typed, not multipart-aware):
+// a plain fetch with FormData is required, same reason
+// `frontend/src/features/documents/upload.ts` hand-rolls its own upload
+// instead of using `api.POST`. Auth is still handled the same way as every
+// other request in this feature (see `stream.ts`): route the Request through
+// `authFetch`, which attaches the bearer token from the in-memory auth store
+// and transparently retries once after a refresh on a 401, and set
+// `credentials: 'include'` so the httpOnly refresh cookie travels too.
+export function useUploadAttachment(chatId: string | null) {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await authFetch(
+        new Request(new URL(`/api/v1/chats/${chatId}/attachments`, window.location.origin), {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        }),
+      );
+      if (!res.ok) throw new Error('failed to upload attachment');
+      return res.json() as Promise<{ id: string; kind: string; filename: string; mime: string; status: string }>;
+    },
   });
 }

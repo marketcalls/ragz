@@ -96,6 +96,7 @@ export function useChatStream(chatId: string | null) {
       parentMessageId?: string | null,
       modelId?: string | null,
       reasoningEffort?: string | null,
+      attachmentIds?: string[],
     ) => {
       if (!chatId) return;
       run(
@@ -109,6 +110,7 @@ export function useChatStream(chatId: string | null) {
           ...(reasoningEffort && reasoningEffort !== 'off'
             ? { reasoning_effort: reasoningEffort }
             : {}),
+          ...(attachmentIds && attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
         },
         content,
       );
