@@ -1441,6 +1441,15 @@ async def stream_reply(
                 model_hint=model_hint,
                 summary=summary_text,
             )
+            if image_data_uris:
+                # Same replace-only-the-final-message treatment as the
+                # conversational/documents/Gatekeeper branches -- this is the
+                # 4th and last stream_reply branch that builds its own final
+                # prompt message, and it must not silently drop the image
+                # just because retrieval came back no_answer.
+                prompt[-1] = build_user_message_with_images(
+                    user_message.content, image_data_uris
+                )
             gk_usage: LLMUsage | None = None
             # aclosing: same deterministic-cleanup-on-abort reasoning as the
             # conversational branch.

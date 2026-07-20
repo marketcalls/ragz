@@ -7,14 +7,18 @@ import base64
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from raghub.api.app import create_app
+from raghub.core.config import Settings, get_settings
+from raghub.core.db import build_session_factory
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.tenancy.models import Organization
 from raghub.worker import tasks
-from tests.api.test_chat_stream import auth, make_model_and_chat
-from tests.conftest import FakeStreamer
+from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
+from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_litellm_handler
 
 # chat_client/chat_env fixtures live in test_chat_stream; pytest only shares
 # fixtures across modules via conftest.py or an explicit plugin import.
@@ -238,3 +242,85 @@ async def test_image_attachment_on_non_vision_model_still_routes_through_ocr(
     # Non-vision model: the final message stays plain-string, never the
     # multipart shape Task 6 introduces.
     assert all(isinstance(m["content"], str) for m in sent_prompt)
+
+
+async def test_image_attachment_survives_general_knowledge_fallback(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings,
+    chat_env: dict, session: AsyncSession, seeded_user: User,
+    seeded_superadmin: User, stack_env: None,
+) -> None:
+    """Review fix (round 2 on DOC-9 Task 6): the general-knowledge fallback
+    branch (no_answer=True + workspace.fallback_policy="general_knowledge",
+    the default) is a 4th `stream_reply` model-call branch that builds its
+    own final prompt message via build_general_knowledge_messages -- it must
+    splice image_data_uris into that message exactly like the
+    conversational, main/documents, and Gatekeeper-retry branches already do,
+    or a vision question that misses retrieval silently loses its image.
+    Wires a retriever that always returns no_answer=True (mirrors
+    test_chat_stream.test_weak_retrieval_general_knowledge_fallback) together
+    with a vision-capable model and an image attachment (mirrors this file's
+    own test_image_attachment_on_vision_model_becomes_multimodal_content)."""
+    fake_streamer = FakeStreamer()
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id, no_answer=True),
+        llm_streamer=fake_streamer, chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        h_super = await auth(client, "root@platform.example")
+        r_model = await client.post(
+            "/api/v1/admin/models",
+            json={"litellm_model_name": "vision-model", "display_name": "Vision",
+                  "provider_kind": "ollama", "base_url": "http://ollama:11434",
+                  "supports_vision": True},
+            headers=h_super,
+        )
+        assert r_model.status_code == 201
+        vision_model_id = r_model.json()["id"]
+
+        image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes-not-a-real-png"
+        r_attach = await client.post(
+            f"/api/v1/chats/{chat_id}/attachments",
+            files={"file": ("photo.png", image_bytes, "image/png")},
+            headers=h,
+        )
+        assert r_attach.status_code == 201
+        assert r_attach.json()["kind"] == "image"
+        attachment_id = r_attach.json()["id"]
+
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={
+                "content": "what is in this image?",
+                "attachment_ids": [attachment_id],
+                "model_id": vision_model_id,
+            },
+            headers=h,
+        )
+    assert r.status_code == 200
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    # Proves the general-knowledge branch (not the documents branch) actually
+    # fired: no sources/citations frames, and grounding="general" in done.
+    assert "sources" not in names and "citations" not in names
+    done = next(d for n, d in frames if n == "done")
+    assert done["grounding"] == "general" and done["no_answer"] is False
+
+    sent_prompt = fake_streamer.calls[-1]["messages"]
+    last = sent_prompt[-1]
+    assert isinstance(last["content"], list), (
+        "image was dropped on the general-knowledge fallback branch"
+    )
+    assert last["content"][0] == {"type": "text", "text": "what is in this image?"}
+    image_block = last["content"][1]
+    assert image_block["type"] == "image_url"
+    data_uri = image_block["image_url"]["url"]
+    assert data_uri.startswith("data:image/png;base64,")
+    encoded = data_uri.removeprefix("data:image/png;base64,")
+    assert base64.b64decode(encoded) == image_bytes
