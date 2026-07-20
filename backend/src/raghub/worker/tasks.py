@@ -12,8 +12,11 @@ from celery import Task, chain
 
 from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
+from raghub.core.storage import build_storage
 from raghub.modules.chat import service as chat_service
+from raghub.modules.chat.attachments import extract_text
 from raghub.modules.chat.llm import LiteLLMStreamer
+from raghub.modules.chat.models import ChatAttachment
 from raghub.modules.documents import ingest
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.evals.runner import run_eval
@@ -170,6 +173,45 @@ def audit_message_task(message_id: str) -> None:
 
 def enqueue_audit_message(message_id: UUID) -> None:
     audit_message_task.si(str(message_id)).apply_async(queue="default")
+
+
+@celery_app.task(name="attachments.process")
+def process_attachment_task(attachment_id: str) -> None:
+    """Best-effort text extraction for a chat attachment (Task 2, DOC-9).
+    No retry base class (unlike the IngestTask/DeleteTask above) — a failed
+    extraction degrades gracefully to status="failed" rather than needing a
+    retry, mirroring audit_message_task's fire-and-forget pattern."""
+
+    async def _run() -> None:
+        settings = get_settings()
+        engine = build_engine(settings.database_url)
+        try:
+            factory = build_session_factory(engine)
+            async with factory() as session:
+                attachment = await session.get(ChatAttachment, UUID(attachment_id))
+                if attachment is None:
+                    return
+                await chat_service.mark_attachment_processing(session, attachment.id)
+                try:
+                    storage = build_storage(settings)
+                    data = await storage.get(attachment.storage_key)
+                    text = await asyncio.to_thread(
+                        extract_text, data, attachment.filename
+                    )
+                    await chat_service.mark_attachment_ready(session, attachment.id, text)
+                except Exception:
+                    structlog.get_logger().warning(
+                        "attachment_processing_failed", exc_info=True
+                    )
+                    await chat_service.mark_attachment_failed(session, attachment.id)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def enqueue_attachment_processing(attachment_id: UUID) -> None:
+    process_attachment_task.si(str(attachment_id)).apply_async(queue="interactive")
 
 
 @celery_app.task(name="evals.run")

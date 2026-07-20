@@ -39,7 +39,7 @@ from raghub.modules.tenancy.context import (
     require_permission,
 )
 from raghub.modules.tenancy.models import Workspace
-from raghub.worker.tasks import enqueue_audit_message
+from raghub.worker.tasks import enqueue_attachment_processing, enqueue_audit_message
 
 router = APIRouter(tags=["chat"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -294,4 +294,5 @@ async def upload_attachment(
         mime=file.content_type or "application/octet-stream",
         data=bytes(buf),
     )
+    enqueue_attachment_processing(attachment.id)
     return AttachmentOut.model_validate(attachment)

@@ -176,6 +176,30 @@ async def create_attachment(
     return attachment
 
 
+async def mark_attachment_processing(session: AsyncSession, attachment_id: UUID) -> None:
+    attachment = await session.get(ChatAttachment, attachment_id)
+    if attachment is not None:
+        attachment.status = "processing"
+        await session.commit()
+
+
+async def mark_attachment_ready(
+    session: AsyncSession, attachment_id: UUID, extracted_text: str
+) -> None:
+    attachment = await session.get(ChatAttachment, attachment_id)
+    if attachment is not None:
+        attachment.extracted_text = extracted_text
+        attachment.status = "ready"
+        await session.commit()
+
+
+async def mark_attachment_failed(session: AsyncSession, attachment_id: UUID) -> None:
+    attachment = await session.get(ChatAttachment, attachment_id)
+    if attachment is not None:
+        attachment.status = "failed"
+        await session.commit()
+
+
 async def list_messages(session: AsyncSession, chat_id: UUID) -> list[Message]:
     stmt = select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
     return list((await session.execute(stmt)).scalars())
