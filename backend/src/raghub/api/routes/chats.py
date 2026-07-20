@@ -119,6 +119,17 @@ async def _resolve_workspace_and_model(
     return workspace, model
 
 
+def _chat_out(chat: Chat) -> ChatOut:
+    # Explicit construction, not ChatOut.model_validate(chat): has_summary
+    # (Task 9, spec §5) isn't a mapped ORM attribute name, so from_attributes
+    # has nothing to read it from -- it's computed here instead.
+    return ChatOut(
+        id=chat.id, workspace_id=chat.workspace_id, title=chat.title,
+        created_at=chat.created_at, updated_at=chat.updated_at,
+        has_summary=chat.summary is not None,
+    )
+
+
 @router.post(
     "/chats", status_code=201, response_model=ChatOut, dependencies=[_ChatUseDep]
 )
@@ -126,7 +137,7 @@ async def create_chat(body: ChatCreate, session: SessionDep, ctx: CtxDep) -> Cha
     chat = await service.create_chat(
         session, ctx, workspace_id=body.workspace_id, title=body.title
     )
-    return ChatOut.model_validate(chat)
+    return _chat_out(chat)
 
 
 @router.get("/chats", response_model=list[ChatOut])
@@ -134,8 +145,7 @@ async def list_chats(
     session: SessionDep, ctx: CtxDep, workspace_id: UUID | None = None
 ) -> list[ChatOut]:
     return [
-        ChatOut.model_validate(c)
-        for c in await service.list_chats(session, ctx, workspace_id=workspace_id)
+        _chat_out(c) for c in await service.list_chats(session, ctx, workspace_id=workspace_id)
     ]
 
 
@@ -148,7 +158,7 @@ async def get_chat_tree(chat_id: UUID, session: SessionDep, ctx: CtxDep) -> Chat
 async def rename_chat(
     chat_id: UUID, body: ChatPatch, session: SessionDep, ctx: CtxDep
 ) -> ChatOut:
-    return ChatOut.model_validate(await service.rename_chat(session, ctx, chat_id, body.title))
+    return _chat_out(await service.rename_chat(session, ctx, chat_id, body.title))
 
 
 @router.delete("/chats/{chat_id}", status_code=204)

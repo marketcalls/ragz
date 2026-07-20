@@ -15,8 +15,10 @@ from raghub.core.db import build_session_factory
 from raghub.core.errors import UpstreamError
 from raghub.modules.auth.models import User
 from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.chat.models import Citation, Message
+from raghub.modules.chat.models import Chat, Citation, Message
 from raghub.modules.chat.service import NO_ANSWER_TEXT
+from raghub.modules.models.models import Model
+from raghub.modules.quotas.models import UsageRecord
 from raghub.modules.retrieval.service import RetrievedChunk
 from tests.conftest import (
     FakeChunkReader,
@@ -813,3 +815,277 @@ async def test_strict_mode_without_utility_model_streams_normally(
     done = next(d for e, d in events if e == "done")
     assert done["validation_failed"] is False
     assert completer.calls == []  # no extra spend for an inert strict_mode
+
+
+# --- Task 9: rolling-summary chat memory orchestration (spec §5) ------------
+
+
+async def _seed_linear_history(session: AsyncSession, chat: Chat, turns: int) -> list[Message]:
+    """Seed `turns` alternating user/assistant messages as one linear chain
+    (turn 0 = user root, ... last turn = assistant so a real new user message
+    can attach as its child via the normal active-leaf append path). Returns
+    the seeded messages oldest -> newest."""
+    seeded: list[Message] = []
+    parent: Message | None = None
+    for i in range(turns):
+        msg = Message(
+            chat_id=chat.id, parent_message_id=parent.id if parent else None,
+            sibling_index=0, role="user" if i % 2 == 0 else "assistant",
+            content=f"turn {i}",
+        )
+        session.add(msg)
+        await session.flush()
+        parent = msg
+        seeded.append(msg)
+    await session.commit()
+    return seeded
+
+
+async def _usage_record_count(session: AsyncSession, *, feature: str) -> int:
+    rows = (
+        await session.execute(select(UsageRecord).where(UsageRecord.feature == feature))
+    ).scalars()
+    return len(list(rows))
+
+
+_LONG_HISTORY_TURNS = 22  # > _SUMMARY_TRIGGER_TURNS (20) ancestors once a new turn is sent
+_SHORT_HISTORY_TURNS = 4  # well below the trigger
+
+
+async def test_stream_reply_folds_summary_after_threshold_turns(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User, utility_model: Model,
+) -> None:
+    """Spec §5: once the path exceeds _SUMMARY_TRIGGER_TURNS ancestors AND a
+    utility model is designated, stream_reply folds the older turns into a
+    stored rolling summary and anchors it at the newest folded message."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='{"summary": "Folded summary of the early turns."}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=50, completion_tokens=20),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id), llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(), llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        await _seed_linear_history(session, chat, _LONG_HISTORY_TURNS)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    await session.refresh(chat)
+    assert chat.summary == "Folded summary of the early turns."
+    assert chat.summary_upto_message_id is not None
+    # The anchor is one of the seeded ancestors, not the new turn itself.
+    rows = await session.execute(select(Message).where(Message.chat_id == chat.id))
+    seeded_ids = {m.id for m in rows.scalars()}
+    assert chat.summary_upto_message_id in seeded_ids
+
+
+async def test_stream_reply_skips_summary_below_threshold(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User, utility_model: Model,
+) -> None:
+    """A short path (<= _SUMMARY_TRIGGER_TURNS ancestors) never folds, even
+    with a completer and a designated utility model available."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='{"summary": "should never be used"}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=5, completion_tokens=5),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id), llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(), llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        await _seed_linear_history(session, chat, _SHORT_HISTORY_TURNS)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    await session.refresh(chat)
+    assert chat.summary is None
+    assert completer.calls == []  # no fold-in call spent at all
+
+
+async def test_stream_reply_falls_back_to_truncation_without_utility_model(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """No designated utility model (note: no `utility_model` fixture here) ->
+    today's cannonball/drop truncation path, unchanged, even with a long
+    history and a completer both present."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='{"summary": "should never be used"}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=5, completion_tokens=5),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id), llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(), llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        await _seed_linear_history(session, chat, _LONG_HISTORY_TURNS)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    await session.refresh(chat)
+    assert chat.summary is None
+    assert completer.calls == []  # no utility model -> fold-in never even attempted
+
+
+async def test_stream_reply_invalidates_summary_on_fork_above_anchor(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User, utility_model: Model,
+) -> None:
+    """A regenerate/edit that forks ABOVE the summary's anchor point makes the
+    stored summary describe a conversation path we're no longer on. It must
+    not be silently reused (spec §5): the next turn on the new branch clears
+    it (or recomputes against the new path) rather than trusting it."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='{"summary": "First folded summary."}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=50, completion_tokens=20),
+        ),
+        LLMCompletion(
+            text='{"summary": "should not be reached on a short forked branch"}',
+            tool_calls=[], usage=LLMUsage(prompt_tokens=5, completion_tokens=5),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id), llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(), llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        seeded = await _seed_linear_history(session, chat, _LONG_HISTORY_TURNS)
+        r1 = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                               json={"content": "what was revenue?"}, headers=h)
+        assert r1.status_code == 200
+        await session.refresh(chat)
+        old_anchor = chat.summary_upto_message_id
+        assert old_anchor is not None
+
+        # Fork ABOVE the anchor: an early assistant ancestor (seeded[1]) becomes
+        # the explicit parent of a brand-new sibling branch that never passes
+        # through the anchor message at all.
+        fork_parent = next(m for m in seeded if m.role == "assistant")
+        r2 = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "a totally different question",
+                  "parent_message_id": str(fork_parent.id)},
+            headers=h,
+        )
+        assert r2.status_code == 200
+    await session.refresh(chat)
+    assert chat.summary_upto_message_id != old_anchor or chat.summary is None
+
+
+async def test_summary_fold_in_is_metered_as_chat_usage(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User, utility_model: Model,
+) -> None:
+    """The fold-in call is metered as feature="chat" quota usage (a live,
+    in-request chat cost) -- NOT "ingestion". A triggered fold produces TWO
+    "chat" usage records: the fold-in's own, plus the answer's."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='{"summary": "Folded summary."}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=50, completion_tokens=20),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id), llm_streamer=FakeStreamer(),
+        chunk_reader=FakeChunkReader(), llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        await _seed_linear_history(session, chat, _LONG_HISTORY_TURNS)
+        before = await _usage_record_count(session, feature="chat")
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "what was revenue?"}, headers=h)
+        assert r.status_code == 200
+    after = await _usage_record_count(session, feature="chat")
+    assert after > before + 1  # the answer's own record_usage PLUS the fold-in's
+    assert await _usage_record_count(session, feature="ingestion") == 0
+
+
+async def test_stream_reply_folds_summary_in_conversational_branch_too(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User, utility_model: Model,
+    fake_streamer: FakeStreamer,
+) -> None:
+    """The conversational (small-talk) branch shares the same _assemble_history
+    orchestration as the retrieval branch -- a long history still folds even
+    when the NEW turn itself is classified conversational."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='{"summary": "Folded summary from small talk turn."}', tool_calls=[],
+            usage=LLMUsage(prompt_tokens=50, completion_tokens=20),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id), llm_streamer=fake_streamer,
+        chunk_reader=FakeChunkReader(), llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, "a@acme.com")
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        await _seed_linear_history(session, chat, _LONG_HISTORY_TURNS)
+        r = await client.post(f"/api/v1/chats/{chat_id}/messages",
+                              json={"content": "Hi"}, headers=h)
+    assert r.status_code == 200
+    await session.refresh(chat)
+    assert chat.summary == "Folded summary from small talk turn."

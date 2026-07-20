@@ -127,6 +127,7 @@ export function ChatPage() {
     <>
       <TopBar
         title={chatQuery.data?.title || 'New chat'}
+        caption={chatQuery.data?.has_summary ? 'Earlier turns summarized for context' : undefined}
         actions={
           <>
             <UsageMeter />

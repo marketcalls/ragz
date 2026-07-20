@@ -42,6 +42,7 @@ from raghub.modules.chat.prompting import (
     build_messages,
     count_tokens,
     fit_sources,
+    fold_summary,
     parse_citation_markers,
     split_budget,
 )
@@ -203,6 +204,7 @@ async def get_chat_tree(
     citations = await list_citations(session, chat_id)
     return ChatTreeOut(
         id=chat.id, workspace_id=chat.workspace_id, title=chat.title,
+        has_summary=chat.summary is not None,
         messages=build_tree(messages, citations),
     )
 
@@ -393,6 +395,87 @@ def path_to_root(messages: list[Message], leaf: Message) -> list[Message]:
         parent_id = node.parent_message_id
     path.reverse()
     return path
+
+
+# --- Task 9: rolling-summary chat memory (spec §5) --------------------------
+
+_SUMMARY_TRIGGER_TURNS = 20
+_SUMMARY_KEEP_RECENT = 6
+
+
+def _summary_is_valid(chat: Chat, ancestor_ids: set[UUID]) -> bool:
+    """Tree-correct invalidation (spec §5): the summary covers everything up
+    to summary_upto_message_id. If that message is no longer an ancestor of
+    the message we're about to answer from (a regenerate/edit forked ABOVE
+    it), the summary describes a conversation path we're no longer on - it
+    must not be trusted."""
+    return chat.summary_upto_message_id is not None and chat.summary_upto_message_id in ancestor_ids
+
+
+async def _assemble_history(
+    session: AsyncSession, ctx: TenantContext, chat: Chat,
+    all_messages: list[Message], user_message: Message, completer: LLMCompleter | None,
+) -> tuple[list[tuple[str, str]], str | None]:
+    """Rolling-summary orchestration (spec §5). Returns (history_tuples,
+    summary_or_none) for build_messages/build_conversational_messages.
+
+    No completer, no designated utility model, or the path is still short
+    enough -> today's behavior exactly: the full ancestor path, no summary
+    (build_messages' own _budget_history does the truncation fallback, byte-
+    identical to pre-Task-9). completer is the SAME seam Plan I/J's
+    escalation tiebreak and Gatekeeper already use (no separate httpx client
+    for the fold-in call) - a None completer disables every utility-model
+    feature in this function uniformly, this one included.
+    """
+    ancestors = path_to_root(all_messages, user_message)
+    ancestor_ids = {m.id for m in ancestors}
+    valid = _summary_is_valid(chat, ancestor_ids)
+    if not valid and chat.summary is not None:
+        # Forked above the anchor: the stored summary no longer applies.
+        # Cleared eagerly rather than left dangling - the NEXT trigger starts
+        # fresh from None, not a stale summary lingering in the meantime.
+        chat.summary = None
+        chat.summary_upto_message_id = None
+        await session.commit()
+
+    if completer is None or len(ancestors) <= _SUMMARY_TRIGGER_TURNS:
+        return [(m.role, m.content) for m in ancestors], chat.summary if valid else None
+
+    utility_model = await get_utility_model(session)
+    if utility_model is None:
+        return [(m.role, m.content) for m in ancestors], chat.summary if valid else None
+
+    fold_upto_index = len(ancestors) - _SUMMARY_KEEP_RECENT
+    if valid:
+        anchor_index = next(
+            i for i, m in enumerate(ancestors) if m.id == chat.summary_upto_message_id
+        )
+        fold_from = anchor_index + 1
+    else:
+        fold_from = 0
+    to_fold = ancestors[fold_from:fold_upto_index]
+    if not to_fold:
+        return [(m.role, m.content) for m in ancestors], chat.summary if valid else None
+
+    new_summary = await fold_summary(
+        completer, utility_model.litellm_model_name,
+        chat.summary if valid else None,
+        [(m.role, m.content) for m in to_fold],
+    )
+    chat.summary = new_summary
+    chat.summary_upto_message_id = ancestors[fold_upto_index - 1].id
+    await session.commit()
+    # feature="chat", not "ingestion": this is a live, in-request chat cost,
+    # not background ingestion work.
+    util_model_name = utility_model.litellm_model_name
+    await quota_service.record_usage(
+        session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=utility_model.id,
+        feature="chat",
+        prompt_tokens=sum(count_tokens(m.content, util_model_name) for m in to_fold),
+        completion_tokens=count_tokens(new_summary, util_model_name),
+    )
+    recent = ancestors[fold_upto_index:]
+    return [(m.role, m.content) for m in recent], new_summary
 
 
 async def _previous_citation_refs(
@@ -725,15 +808,16 @@ async def stream_reply(
     try:
         if conversational:
             all_messages = await list_messages(session, chat.id)
-            history = [
-                (m.role, m.content) for m in path_to_root(all_messages, user_message)
-            ]
+            history, summary_text = await _assemble_history(
+                session, ctx, chat, all_messages, user_message, completer,
+            )
             prompt = build_conversational_messages(
                 history=history,
                 user_query=user_message.content,
                 budget=settings.chat_context_token_budget,
                 system_prompt_override=workspace.system_prompt_override,
                 model_hint=model.litellm_model_name,
+                summary=summary_text,
             )
 
             convo_usage: LLMUsage | None = None
@@ -1001,7 +1085,9 @@ async def stream_reply(
                              grounding="documents")
             return
 
-        history = [(m.role, m.content) for m in path_to_root(all_messages, user_message)]
+        history, summary_text = await _assemble_history(
+            session, ctx, chat, all_messages, user_message, completer,
+        )
         prompt = build_messages(
             sources=kept_sources,
             history=history,
@@ -1009,6 +1095,7 @@ async def stream_reply(
             budget=settings.chat_context_token_budget,
             system_prompt_override=workspace.system_prompt_override,
             model_hint=model_hint,
+            summary=summary_text,
         )
 
         # Phase 3 Plan J Task 7 (design D4/§3): the Gatekeeper engages ONLY for
@@ -1041,6 +1128,7 @@ async def stream_reply(
                     sources=kept_sources, history=history, user_query=user_message.content,
                     budget=settings.chat_context_token_budget,
                     system_prompt_override=override, model_hint=model_hint,
+                    summary=summary_text,
                 ),
             )
             streamed_parts.append(gatekept.text)

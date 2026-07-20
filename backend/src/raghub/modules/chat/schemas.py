@@ -40,6 +40,10 @@ class ChatOut(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    # Task 9 (spec §5): not a mapped ORM attribute name -- from_attributes
+    # can't derive it, so every construction site passes it explicitly as
+    # `has_summary=chat.summary is not None`.
+    has_summary: bool
 
     model_config = {"from_attributes": True}
 
@@ -88,4 +92,5 @@ class ChatTreeOut(BaseModel):
     id: UUID
     workspace_id: UUID
     title: str
+    has_summary: bool
     messages: list[MessageNode]

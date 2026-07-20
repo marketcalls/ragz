@@ -1132,6 +1132,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Has Summary */
+            has_summary: boolean;
         };
         /** ChatPatch */
         ChatPatch: {
@@ -1152,6 +1154,8 @@ export interface components {
             workspace_id: string;
             /** Title */
             title: string;
+            /** Has Summary */
+            has_summary: boolean;
             /** Messages */
             messages: components["schemas"]["MessageNode"][];
         };
