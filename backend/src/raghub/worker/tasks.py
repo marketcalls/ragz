@@ -4,6 +4,7 @@ No business logic lives here — only retry/queue/failure plumbing.
 """
 
 import asyncio
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -11,7 +12,7 @@ import structlog
 from celery import Task, chain
 
 from raghub.core.config import get_settings
-from raghub.core.db import build_engine, build_session_factory
+from raghub.core.db import build_engine, build_session_factory, naive_utc
 from raghub.core.storage import build_storage
 from raghub.modules.chat import service as chat_service
 from raghub.modules.chat.attachments import extract_text
@@ -22,7 +23,7 @@ from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.evals.runner import run_eval
 from raghub.modules.evals.service import workspace_ids_with_golden_queries
 from raghub.modules.models import catalog
-from raghub.modules.retrieval.service import retrieve
+from raghub.modules.retrieval.service import delete_ephemeral_points, retrieve
 from raghub.modules.tenancy.models import Workspace
 from raghub.worker.celery_app import celery_app
 
@@ -297,6 +298,44 @@ def run_all_workspaces_task() -> None:
             async with factory() as session:
                 for workspace_id in await workspace_ids_with_golden_queries(session):
                     enqueue_eval_run(workspace_id, "nightly")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
+@celery_app.task(name="attachments.cleanup_stale")
+def cleanup_stale_attachments_task() -> None:
+    """Task 7 (DOC-9): daily Beat sweep deleting ephemeral chat attachments
+    past the 24h TTL -- DB row (chat_service.delete_attachment), MinIO blob
+    (storage.delete), and Qdrant points (delete_ephemeral_points, once per
+    affected chat_id since the ephemeral collection is filtered by chat_id,
+    not attachment_id). A blob-delete failure is logged and swallowed rather
+    than aborting the sweep -- an orphaned MinIO object is a cheap, recoverable
+    leak, not a reason to leave the DB row (and the Qdrant points still
+    referencing it) around for another day."""
+
+    async def _run() -> None:
+        settings = get_settings()
+        engine = build_engine(settings.database_url)
+        try:
+            factory = build_session_factory(engine)
+            async with factory() as session:
+                cutoff = naive_utc() - timedelta(hours=24)
+                stale = await chat_service.list_stale_attachments(session, cutoff)
+                chat_ids = {a.chat_id for a in stale}
+                storage = build_storage(settings)
+                for attachment in stale:
+                    try:
+                        await storage.delete(attachment.storage_key)
+                    except Exception:
+                        structlog.get_logger().warning(
+                            "attachment_blob_delete_failed",
+                            attachment_id=str(attachment.id), exc_info=True,
+                        )
+                    await chat_service.delete_attachment(session, attachment)
+                for chat_id in chat_ids:
+                    await delete_ephemeral_points(chat_id)
         finally:
             await engine.dispose()
 

@@ -211,6 +211,24 @@ async def mark_attachment_failed(session: AsyncSession, attachment_id: UUID) -> 
         await session.commit()
 
 
+async def list_stale_attachments(
+    session: AsyncSession, cutoff: datetime
+) -> list[ChatAttachment]:
+    """Task 7 (DOC-9): attachments older than the 24h TTL, for the daily Beat
+    sweep. Deletion itself (DB row + MinIO blob + Qdrant points) is the
+    caller's job (worker/tasks.py's cleanup_stale_attachments_task) so each
+    side-effect stays independently testable."""
+    stmt = select(ChatAttachment).where(ChatAttachment.created_at < cutoff)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def delete_attachment(session: AsyncSession, attachment: ChatAttachment) -> None:
+    """Deletes the DB row only -- MinIO blob and Qdrant points are the
+    caller's responsibility (see list_stale_attachments)."""
+    await session.delete(attachment)
+    await session.commit()
+
+
 _ATTACHMENT_INLINE_TOKEN_BUDGET = 4000
 
 

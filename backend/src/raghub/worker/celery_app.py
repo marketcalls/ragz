@@ -43,6 +43,12 @@ def build_celery() -> Celery:
                 "task": "evals.run_all_workspaces",
                 "schedule": 24 * 60 * 60,
             },
+            # Task 7 (DOC-9): daily TTL sweep for ephemeral chat attachments,
+            # same interval-seconds style as the two entries above.
+            "attachment-ttl-cleanup": {
+                "task": "attachments.cleanup_stale",
+                "schedule": 24 * 60 * 60,
+            },
         },
     )
     return app
