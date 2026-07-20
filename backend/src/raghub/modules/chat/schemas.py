@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -21,12 +22,14 @@ class MessageSend(BaseModel):
     content: str = Field(min_length=1, max_length=32000)
     parent_message_id: UUID | None = None
     model_id: UUID | None = None
+    reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
 
 
 class RegenerateRequest(BaseModel):
     """Optional body of POST /messages/{id}/regenerate."""
 
     model_id: UUID | None = None
+    reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
 
 
 class ChatCreate(BaseModel):

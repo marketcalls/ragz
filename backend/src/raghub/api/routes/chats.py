@@ -119,6 +119,18 @@ async def _resolve_workspace_and_model(
     return workspace, model
 
 
+def _resolve_reasoning_effort(model: Model, requested: str | None) -> str | None:
+    """None/"off" always means "don't ask for reasoning" — never a conflict,
+    even on a model with supports_reasoning=False. Any real tier
+    (low/medium/high) on an unsupported model is rejected fast, before any
+    SSE bytes are sent, same as the model_id resolution above it."""
+    if requested is None or requested == "off":
+        return None
+    if not model.supports_reasoning:
+        raise ConflictError(f"model does not support reasoning effort: {model.display_name}")
+    return requested
+
+
 def _chat_out(chat: Chat) -> ChatOut:
     # Explicit construction, not ChatOut.model_validate(chat): has_summary
     # (Task 9, spec §5) isn't a mapped ORM attribute name, so from_attributes
@@ -175,6 +187,7 @@ async def send_message(
     workspace, model = await _resolve_workspace_and_model(
         session, ctx, chat, body.model_id
     )  # fail fast
+    reasoning_effort = _resolve_reasoning_effort(model, body.reasoning_effort)
     await quota_service.check_quota(
         session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
     )
@@ -196,6 +209,7 @@ async def send_message(
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
+        reasoning_effort=reasoning_effort,
     ))
 
 
@@ -210,6 +224,9 @@ async def regenerate(
         raise ConflictError("only assistant messages can be regenerated")
     workspace, model = await _resolve_workspace_and_model(
         session, ctx, chat, body.model_id if body is not None else None
+    )
+    reasoning_effort = _resolve_reasoning_effort(
+        model, body.reasoning_effort if body is not None else None
     )
     await quota_service.check_quota(
         session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
@@ -226,4 +243,5 @@ async def regenerate(
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
+        reasoning_effort=reasoning_effort,
     ))

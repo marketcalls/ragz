@@ -1095,6 +1095,64 @@ async def test_stream_reply_folds_summary_in_conversational_branch_too(
     assert chat.summary == "Folded summary from small talk turn."
 
 
+async def test_send_message_rejects_reasoning_effort_on_unsupported_model(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """The model created by make_model_and_chat defaults to
+    supports_reasoning=False -- requesting a real tier on it must 409 before
+    any SSE bytes are sent, same as the model_id resolution checks above it."""
+    h = await auth(chat_client, "a@acme.com")
+    chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/messages",
+        json={"content": "hi", "reasoning_effort": "high"},
+        headers=h,
+    )
+    assert r.status_code == 409
+
+
+async def test_send_message_accepts_reasoning_effort_on_supported_model(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
+) -> None:
+    h = await auth(chat_client, "a@acme.com")
+    h_super = await auth(chat_client, "root@platform.example")
+    chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+    model_id = (
+        await session.execute(select(Model).where(Model.litellm_model_name == "llama3"))
+    ).scalar_one().id
+    r_patch = await chat_client.patch(
+        f"/api/v1/admin/models/{model_id}",
+        json={"supports_reasoning": True}, headers=h_super,
+    )
+    assert r_patch.status_code == 200
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/messages",
+        json={"content": "hi", "reasoning_effort": "high"},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert fake_streamer.calls[-1]["reasoning_effort"] == "high"
+
+
+async def test_send_message_off_is_always_accepted(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
+) -> None:
+    """"off"/absent never actually requests reasoning, so it must never
+    conflict, even on a model with supports_reasoning=False."""
+    h = await auth(chat_client, "a@acme.com")
+    chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/messages",
+        json={"content": "hi", "reasoning_effort": "off"},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert fake_streamer.calls[-1]["reasoning_effort"] is None
+
+
 async def test_general_knowledge_fallback_threads_existing_summary(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     session: AsyncSession, seeded_user: User, seeded_superadmin: User,
