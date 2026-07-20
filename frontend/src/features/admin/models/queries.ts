@@ -17,6 +17,8 @@ export interface ModelCreate {
   // generated wire type has no default-implies-optional exemption, so every
   // caller states it explicitly.
   tools_unreliable: boolean;
+  supports_reasoning: boolean;
+  default_reasoning_effort: 'off' | 'low' | 'medium' | 'high';
 }
 
 export interface ModelPatchInput {
@@ -25,6 +27,8 @@ export interface ModelPatchInput {
   enabled?: boolean;
   api_key?: string; // write-only: sent, never read back
   tools_unreliable?: boolean;
+  supports_reasoning?: boolean;
+  default_reasoning_effort?: 'off' | 'low' | 'medium' | 'high';
   // Phase 3 Plan J (D5/§4): setting true designates this model as THE utility
   // model, clearing every other row's flag server-side in the same
   // transaction — callers only ever send `true`, never `false` (the backend

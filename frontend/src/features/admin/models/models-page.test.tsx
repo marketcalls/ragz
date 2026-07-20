@@ -32,6 +32,8 @@ const modelA: ModelOut = {
   mock_response: null,
   tools_unreliable: false,
   is_utility: true,
+  supports_reasoning: false,
+  default_reasoning_effort: 'off',
 };
 
 const modelB: ModelOut = {
@@ -46,6 +48,8 @@ const modelB: ModelOut = {
   mock_response: null,
   tools_unreliable: false,
   is_utility: false,
+  supports_reasoning: false,
+  default_reasoning_effort: 'off',
 };
 
 const patchMutate = vi.fn();

@@ -183,6 +183,10 @@ export function ModelFormDialog({
   const [baseUrl, setBaseUrl] = useState(model?.base_url ?? '');
   const [apiKey, setApiKey] = useState(''); // write-only: always starts blank, even editing
   const [toolsUnreliable, setToolsUnreliable] = useState(model?.tools_unreliable ?? false);
+  const [supportsReasoning, setSupportsReasoning] = useState(model?.supports_reasoning ?? false);
+  const [defaultEffort, setDefaultEffort] = useState<'off' | 'low' | 'medium' | 'high'>(
+    model?.default_reasoning_effort ?? 'off',
+  );
 
   const isCustom = catalogProvider === CUSTOM;
   // null until a provider is chosen in add mode — downstream fields stay hidden.
@@ -236,6 +240,8 @@ export function ModelFormDialog({
       setBaseUrl(model?.base_url ?? '');
       setApiKey(''); // key never lingers in state after close
       setToolsUnreliable(model?.tools_unreliable ?? false);
+      setSupportsReasoning(model?.supports_reasoning ?? false);
+      setDefaultEffort(model?.default_reasoning_effort ?? 'off');
       create.reset();
       patch.reset();
     }
@@ -291,6 +297,12 @@ export function ModelFormDialog({
       if (toolsUnreliable !== (model.tools_unreliable ?? false)) {
         body.tools_unreliable = toolsUnreliable;
       }
+      if (supportsReasoning !== (model.supports_reasoning ?? false)) {
+        body.supports_reasoning = supportsReasoning;
+      }
+      if (defaultEffort !== (model.default_reasoning_effort ?? 'off')) {
+        body.default_reasoning_effort = defaultEffort;
+      }
       patch.mutate({ modelId: model.id, body }, handleSettled);
       return;
     }
@@ -302,6 +314,8 @@ export function ModelFormDialog({
       ...(NEEDS_BASE_URL.includes(kind) && baseUrl ? { base_url: baseUrl } : {}),
       ...(NEEDS_KEY.includes(kind) && apiKey ? { api_key: apiKey } : {}),
       tools_unreliable: toolsUnreliable,
+      supports_reasoning: supportsReasoning,
+      default_reasoning_effort: defaultEffort,
     };
     create.mutate(body, handleSettled);
   };
@@ -426,6 +440,37 @@ export function ModelFormDialog({
               />
               Unreliable at native tool calling — agent uses the JSON planner
             </label>
+          ) : null}
+          {kind !== null ? (
+            <>
+              <label className="flex items-center gap-2 text-[13px] text-secondary">
+                <input
+                  type="checkbox"
+                  checked={supportsReasoning}
+                  onChange={(e) => setSupportsReasoning(e.target.checked)}
+                  aria-label="Supports reasoning"
+                />
+                Supports reasoning — lets chat users pick a thinking effort
+              </label>
+              {supportsReasoning ? (
+                <div>
+                  <Label htmlFor="model-default-effort">Default reasoning effort</Label>
+                  <NativeSelect
+                    id="model-default-effort"
+                    aria-label="Default reasoning effort"
+                    value={defaultEffort}
+                    onChange={(e) =>
+                      setDefaultEffort(e.target.value as 'off' | 'low' | 'medium' | 'high')
+                    }
+                  >
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </NativeSelect>
+                </div>
+              ) : null}
+            </>
           ) : null}
           {activeError && !(activeError instanceof PartialSyncError) ? (
             <p role="alert" className="text-[12px] text-danger">

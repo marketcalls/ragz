@@ -25,6 +25,8 @@ const fixtureModel: ModelOut = {
   mock_response: null,
   tools_unreliable: false,
   is_utility: false,
+  supports_reasoning: false,
+  default_reasoning_effort: 'off',
 };
 
 // Entries as the API returns them: provider ASC, position DESC (newest first).
@@ -68,6 +70,13 @@ function mutationCalls(fetchMock: ReturnType<typeof vi.fn>): Request[] {
   return fetchMock.mock.calls
     .map((c) => c[0] as Request)
     .filter((r) => !r.url.includes('/admin/models/catalog'));
+}
+
+async function mutationBodies(
+  fetchMock: ReturnType<typeof vi.fn>,
+): Promise<Record<string, unknown>[]> {
+  const reqs = mutationCalls(fetchMock);
+  return Promise.all(reqs.map((r) => r.clone().json() as Promise<Record<string, unknown>>));
 }
 
 function renderDialog(
@@ -336,6 +345,54 @@ test('edit mode PATCHes only the fields that changed', async () => {
   expect(req.method).toBe('PATCH');
   const body = JSON.parse(await req.clone().text()) as Record<string, unknown>;
   expect(body).toEqual({ display_name: 'GPT-4o mini v2' });
+});
+
+test('reasoning toggle shows the effort select only when checked, and sends both fields on create', async () => {
+  const user = userEvent.setup();
+  const fetchMock = routedFetch(created());
+  vi.stubGlobal('fetch', fetchMock);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ModelFormDialog open onOpenChange={() => {}} />
+    </QueryClientProvider>,
+  );
+
+  await user.click(screen.getByLabelText('Provider'));
+  await user.click(await screen.findByRole('option', { name: 'openai' }));
+  await user.click(screen.getByLabelText('Model'));
+  await user.click(await screen.findByRole('option', { name: /gpt-4o-mini/ }));
+
+  expect(screen.queryByLabelText('Default reasoning effort')).not.toBeInTheDocument();
+  await user.click(screen.getByLabelText('Supports reasoning'));
+  expect(screen.getByLabelText('Default reasoning effort')).toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText('Default reasoning effort'), 'medium');
+
+  await user.type(screen.getByLabelText('API key'), 'sk-live-abc');
+  await user.click(screen.getByRole('button', { name: 'Add model' }));
+
+  const body = (await mutationBodies(fetchMock))[0]!;
+  expect(body.supports_reasoning).toBe(true);
+  expect(body.default_reasoning_effort).toBe('medium');
+});
+
+test('editing an existing model only sends changed reasoning fields', async () => {
+  const user = userEvent.setup();
+  const fetchMock = routedFetch(created());
+  vi.stubGlobal('fetch', fetchMock);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ModelFormDialog open onOpenChange={() => {}} model={fixtureModel} />
+    </QueryClientProvider>,
+  );
+
+  expect(screen.queryByLabelText('Default reasoning effort')).not.toBeInTheDocument();
+  await user.click(screen.getByLabelText('Supports reasoning'));
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+  const body = (await mutationBodies(fetchMock))[0]!;
+  expect(body).toEqual({ supports_reasoning: true });
 });
 
 test('deriveProviderKind maps openai and ollama through, everything else to litellm', () => {
