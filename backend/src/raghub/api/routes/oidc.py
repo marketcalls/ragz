@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.api.routes.auth import _set_refresh
 from raghub.core.config import Settings, get_settings
-from raghub.core.errors import AuthenticationError, NotFoundError, SecretsError, UpstreamError
+from raghub.core.errors import (
+    AuthenticationError,
+    NotFoundError,
+    RateLimitExceeded,
+    SecretsError,
+    UpstreamError,
+)
 from raghub.core.ratelimit import rate_limit
 from raghub.modules.auth import oidc
 from raghub.modules.auth import service as auth_service
@@ -50,10 +56,7 @@ async def login(request: Request, session: SessionDep, settings: SettingsDep) ->
     return RedirectResponse(url, status_code=302)
 
 
-@router.get(
-    "/callback",
-    dependencies=[Depends(rate_limit("oidc_callback", limit=10, window_seconds=60))],
-)
+@router.get("/callback")
 async def callback(
     code: str, state: str, request: Request, session: SessionDep, settings: SettingsDep
 ) -> RedirectResponse:
@@ -61,7 +64,16 @@ async def callback(
     # API call -- a problem+json body would render as raw JSON to the user.
     # Any failure here sends the browser back to the login page instead; the
     # reason stays in structlog, never in the redirect URL (contract C7).
+    #
+    # The rate-limit guard is deliberately NOT a `Depends(...)` here (unlike
+    # every other route in this file): FastAPI runs dependencies before the
+    # route body, so a dependency-raised RateLimitExceeded would be dispatched
+    # straight to the global problem+json handler, bypassing this try/except
+    # entirely and breaking contract C7 for the one failure mode that matters
+    # most (a hammered callback URL). Calling the guard as the first statement
+    # inside the try block instead keeps it on this route's own error path.
     try:
+        await rate_limit("oidc_callback", limit=10, window_seconds=60)(request)
         provider = await oidc.load_provider(session, transport=request.app.state.oidc_transport)
         if provider is None:
             raise NotFoundError("SSO is not configured")
@@ -71,7 +83,7 @@ async def callback(
             settings=settings, transport=request.app.state.oidc_transport,
         )
         pair = await auth_service.login_oidc(session, email=email, settings=settings)
-    except (AuthenticationError, UpstreamError, NotFoundError, SecretsError):
+    except (AuthenticationError, UpstreamError, NotFoundError, SecretsError, RateLimitExceeded):
         log.warning("oidc_callback_failed", exc_info=True)
         return RedirectResponse(
             f"{settings.frontend_base_url}/login?sso_error=1", status_code=302

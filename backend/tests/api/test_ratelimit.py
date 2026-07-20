@@ -55,11 +55,19 @@ async def test_oidc_login_rate_limited(client: httpx.AsyncClient) -> None:
     assert r.headers["content-type"].startswith("application/problem+json")
 
 
-async def test_oidc_callback_rate_limited(client: httpx.AsyncClient) -> None:
+async def test_oidc_callback_rate_limited_redirects_not_problem_json(
+    client: httpx.AsyncClient,
+) -> None:
+    # Unlike every other rate-limited route, /oidc/callback is a top-level
+    # browser navigation (redirect from the IdP) -- a 429 problem+json body
+    # would render as raw JSON to the user instead of sending them back to
+    # login. Contract C7 says this route must redirect on every failure mode,
+    # rate-limiting included.
     for _ in range(10):
         await client.get("/api/v1/auth/oidc/callback?code=x&state=y", follow_redirects=False)
     r = await client.get("/api/v1/auth/oidc/callback?code=x&state=y", follow_redirects=False)
-    assert r.status_code == 429
+    assert r.status_code == 302
+    assert r.headers["location"].endswith("/login?sso_error=1")
 
 
 async def test_oidc_status_rate_limited(client: httpx.AsyncClient) -> None:
