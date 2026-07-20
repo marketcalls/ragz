@@ -10,6 +10,7 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_session_factory
 from raghub.core.storage import build_storage
 from raghub.modules.audit.models import AuditEvent
+from raghub.modules.chat.llm import LLMCompletion, LLMUsage
 from raghub.modules.documents import ingest as ingest_module
 from raghub.modules.documents.ingest import (
     mark_failed,
@@ -268,3 +269,130 @@ async def test_embed_upsert_stamps_final_metadata_after_race(
     )
     assert points
     assert all(p.payload["meta"] == {"doc_type": "policy"} for p in points)
+
+
+# --- Plan K Task 6: enrichment wired into run_embed_upsert ------------------
+
+_ENRICH_RESPONSE = (
+    '{"summary": "The flux capacitor needs 1.21 gigawatts.", '
+    '"keywords": ["flux capacitor", "gigawatts"], '
+    '"hypothetical_questions": ["How much power does the flux capacitor need?"]}'
+)
+
+
+class _FakeUtilityCompleter:
+    """Scriptable LLMCompleter standing in for the real utility model. A
+    string response is returned verbatim as completion text; an Exception
+    instance is raised instead, simulating an unreachable/erroring model."""
+
+    def __init__(self, response: str | Exception) -> None:
+        self._response = response
+        self.calls = 0
+
+    async def complete(  # type: ignore[no-untyped-def]
+        self, *, model, messages, tools=None
+    ) -> LLMCompletion:
+        self.calls += 1
+        if isinstance(self._response, Exception):
+            raise self._response
+        return LLMCompletion(
+            text=self._response, tool_calls=[],
+            usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+        )
+
+
+def _patch_utility_completer(
+    monkeypatch: pytest.MonkeyPatch, response: str | Exception
+) -> _FakeUtilityCompleter:
+    """run_embed_upsert constructs its own LiteLLMStreamer; intercept the
+    class itself (same seam already used above for embed_batch/_BATCH_SIZE)
+    so no real HTTP call to the gateway is ever attempted in tests."""
+    fake = _FakeUtilityCompleter(response)
+    monkeypatch.setattr(ingest_module, "LiteLLMStreamer", lambda **_kwargs: fake)
+    return fake
+
+
+async def _upload_with_chunks(
+    session: AsyncSession, name: str, *, enrichment_enabled: bool, data: bytes = TEXT
+) -> tuple:  # type: ignore[type-arg]
+    ctx, ws, doc = await _upload(session, name, data)
+    ws.enrichment_enabled = enrichment_enabled
+    await session.commit()
+    await run_parse(doc.id)
+    await run_chunk(doc.id)
+    return ctx, ws, doc
+
+
+async def _count_hq_points(document_id) -> int:  # type: ignore[no-untyped-def]
+    points, _ = await get_qdrant().scroll(
+        COLLECTION,
+        scroll_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id", match=models.MatchValue(value=str(document_id))
+                ),
+                models.FieldCondition(key="kind", match=models.MatchValue(value="hq")),
+            ]
+        ),
+        limit=1000,
+        with_payload=False,
+    )
+    return len(points)
+
+
+async def test_run_embed_upsert_enriches_when_workspace_enabled(
+    session: AsyncSession, qdrant_collection: None, utility_model: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ctx, _ws, doc = await _upload_with_chunks(session, "enrich1", enrichment_enabled=True)
+    _patch_utility_completer(monkeypatch, _ENRICH_RESPONSE)
+
+    await run_embed_upsert(doc.id)
+
+    await session.refresh(doc)
+    assert doc.enriched is True
+    assert await _count_hq_points(doc.id) > 0
+
+
+async def test_run_embed_upsert_skips_enrichment_when_workspace_disabled(
+    session: AsyncSession, qdrant_collection: None, utility_model: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ctx, _ws, doc = await _upload_with_chunks(session, "enrich2", enrichment_enabled=False)
+    _patch_utility_completer(monkeypatch, _ENRICH_RESPONSE)
+
+    await run_embed_upsert(doc.id)
+
+    await session.refresh(doc)
+    assert doc.enriched is False
+    assert await _count_hq_points(doc.id) == 0
+
+
+async def test_run_embed_upsert_enrichment_failure_does_not_fail_ingest(
+    session: AsyncSession, qdrant_collection: None, utility_model: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ctx, _ws, doc = await _upload_with_chunks(session, "enrich3", enrichment_enabled=True)
+    fake = _patch_utility_completer(monkeypatch, RuntimeError("utility model down"))
+
+    await run_embed_upsert(doc.id)  # must not raise
+
+    await session.refresh(doc)
+    assert doc.status == "indexed"  # ingestion succeeded despite enrichment failing
+    assert doc.enriched is False  # honestly reflects that enrichment did NOT happen
+    assert fake.calls > 0  # the enrichment path really was attempted, not skipped
+
+
+async def test_run_embed_upsert_skips_enrichment_when_no_utility_model(
+    session: AsyncSession, qdrant_collection: None,
+) -> None:
+    # No `utility_model` fixture here: no Model row has is_utility=True, so
+    # resolve_utility_model(session) resolves to None even though the
+    # workspace itself has enrichment enabled.
+    _ctx, _ws, doc = await _upload_with_chunks(session, "enrich4", enrichment_enabled=True)
+
+    await run_embed_upsert(doc.id)
+
+    await session.refresh(doc)
+    assert doc.status == "indexed"
+    assert doc.enriched is False

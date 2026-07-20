@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from uuid import UUID
 
+import structlog
+from qdrant_client import models as qdrant_models
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,9 @@ from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory, naive_utc
 from raghub.core.storage import ObjectStorage, build_storage
 from raghub.modules.audit.service import record_audit
+from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter
 from raghub.modules.documents import service as documents_service
+from raghub.modules.documents.enrichment import enrich_chunk
 from raghub.modules.documents.models import Document, IngestJob
 from raghub.modules.documents.pipeline import (
     Chunk,
@@ -26,8 +30,10 @@ from raghub.modules.documents.pipeline import (
     chunk_blocks,
     embed_batch,
     parse_bytes,
+    upsert_hq_points,
     upsert_points,
 )
+from raghub.modules.models import service as models_service
 from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import (
@@ -36,6 +42,9 @@ from raghub.modules.retrieval.service import (
     update_document_acl,
     update_document_metadata,
 )
+from raghub.modules.tenancy.models import Workspace
+
+log = structlog.get_logger()
 
 _BATCH_SIZE = 32
 
@@ -149,16 +158,82 @@ async def run_embed_upsert(document_id: UUID) -> None:
         chunks = [Chunk(**c) for c in json.loads(raw)]
         await ensure_collection()  # workspaces are bge-m3-locked in Phase 1
         dense_embedder = get_dense_embedder()
+
+        # Plan K §4: enrichment is gated by the workspace toggle AND a
+        # designated utility model — resolved once, up front, so a mid-loop
+        # ACL/metadata race (handled below via `still_exists`) can't also
+        # flip enrichment eligibility partway through a run.
+        workspace = await session.get(Workspace, doc.workspace_id)
+        settings = get_settings()
+        utility_model = (
+            await models_service.resolve_utility_model(session)
+            if workspace is not None and workspace.enrichment_enabled
+            else None
+        )
+        completer: LLMCompleter | None = None
+        if utility_model is not None:
+            completer = LiteLLMStreamer(
+                base_url=settings.litellm_url, master_key=settings.litellm_master_key,
+            )
+        any_batch_enriched = False
+
         done = 0
         for i in range(0, len(chunks), _BATCH_SIZE):
             batch = chunks[i : i + _BATCH_SIZE]
             dense, sparse = await embed_batch([c.text for c in batch], dense_embedder)
+
+            summaries: list[str | None] = [None] * len(batch)
+            if completer is not None and utility_model is not None:
+                try:
+                    enrichments = [
+                        await enrich_chunk(completer, utility_model.litellm_model_name, c.text)
+                        for c in batch
+                    ]
+                    summaries = [e.summary for e in enrichments]
+                    sparse_texts = [
+                        f"{c.text} {' '.join(e.keywords)}".strip()
+                        for c, e in zip(batch, enrichments, strict=True)
+                    ]
+                    dense, sparse = await embed_batch(
+                        [c.text for c in batch], dense_embedder, sparse_texts=sparse_texts
+                    )
+                    hq_by_chunk = [e.hypothetical_questions for e in enrichments]
+                    if any(hq_by_chunk):
+                        hq_dense: list[list[list[float]]] = []
+                        hq_sparse: list[list[qdrant_models.SparseVector]] = []
+                        for qs in hq_by_chunk:
+                            if not qs:
+                                hq_dense.append([])
+                                hq_sparse.append([])
+                                continue
+                            d, s = await embed_batch(qs, dense_embedder)
+                            hq_dense.append(d)
+                            hq_sparse.append(s)
+                        await upsert_hq_points(
+                            org_id=doc.org_id, workspace_id=doc.workspace_id,
+                            document_id=doc.id, mime=doc.mime, created_at=doc.created_at,
+                            acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
+                            version=doc.version, meta=doc.meta, is_current=False,
+                            parent_chunks=batch, parent_summaries=summaries,
+                            hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
+                        )
+                    any_batch_enriched = True
+                except Exception:
+                    # Enrichment must never fail ingestion — it's a
+                    # searchability enhancement, not a correctness
+                    # requirement. Fall back to plain embedding for this
+                    # batch; doc.enriched stays False, the honest signal
+                    # that enrichment did not actually happen (Task 7's
+                    # backfill selector relies on this to retry later).
+                    log.warning("chunk_enrichment_failed", exc_info=True)
+                    dense, sparse = await embed_batch([c.text for c in batch], dense_embedder)
+
             await upsert_points(
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
                 mime=doc.mime, created_at=doc.created_at,
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
-                meta=doc.meta,
+                meta=doc.meta, summaries=summaries,
             )
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)
@@ -205,6 +280,14 @@ async def run_embed_upsert(document_id: UUID) -> None:
             feature="ingestion",
             prompt_tokens=sum(len(c.text) for c in chunks) // 4, completion_tokens=0,
         )
+
+        # Stamp on `still_exists`, the freshly-repopulated row (not the
+        # possibly-stale `doc` reference), mirroring the ACL/metadata
+        # re-stamps above — same identity-map entry as `doc`, but this keeps
+        # the intent explicit: `enriched` reflects the CURRENT state, and
+        # only flips True once a batch's enrichment genuinely completed.
+        if any_batch_enriched:
+            still_exists.enriched = True
 
         doc.status = "indexed"
         doc.vectors_present = True
