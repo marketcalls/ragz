@@ -93,3 +93,20 @@ class Citation(UUIDPk, Base):
     version: Mapped[int] = mapped_column(default=1)
     # Phase 3 Plan I Task 11 (D7): set only for web citations; None for document ones.
     url: Mapped[str | None] = mapped_column(Text(), default=None)
+
+
+class MessageFeedback(Base):
+    """One row per message (1:1), same PK-is-the-FK pattern as
+    OrgQuota/UserQuota. Chats are single-user, so there is no per-voter
+    fan-out to model."""
+
+    __tablename__ = "message_feedback"
+
+    message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    rating: Mapped[str]  # "up" | "down"
+    comment: Mapped[str | None] = mapped_column(Text(), default=None)
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(default=naive_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)

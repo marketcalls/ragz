@@ -68,6 +68,18 @@ class CitationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FeedbackOut(BaseModel):
+    rating: str
+    comment: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class MessageFeedbackIn(BaseModel):
+    rating: Literal["up", "down"]
+    comment: str | None = None
+
+
 class MessageNode(BaseModel):
     id: UUID
     parent_message_id: UUID | None
@@ -85,6 +97,7 @@ class MessageNode(BaseModel):
     completeness_score: float | None = None
     validation_failed: bool = False
     citations: list[CitationOut]
+    feedback: FeedbackOut | None
     children: list["MessageNode"]
 
 

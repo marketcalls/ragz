@@ -85,6 +85,51 @@ async def test_list_chats_filtered_by_workspace(
     assert {c["id"] for c in unfiltered.json()} == {chat1_id, chat2_id}
 
 
+async def test_message_feedback_round_trip_and_appears_in_chat_tree(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User,
+) -> None:
+    h = await auth(chat_client, "a@acme.com")
+    chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+
+    await chat_client.post(f"/api/v1/chats/{chat_id}/messages",
+                           json={"content": "v1?"}, headers=h)
+
+    tree = (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).json()
+    root = tree["messages"][0]
+    assert root["feedback"] is None
+    message_id = root["children"][0]["id"]  # assistant reply
+    assert root["children"][0]["feedback"] is None
+
+    r = await chat_client.put(
+        f"/api/v1/messages/{message_id}/feedback",
+        json={"rating": "down", "comment": "wrong citation"},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert r.json() == {"rating": "down", "comment": "wrong citation"}
+
+    tree = (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).json()
+    msg = next(m for m in tree["messages"][0]["children"] if m["id"] == message_id)
+    assert msg["feedback"] == {"rating": "down", "comment": "wrong citation"}
+
+    # Switching rating overwrites, not duplicates.
+    r2 = await chat_client.put(
+        f"/api/v1/messages/{message_id}/feedback",
+        json={"rating": "up"},
+        headers=h,
+    )
+    assert r2.json() == {"rating": "up", "comment": None}
+
+    # DELETE clears it entirely.
+    assert (
+        await chat_client.delete(f"/api/v1/messages/{message_id}/feedback", headers=h)
+    ).status_code == 204
+    tree2 = (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).json()
+    msg2 = next(m for m in tree2["messages"][0]["children"] if m["id"] == message_id)
+    assert msg2["feedback"] is None
+
+
 async def test_send_rate_limited_per_user(
     chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
     seeded_user: User, seeded_superadmin: User,

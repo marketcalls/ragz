@@ -34,7 +34,7 @@ from raghub.modules.chat.events import (
     token_event,
 )
 from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
-from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message
+from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message, MessageFeedback
 from raghub.modules.chat.prompting import (
     PromptSource,
     build_conversational_messages,
@@ -47,7 +47,7 @@ from raghub.modules.chat.prompting import (
     split_budget,
 )
 from raghub.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
-from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, MessageNode
+from raghub.modules.chat.schemas import ChatTreeOut, CitationOut, FeedbackOut, MessageNode
 from raghub.modules.chat.validation import (
     build_auditor_messages,
     classify_escalation,
@@ -171,8 +171,57 @@ async def list_citations(
     return by_message
 
 
+async def list_feedback(
+    session: AsyncSession, chat_id: UUID
+) -> dict[UUID, MessageFeedback]:
+    stmt = (
+        select(MessageFeedback)
+        .join(Message, Message.id == MessageFeedback.message_id)
+        .where(Message.chat_id == chat_id)
+    )
+    return {fb.message_id: fb for fb in (await session.execute(stmt)).scalars()}
+
+
+async def set_message_feedback(
+    session: AsyncSession, ctx: TenantContext, message_id: UUID,
+    *, rating: str, comment: str | None,
+) -> MessageFeedback:
+    _, msg = await get_message(session, ctx, message_id)  # NotFoundError if not caller's
+    fb = (
+        await session.execute(
+            select(MessageFeedback).where(MessageFeedback.message_id == msg.id)
+        )
+    ).scalar_one_or_none()
+    if fb is None:
+        fb = MessageFeedback(
+            message_id=msg.id, rating=rating, comment=comment, created_by=ctx.user_id,
+        )
+        session.add(fb)
+    else:
+        fb.rating = rating
+        fb.comment = comment
+    await session.commit()
+    await session.refresh(fb)
+    return fb
+
+
+async def clear_message_feedback(
+    session: AsyncSession, ctx: TenantContext, message_id: UUID
+) -> None:
+    _, msg = await get_message(session, ctx, message_id)  # NotFoundError if not caller's
+    fb = (
+        await session.execute(
+            select(MessageFeedback).where(MessageFeedback.message_id == msg.id)
+        )
+    ).scalar_one_or_none()
+    if fb is not None:
+        await session.delete(fb)
+        await session.commit()
+
+
 def build_tree(
-    messages: list[Message], citations: dict[UUID, list[Citation]]
+    messages: list[Message], citations: dict[UUID, list[Citation]],
+    feedback: dict[UUID, MessageFeedback],
 ) -> list[MessageNode]:
     children: dict[UUID | None, list[Message]] = defaultdict(list)
     for m in messages:
@@ -180,6 +229,7 @@ def build_tree(
 
     def node(m: Message) -> MessageNode:
         kids = sorted(children.get(m.id, []), key=lambda c: c.sibling_index)
+        fb = feedback.get(m.id)
         return MessageNode(
             id=m.id, parent_message_id=m.parent_message_id,
             sibling_index=m.sibling_index, role=m.role, content=m.content,
@@ -189,6 +239,7 @@ def build_tree(
             grounding_score=m.grounding_score, completeness_score=m.completeness_score,
             validation_failed=m.validation_failed,
             citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
+            feedback=FeedbackOut.model_validate(fb) if fb is not None else None,
             children=[node(k) for k in kids],
         )
 
@@ -202,10 +253,11 @@ async def get_chat_tree(
     chat = await get_chat(session, ctx, chat_id)
     messages = await list_messages(session, chat_id)
     citations = await list_citations(session, chat_id)
+    feedback = await list_feedback(session, chat_id)
     return ChatTreeOut(
         id=chat.id, workspace_id=chat.workspace_id, title=chat.title,
         has_summary=chat.summary is not None,
-        messages=build_tree(messages, citations),
+        messages=build_tree(messages, citations, feedback),
     )
 
 
