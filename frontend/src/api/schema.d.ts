@@ -1311,6 +1311,8 @@ export interface components {
             meta?: {
                 [key: string]: string;
             } | null;
+            /** Enriched */
+            enriched: boolean;
         };
         /** DocumentPatch */
         DocumentPatch: {

@@ -29,6 +29,7 @@ const doc: DocumentOut = {
   approved: false,
   supersedes_document_id: null,
   meta: null,
+  enriched: false,
 };
 
 const fields: MetadataFieldOut[] = [

@@ -24,6 +24,7 @@ const doc: DocumentOut = {
   is_current: true,
   approved: false,
   supersedes_document_id: null,
+  enriched: false,
 };
 
 const b64 = (o: object) =>
