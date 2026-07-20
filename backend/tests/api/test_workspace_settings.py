@@ -170,6 +170,37 @@ async def test_strict_mode_null_is_409(client: httpx.AsyncClient, seeded_user: U
     assert r.status_code == 409
 
 
+async def test_patch_enrichment_enabled(client: httpx.AsyncClient, seeded_user: User) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": True}, headers=h
+    )
+    assert r.status_code == 200
+    assert r.json()["enrichment_enabled"] is True
+
+
+async def test_enrichment_enabled_defaults_false(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    ws = next(w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+              if w["id"] == ws_id)
+    assert ws["enrichment_enabled"] is False
+
+
+async def test_enrichment_enabled_null_is_409(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": None}, headers=h
+    )
+    assert r.status_code == 409
+
+
 async def test_patch_atomicity_with_mixed_valid_invalid_fields(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

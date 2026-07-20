@@ -38,6 +38,8 @@ class Workspace(UUIDPk, Base):
     # Phase 3 Plan J (design D4/§3): synchronous Gatekeeper validation with
     # one critique-guided regeneration, before the final answer streams.
     strict_mode: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Plan K §4: ingestion enrichment toggle (utility-model per-chunk metadata)
+    enrichment_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class WorkspaceMember(Base):

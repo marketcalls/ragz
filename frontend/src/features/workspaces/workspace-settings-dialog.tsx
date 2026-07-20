@@ -30,6 +30,7 @@ export function WorkspaceSettingsDialog({
   );
   const [webSearch, setWebSearch] = useState(workspace.web_search_enabled);
   const [strictMode, setStrictMode] = useState(workspace.strict_mode);
+  const [enrichment, setEnrichment] = useState(workspace.enrichment_enabled);
   // J-C15: no shared Tabs primitive exists yet — this local button-group
   // strip matches dashboard-page.tsx's RANGES day-picker style.
   const [tab, setTab] = useState<'settings' | 'evals'>('settings');
@@ -49,6 +50,7 @@ export function WorkspaceSettingsDialog({
       fallback_policy?: 'general_knowledge' | 'decline';
       web_search_enabled?: boolean;
       strict_mode?: boolean;
+      enrichment_enabled?: boolean;
     } = {};
     const nextTopK = Number(topK);
     const nextMinScore = Number(minScore);
@@ -62,6 +64,7 @@ export function WorkspaceSettingsDialog({
     if (fallback !== workspace.fallback_policy) changes.fallback_policy = fallback;
     if (webSearch !== workspace.web_search_enabled) changes.web_search_enabled = webSearch;
     if (strictMode !== workspace.strict_mode) changes.strict_mode = strictMode;
+    if (enrichment !== workspace.enrichment_enabled) changes.enrichment_enabled = enrichment;
 
     if (Object.keys(changes).length === 0) {
       onOpenChange(false);
@@ -177,6 +180,15 @@ export function WorkspaceSettingsDialog({
                   aria-label="Strict mode"
                 />
                 Strict mode — validate every answer before it streams, one retry on failure
+              </label>
+              <label className="flex items-center gap-2 text-[13px] text-secondary">
+                <input
+                  type="checkbox"
+                  checked={enrichment}
+                  onChange={(e) => setEnrichment(e.target.checked)}
+                  aria-label="Enable search-recall enrichment"
+                />
+                Enrich chunks for better search recall (uses the utility model)
               </label>
               <div className="space-y-1">
                 <Label htmlFor="ws-prompt-override">System prompt additions</Label>

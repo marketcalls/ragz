@@ -28,6 +28,7 @@ export function usePatchWorkspace() {
       fallback_policy?: 'general_knowledge' | 'decline';
       web_search_enabled?: boolean;
       strict_mode?: boolean;
+      enrichment_enabled?: boolean;
     }) => {
       const { data, error } = await api.PATCH('/api/v1/workspaces/{workspace_id}', {
         params: { path: { workspace_id: id } },

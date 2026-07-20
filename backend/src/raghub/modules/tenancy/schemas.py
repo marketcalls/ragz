@@ -20,6 +20,7 @@ class WorkspaceOut(BaseModel):
     fallback_policy: str
     web_search_enabled: bool
     strict_mode: bool
+    enrichment_enabled: bool
 
     model_config = {"from_attributes": True}
 
@@ -33,6 +34,7 @@ class WorkspacePatch(BaseModel):
     fallback_policy: Literal["general_knowledge", "decline"] | None = None
     web_search_enabled: bool | None = None
     strict_mode: bool | None = None
+    enrichment_enabled: bool | None = None
 
 
 class MemberAdd(BaseModel):

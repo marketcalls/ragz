@@ -1971,6 +1971,8 @@ export interface components {
             web_search_enabled: boolean;
             /** Strict Mode */
             strict_mode: boolean;
+            /** Enrichment Enabled */
+            enrichment_enabled: boolean;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
@@ -1990,6 +1992,8 @@ export interface components {
             web_search_enabled?: boolean | null;
             /** Strict Mode */
             strict_mode?: boolean | null;
+            /** Enrichment Enabled */
+            enrichment_enabled?: boolean | null;
         };
         /** WorstAnswerOut */
         WorstAnswerOut: {

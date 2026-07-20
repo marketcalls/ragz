@@ -18,6 +18,7 @@ const ws: WorkspaceOut = {
   fallback_policy: 'general_knowledge',
   web_search_enabled: false,
   strict_mode: false,
+  enrichment_enabled: false,
 };
 
 function stubFetch(responseBody: WorkspaceOut) {
@@ -222,6 +223,40 @@ test('leaves strict_mode out of the PATCH body when untouched', async () => {
   const req = findPatch();
   const body = (await req.clone().json()) as Record<string, unknown>;
   expect('strict_mode' in body).toBe(false);
+});
+
+test('checking enrichment PATCHes only enrichment_enabled', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, enrichment_enabled: true });
+  const toggle = screen.getByLabelText('Enable search-recall enrichment');
+  expect(toggle).not.toBeChecked();
+  await user.click(toggle);
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect(body).toStrictEqual({ enrichment_enabled: true });
+});
+
+test('leaves enrichment_enabled out of the PATCH body when untouched', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, top_k: 12 });
+  const topK = screen.getByLabelText('Sources per query (top_k)');
+  await user.clear(topK);
+  await user.type(topK, '12');
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect('enrichment_enabled' in body).toBe(false);
 });
 
 test('clearing the system prompt override sends an explicit null only when it changed', async () => {
