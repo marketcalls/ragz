@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/app-shell';
 import { AuditPage } from '@/features/admin/audit/audit-page';
 import { DashboardPage } from '@/features/admin/dashboard/dashboard-page';
+import { FeedbackPage } from '@/features/admin/feedback/feedback-page';
 import { HealthPage } from '@/features/admin/health/health-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
 import { RolesPage } from '@/features/admin/roles/roles-page';
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
             children: [
               { path: '/admin/dashboard', element: <DashboardPage /> },
               { path: '/admin/users', element: <UsersPage /> },
+              { path: '/admin/feedback', element: <FeedbackPage /> },
             ],
           },
           {

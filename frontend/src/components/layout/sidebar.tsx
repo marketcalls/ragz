@@ -2,6 +2,7 @@ import {
   Activity,
   FileText,
   LayoutDashboard,
+  MessageSquare,
   ScrollText,
   Settings2,
   ShieldCheck,
@@ -57,6 +58,13 @@ export function Sidebar() {
         ) : null}
         {isAdmin ? (
           <SideLink to="/admin/users" label="Users" icon={<Users className="h-4 w-4" aria-hidden />} />
+        ) : null}
+        {isAdmin ? (
+          <SideLink
+            to="/admin/feedback"
+            label="Feedback"
+            icon={<MessageSquare className="h-4 w-4" aria-hidden />}
+          />
         ) : null}
         {claims?.role === 'superadmin' ? (
           <SideLink to="/admin/roles" label="Roles" icon={<ShieldCheck className="h-4 w-4" aria-hidden />} />

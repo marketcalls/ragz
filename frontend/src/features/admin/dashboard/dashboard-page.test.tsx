@@ -80,8 +80,28 @@ test('answer quality tile renders the rounded grounding-score percentage', () =>
 
 test('answer quality tile shows a placeholder when nothing has been audited yet', () => {
   renderDashboard();
-  expect(screen.getByText('—')).toBeInTheDocument();
+  // The default fixture also has feedback_summary.down_rate: null, so the
+  // Feedback tile shows the same "—" placeholder -- expect both.
+  expect(screen.getAllByText('—')).toHaveLength(2);
   expect(screen.getByText('0 audited')).toBeInTheDocument();
+});
+
+test('feedback tile renders the rounded down-rate percentage', () => {
+  useUsageSummary.mockReturnValue({
+    data: {
+      ...summary,
+      feedback_summary: { total_count: 20, down_count: 5, down_rate: 0.25 },
+    },
+    isPending: false,
+  });
+  renderDashboard();
+  expect(screen.getByText('25% 👎')).toBeInTheDocument();
+  expect(screen.getByText('20 rated')).toBeInTheDocument();
+});
+
+test('feedback tile degrades to a placeholder when zero feedback exists in the window', () => {
+  renderDashboard();
+  expect(screen.getByText('0 rated')).toBeInTheDocument();
 });
 
 test("worst-answers table renders a link to the answer's chat", () => {

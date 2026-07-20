@@ -84,6 +84,15 @@ export function DashboardPage() {
                 }
                 sub={`${query.data.answer_quality.audited_count} audited`}
               />
+              <StatTile
+                label="Feedback"
+                value={
+                  query.data.feedback_summary.down_rate != null
+                    ? `${Math.round(query.data.feedback_summary.down_rate * 100)}% 👎`
+                    : '—'
+                }
+                sub={`${query.data.feedback_summary.total_count} rated`}
+              />
             </div>
             <ChartCard title="Queries per day">
               <TimeSeriesLine data={query.data.queries_per_day} />

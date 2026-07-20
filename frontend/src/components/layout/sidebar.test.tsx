@@ -64,5 +64,6 @@ test('admin (non-superadmin) does not see Roles', async () => {
   setAccessToken(tokenFor('admin'));
   renderSidebar();
   expect(await screen.findByText('Users')).toBeInTheDocument();
+  expect(screen.getByText('Feedback')).toBeInTheDocument();
   expect(screen.queryByText('Roles')).not.toBeInTheDocument();
 });
