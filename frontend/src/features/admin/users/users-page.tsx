@@ -225,16 +225,16 @@ export function UsersPage() {
                       {user.role !== 'superadmin' ? <UserGroupsCell userId={user.id} /> : null}
                     </TD>
                     <TD className="text-right">
-                      {user.role !== 'superadmin' ? (
-                        <div className="flex justify-end gap-2">
-                          <Button size="sm" onClick={() => setQuotaUser(user)}>
-                            Quota
-                          </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" onClick={() => setQuotaUser(user)}>
+                          Quota
+                        </Button>
+                        {user.role !== 'superadmin' ? (
                           <Button size="sm" onClick={() => setConfirmUser(user)}>
                             {user.active ? 'Deactivate' : 'Reactivate'}
                           </Button>
-                        </div>
-                      ) : null}
+                        ) : null}
+                      </div>
                     </TD>
                   </TR>
                 ))}

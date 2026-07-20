@@ -88,6 +88,23 @@ test('shows an error message and retry button when the users query fails', async
   expect(refetch).toHaveBeenCalledTimes(1);
 });
 
+test('a superadmin row still shows Quota but hides Deactivate', async () => {
+  useUsers.mockReturnValue({
+    data: [userA, { id: 'u2', email: 'root@raghub.internal', role: 'superadmin', active: true, custom_role_id: null }],
+    isPending: false,
+    isError: false,
+  });
+  render(<UsersPage />);
+
+  const quotaButtons = screen.getAllByRole('button', { name: 'Quota' });
+  expect(quotaButtons).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Deactivate' })).toHaveLength(1);
+
+  await userEvent.click(quotaButtons[1]!);
+  expect(await screen.findByText('Quota — root@raghub.internal')).toBeInTheDocument();
+  expect(useUserQuota).toHaveBeenLastCalledWith('u2', true);
+});
+
 test('clicking Quota opens the dialog and fetches that user\'s quota', async () => {
   render(<UsersPage />);
   expect(useUserQuota).toHaveBeenCalledWith('', false);
