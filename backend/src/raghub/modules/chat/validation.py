@@ -65,7 +65,7 @@ class AuditorScores:
 
 def build_auditor_messages(
     *, question: str, answer: str, sources: Sequence[PromptSource]
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     content = (
         f"Question:\n{wrap_untrusted_block('question', question)}\n\n{_data_or_note(sources)}\n\n"
         f"Assistant's answer:\n{wrap_untrusted_block('answer', answer)}"
@@ -122,7 +122,7 @@ class GatekeeperVerdict:
 
 def build_gatekeeper_messages(
     *, question: str, answer: str, sources: Sequence[PromptSource]
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     content = (
         f"Question:\n{wrap_untrusted_block('question', question)}\n\n{_data_or_note(sources)}\n\n"
         f"Candidate answer:\n{wrap_untrusted_block('answer', answer)}"
@@ -165,11 +165,11 @@ async def synthesize_with_gatekeeper(
     *,
     chat_model_name: str,
     utility_model_name: str,
-    prompt: list[dict[str, str]],
+    prompt: list[dict[str, object]],
     question: str,
     sources: Sequence[PromptSource],
     system_prompt_override: str | None,
-    rebuild_prompt: Callable[[str | None], list[dict[str, str]]],
+    rebuild_prompt: Callable[[str | None], list[dict[str, object]]],
     reasoning_effort: str | None = None,
 ) -> GatekeptAnswer:
     """Gatekeeper (design §3): one non-streaming synth, one utility-model
@@ -227,7 +227,7 @@ ESCALATION_CLASSIFIER_PROMPT = (
 )
 
 
-def build_escalation_messages(question: str) -> list[dict[str, str]]:
+def build_escalation_messages(question: str) -> list[dict[str, object]]:
     return [
         {"role": "system", "content": ESCALATION_CLASSIFIER_PROMPT},
         {"role": "user", "content": f"Question:\n{wrap_untrusted_block('question', question)}"},

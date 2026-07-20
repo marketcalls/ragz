@@ -8,6 +8,7 @@ from raghub.modules.chat.prompting import (
     build_conversational_messages,
     build_general_knowledge_messages,
     build_messages,
+    build_user_message_with_images,
     count_tokens,
     fold_summary,
     parse_citation_markers,
@@ -261,3 +262,22 @@ def test_build_conversational_messages_summary_none_is_byte_identical_to_before(
         history=[("user", "hi")], user_query="q", budget=2000, summary=None,
     )
     assert without == explicit_none
+
+
+def test_build_user_message_with_images_puts_text_before_images() -> None:
+    msg = build_user_message_with_images(
+        "what is in this image?", ["data:image/png;base64,abc", "data:image/png;base64,def"]
+    )
+    assert msg == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "what is in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,def"}},
+        ],
+    }
+
+
+def test_build_user_message_with_images_no_images_stays_plain_string() -> None:
+    msg = build_user_message_with_images("just text, no attachments", [])
+    assert msg == {"role": "user", "content": "just text, no attachments"}

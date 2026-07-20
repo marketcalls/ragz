@@ -203,11 +203,20 @@ async def send_message(
     # at upload time, not that the caller didn't slip in an id from a
     # different chat in this request's body.
     attachment_sources: list[PromptSource] = []
+    # DOC-9 Task 6: kind="image" attachments on a vision-capable model skip
+    # Task 5's route_attachment (OCR extract_text + inline/retrieval routing)
+    # entirely -- their raw bytes go to the model directly as an image block
+    # instead (service.stream_reply fetches + encodes them). Every other
+    # attachment (documents, and images on a non-vision model) is unaffected.
+    image_attachments: list[ChatAttachment] = []
     if body.attachment_ids:
         for marker, attachment_id in enumerate(body.attachment_ids, start=1):
             attachment = await session.get(ChatAttachment, attachment_id)
             if attachment is None or attachment.chat_id != chat.id:
                 raise NotFoundError("attachment not found in this chat")
+            if attachment.kind == "image" and model.supports_vision:
+                image_attachments.append(attachment)
+                continue
             source = await service.route_attachment(
                 session, ctx.org_id, chat.id, attachment, marker, model.litellm_model_name,
             )
@@ -232,6 +241,7 @@ async def send_message(
         session_factory=request.app.state.session_factory, completer=completer,
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
         reasoning_effort=reasoning_effort, attachment_sources=attachment_sources,
+        image_attachments=image_attachments,
     ))
 
 

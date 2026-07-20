@@ -5,6 +5,7 @@ alternate parent->child, sibling_index is dense per (chat, parent).
 """
 
 import asyncio
+import base64
 import contextlib
 from collections import defaultdict
 from collections.abc import AsyncIterator, Sequence
@@ -48,6 +49,7 @@ from raghub.modules.chat.prompting import (
     build_conversational_messages,
     build_general_knowledge_messages,
     build_messages,
+    build_user_message_with_images,
     count_tokens,
     fit_sources,
     fold_summary,
@@ -538,6 +540,26 @@ def cap_chunks_by_tokens(
         kept.append(c)
         used += cost
     return kept
+
+
+def _content_token_estimate(content: object, model_hint: str | None) -> int:
+    """Best-effort token estimate for one prompt message's `content`, used
+    only by the abort-persistence usage estimate below. `content` is
+    normally `str`, but a multimodal user turn (Task 6: vision-capable
+    attachments) replaces it with a list of {"type": "text"/"image_url", ...}
+    blocks — image blocks carry no text to tokenize, so only the text block(s)
+    are counted. This is already an estimate (the success path's real usage
+    comes from the gateway's own usage payload), so undercounting an image's
+    true cost here is an accepted approximation, not a correctness bug."""
+    if isinstance(content, str):
+        return count_tokens(content, model_hint)
+    if isinstance(content, list):
+        return sum(
+            count_tokens(part["text"], model_hint)
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return 0
 
 
 def path_to_root(messages: list[Message], leaf: Message) -> list[Message]:
@@ -1097,6 +1119,7 @@ async def stream_reply(
     web_searcher: WebSearcher | None = None,
     reasoning_effort: str | None = None,
     attachment_sources: Sequence[PromptSource] = (),
+    image_attachments: Sequence[ChatAttachment] = (),
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -1108,10 +1131,37 @@ async def stream_reply(
     prompt, and the persisted assistant reply carries no citations. Anything
     else takes the retrieval path below, unchanged. Phase 3 may swap
     classify_query for a smarter router without touching this function.
+
+    `image_attachments` (DOC-9 Task 6): this turn's `kind="image"`
+    ChatAttachment rows whose resolved `model.supports_vision` is True — the
+    route decides that filter (it already has both `model` and each
+    attachment's `kind` before calling here) and skips Task 5's route_attachment
+    (OCR/inline/retrieval) for exactly these rows, since their raw pixels go to
+    the model directly instead. Every other attachment (documents, and images
+    on a non-vision model) is unaffected and keeps flowing through
+    attachment_sources exactly as Task 5 built it.
     """
     conversational = classify_query(user_message.content) == "conversational"
     if not conversational:
         yield retrieval_started_event()
+
+    # Fetched once, up front (not per-branch): both the conversational and
+    # document-grounded branches below splice the same data URIs into their
+    # own final user-turn message.
+    image_data_uris: list[str] = []
+    if image_attachments:
+        # get_settings() (not the `settings` param): every other storage call
+        # site in this codebase (create_attachment above, documents/service.py,
+        # worker/tasks.py) reads storage config via a fresh get_settings()
+        # call rather than a threaded-through Settings object, for the same
+        # reason route_attachment's own create_attachment call does -- this
+        # keeps storage construction on the one path that's actually
+        # cache-invalidated between tests (core/config.get_settings.cache_clear()).
+        storage = build_storage(get_settings())
+        for attachment in image_attachments:
+            raw = await storage.get(attachment.storage_key)
+            encoded = base64.b64encode(raw).decode("ascii")
+            image_data_uris.append(f"data:{attachment.mime};base64,{encoded}")
 
     streamed_parts: list[str] = []
     try:
@@ -1128,6 +1178,12 @@ async def stream_reply(
                 model_hint=model.litellm_model_name,
                 summary=summary_text,
             )
+            if image_data_uris:
+                # Replaces only the final user-turn message's content — the
+                # history/system messages ahead of it stay plain-string.
+                prompt[-1] = build_user_message_with_images(
+                    user_message.content, image_data_uris
+                )
 
             convo_usage: LLMUsage | None = None
             # aclosing (not a bare async-for): on client abort, GeneratorExit
@@ -1462,6 +1518,11 @@ async def stream_reply(
             model_hint=model_hint,
             summary=summary_text,
         )
+        if image_data_uris:
+            # Same replace-only-the-final-message treatment as the
+            # conversational branch above; the Gatekeeper path (below) reuses
+            # this SAME `prompt` object, so its synth call sees the image too.
+            prompt[-1] = build_user_message_with_images(user_message.content, image_data_uris)
 
         # Phase 3 Plan J Task 7 (design D4/§3): the Gatekeeper engages ONLY for
         # a strict_mode workspace that also has a completer AND a designated
@@ -1484,17 +1545,29 @@ async def stream_reply(
             # client only ever sees the FINAL text -- as a single token
             # frame, not incremental deltas. Deliberate v1 tradeoff (design
             # §3): validating before display requires the full text first.
+            def _rebuild_prompt(override: str | None) -> list[dict[str, object]]:
+                # Same image splice as the synth attempt above (mirrors
+                # `prompt` construction just above this block) — otherwise a
+                # gatekeeper-rejected retry would silently drop the image on
+                # its rebuilt prompt.
+                rebuilt = build_messages(
+                    sources=kept_sources, history=history, user_query=user_message.content,
+                    budget=settings.chat_context_token_budget,
+                    system_prompt_override=override, model_hint=model_hint,
+                    summary=summary_text,
+                )
+                if image_data_uris:
+                    rebuilt[-1] = build_user_message_with_images(
+                        user_message.content, image_data_uris
+                    )
+                return rebuilt
+
             gatekept = await synthesize_with_gatekeeper(
                 completer, chat_model_name=model.litellm_model_name,
                 utility_model_name=utility_model.litellm_model_name, prompt=prompt,
                 question=user_message.content, sources=kept_sources,
                 system_prompt_override=workspace.system_prompt_override,
-                rebuild_prompt=lambda override: build_messages(
-                    sources=kept_sources, history=history, user_query=user_message.content,
-                    budget=settings.chat_context_token_budget,
-                    system_prompt_override=override, model_hint=model_hint,
-                    summary=summary_text,
-                ),
+                rebuild_prompt=_rebuild_prompt,
                 reasoning_effort=reasoning_effort,
             )
             streamed_parts.append(gatekept.text)
@@ -1600,7 +1673,9 @@ async def stream_reply(
                 session_factory, ctx, chat_id=chat.id,
                 user_message_id=user_message.id,
                 content=partial, model_id=model.id,
-                prompt_tokens=sum(count_tokens(m["content"], model_hint) for m in prompt),
+                prompt_tokens=sum(
+                    _content_token_estimate(m["content"], model_hint) for m in prompt
+                ),
                 completion_tokens=count_tokens(partial, model_hint),
             )
         raise

@@ -41,7 +41,7 @@ class LLMCompletion:
 
 class LLMStreamer(Protocol):
     def stream(
-        self, *, model: str, messages: list[dict[str, str]],
+        self, *, model: str, messages: list[dict[str, object]],
         reasoning_effort: str | None = None,
     ) -> AsyncGenerator[LLMDelta | LLMUsage, None]: ...
 
@@ -51,7 +51,7 @@ class LLMCompleter(Protocol):
         self,
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         tools: list[dict[str, object]] | None = None,
         reasoning_effort: str | None = None,
     ) -> LLMCompletion: ...
@@ -74,7 +74,7 @@ class LiteLLMStreamer:
         self._limits = limits if limits is not None else httpx.Limits()
 
     async def stream(
-        self, *, model: str, messages: list[dict[str, str]],
+        self, *, model: str, messages: list[dict[str, object]],
         reasoning_effort: str | None = None,
     ) -> AsyncGenerator[LLMDelta | LLMUsage, None]:
         payload: dict[str, object] = {
@@ -128,7 +128,7 @@ class LiteLLMStreamer:
         self,
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         tools: list[dict[str, object]] | None = None,
         reasoning_effort: str | None = None,
     ) -> LLMCompletion:

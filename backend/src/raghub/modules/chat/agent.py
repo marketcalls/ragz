@@ -317,7 +317,7 @@ async def _plan(
     """One planner round. tools_unreliable (MODEL-3) -> the JSON protocol;
     otherwise native tool-calling. Same PlannerAction out of both."""
     allowed = (*tool_names, "answer")
-    messages = [
+    messages: list[dict[str, object]] = [
         {"role": "system", "content": planner_system_prompt(tool_names, metadata_field_names)},
         {"role": "user", "content": _planner_user_message(question, summaries)},
     ]

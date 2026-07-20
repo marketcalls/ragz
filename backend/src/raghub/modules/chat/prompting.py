@@ -292,8 +292,8 @@ def _budget_history(
 
 def _history_messages(
     history: Sequence[tuple[str, str]], dropped: int, *, summary: str | None = None
-) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
+) -> list[dict[str, object]]:
+    messages: list[dict[str, object]] = []
     if summary:
         messages.append(
             {"role": "system", "content": f"[Earlier conversation summary]\n{summary}"}
@@ -313,7 +313,7 @@ def build_messages(
     system_prompt_override: str | None = None,
     model_hint: str | None = None,
     summary: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """System prompt (+ capped admin override) + budgeted history + data blocks
     + question. The caller is responsible for having already fitted `sources`
     into the sources share via fit_sources (chat service does); this function
@@ -334,7 +334,7 @@ def build_messages(
     )
     kept, dropped = _budget_history(history, remaining, model_hint)
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+    messages: list[dict[str, object]] = [{"role": "system", "content": system_content}]
     messages.extend(_history_messages(kept, dropped, summary=summary))
     messages.append(
         {"role": "user", "content": f"{data_block}\n\nQuestion: {user_query}"}
@@ -351,7 +351,7 @@ def _build_sourceless_messages(
     system_prompt_override: str | None,
     model_hint: str | None,
     summary: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """Shared body of the conversational and general-knowledge builders:
     system (+ capped override) + budgeted history + bare question, no <data>."""
     split = split_budget(budget)
@@ -360,7 +360,7 @@ def _build_sourceless_messages(
         count_tokens(system_content, model_hint) + count_tokens(user_query, model_hint)
     )
     kept, dropped = _budget_history(history, remaining, model_hint)
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+    messages: list[dict[str, object]] = [{"role": "system", "content": system_content}]
     messages.extend(_history_messages(kept, dropped, summary=summary))
     messages.append({"role": "user", "content": user_query})
     return messages
@@ -374,7 +374,7 @@ def build_conversational_messages(
     system_prompt_override: str | None = None,
     model_hint: str | None = None,
     summary: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """Small-talk sibling of build_messages. The workspace override applies here
     too (persona instructions should not vanish on greetings). `summary`: see
     build_messages' docstring (Task 9, spec §5) - same contract."""
@@ -393,7 +393,7 @@ def build_general_knowledge_messages(
     system_prompt_override: str | None = None,
     model_hint: str | None = None,
     summary: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     """RAG-miss fallback (design D3): answer with zero document context. The
     workspace override still applies (persona survives the fallback).
     `summary`: see build_messages' docstring (Task 9, spec §5) - same contract."""
@@ -402,6 +402,26 @@ def build_general_knowledge_messages(
         budget=budget, system_prompt_override=system_prompt_override, model_hint=model_hint,
         summary=summary,
     )
+
+
+def build_user_message_with_images(
+    text: str, image_data_uris: Sequence[str]
+) -> dict[str, object]:
+    """OpenAI-style multimodal content block. Text first, then each image —
+    matches the convention most vision-capable models expect for prompt
+    ordering (instruction/question before the visual content it refers to)."""
+    if not image_data_uris:
+        return {"role": "user", "content": text}
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            *(
+                {"type": "image_url", "image_url": {"url": uri}}
+                for uri in image_data_uris
+            ),
+        ],
+    }
 
 
 def parse_citation_markers(text: str, max_marker: int) -> list[int]:

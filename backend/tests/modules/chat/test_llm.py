@@ -208,6 +208,28 @@ async def test_complete_omits_reasoning_effort_when_off() -> None:
     assert "reasoning_effort" not in seen[0]
 
 
+async def test_stream_passes_through_multipart_content_unchanged() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=sse_body([delta_chunk("hi")]),
+                              headers={"content-type": "text/event-stream"})
+
+    multipart_message = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "what is in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ],
+    }
+    async for _ in make(httpx.MockTransport(handler)).stream(
+        model="gpt-4o-mini", messages=[multipart_message],
+    ):
+        pass
+    assert seen[0]["messages"][0]["content"] == multipart_message["content"]
+
+
 async def test_complete_satisfies_plan_k_utility_completion_contract() -> None:
     """Plan K Task 1 contract pin: enrichment (Task 3) and rolling-summary
     memory (Task 8) call `LiteLLMStreamer.complete(model=..., messages=...)`

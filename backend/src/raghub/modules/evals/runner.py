@@ -121,7 +121,7 @@ async def _score_one(
     # wrapped/escaped candidate answer + rendered data blocks in the user
     # message (iron rule 5) — [1:] drops only its own system message so we
     # can substitute FAITHFULNESS_JUDGE_PROMPT instead.
-    judge_messages = [
+    judge_messages: list[dict[str, object]] = [
         {"role": "system", "content": FAITHFULNESS_JUDGE_PROMPT},
         *build_gatekeeper_messages(question=gq.question, answer=synth.text, sources=kept)[1:],
     ]
