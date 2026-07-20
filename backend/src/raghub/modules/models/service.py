@@ -8,8 +8,16 @@ from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.audit.service import record_audit
 from raghub.modules.models.models import Model
 from raghub.modules.models.schemas import ModelOut
+from raghub.modules.models.utility import get_utility_model as resolve_utility_model
 from raghub.modules.secrets import service as secrets_service
 from raghub.modules.tenancy.context import TenantContext
+
+# `resolve_utility_model` is a deliberate re-export (Plan K Tasks 6/7/9 call
+# `models_service.resolve_utility_model(session)`; the single real
+# implementation stays in modules/models/utility.py per the single-seam
+# convention -- see that module's docstring). Listed in __all__ so linters
+# don't flag the aliased import as unused.
+__all__ = ["resolve_utility_model"]
 
 
 async def get_model(session: AsyncSession, model_id: UUID) -> Model:
