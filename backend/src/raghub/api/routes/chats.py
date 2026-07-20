@@ -4,18 +4,19 @@ from uuid import UUID
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.core.config import Settings, get_settings
-from raghub.core.errors import ConflictError
+from raghub.core.errors import ConflictError, PayloadTooLarge
 from raghub.modules.chat import service
 from raghub.modules.chat.events import SSEEvent
 from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMStreamer
 from raghub.modules.chat.models import Chat
 from raghub.modules.chat.schemas import (
+    AttachmentOut,
     ChatCreate,
     ChatOut,
     ChatPatch,
@@ -262,3 +263,35 @@ async def set_feedback(
 @router.delete("/messages/{message_id}/feedback", status_code=204)
 async def clear_feedback(message_id: UUID, session: SessionDep, ctx: CtxDep) -> None:
     await service.clear_message_feedback(session, ctx, message_id)
+
+
+@router.post(
+    "/chats/{chat_id}/attachments", status_code=201, response_model=AttachmentOut,
+)
+async def upload_attachment(
+    chat_id: UUID, session: SessionDep, settings: SettingsDep, ctx: CtxDep,
+    request: Request, file: Annotated[UploadFile, File()],
+) -> AttachmentOut:
+    max_bytes = settings.interactive_upload_mb * 1024 * 1024
+    if content_length := request.headers.get("content-length"):
+        try:
+            if int(content_length) > max_bytes + 4096:
+                raise PayloadTooLarge(
+                    f"attachment exceeds {settings.interactive_upload_mb} MB limit"
+                )
+        except ValueError:
+            pass
+    buf = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        buf.extend(chunk)
+        if len(buf) > max_bytes:
+            raise PayloadTooLarge(
+                f"attachment exceeds {settings.interactive_upload_mb} MB limit"
+            )
+    attachment = await service.create_attachment(
+        session, ctx, chat_id,
+        filename=file.filename or "attachment.bin",
+        mime=file.content_type or "application/octet-stream",
+        data=bytes(buf),
+    )
+    return AttachmentOut.model_validate(attachment)

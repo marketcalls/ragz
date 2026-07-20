@@ -110,3 +110,13 @@ class ChatTreeOut(BaseModel):
     title: str
     has_summary: bool
     messages: list[MessageNode]
+
+
+class AttachmentOut(BaseModel):
+    id: UUID
+    kind: str
+    filename: str
+    mime: str
+    status: str
+
+    model_config = {"from_attributes": True}

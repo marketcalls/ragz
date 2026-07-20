@@ -95,6 +95,24 @@ class Citation(UUIDPk, Base):
     url: Mapped[str | None] = mapped_column(Text(), default=None)
 
 
+class ChatAttachment(UUIDPk, Base):
+    __tablename__ = "chat_attachments"
+
+    chat_id: Mapped[UUID] = mapped_column(
+        ForeignKey("chats.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str]  # "document" | "image"
+    filename: Mapped[str]
+    mime: Mapped[str]
+    storage_key: Mapped[str]
+    # "queued" | "processing" | "ready" | "failed"
+    status: Mapped[str] = mapped_column(default="queued")
+    extracted_text: Mapped[str | None] = mapped_column(Text(), default=None)
+    # Set at message-send time once a routing decision is made for this
+    # attachment in a given send — "inline" | "retrieval" | None (not yet used).
+    routed_to: Mapped[str | None] = mapped_column(default=None)
+
+
 class MessageFeedback(Base):
     """One row per message (1:1), same PK-is-the-FK pattern as
     OrgQuota/UserQuota. Chats are single-user, so there is no per-voter

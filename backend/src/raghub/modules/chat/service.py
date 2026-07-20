@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from raghub.core.config import Settings, get_settings
 from raghub.core.db import naive_utc
 from raghub.core.errors import ConflictError, NotFoundError, UpstreamError
+from raghub.core.storage import build_storage
 from raghub.modules.chat.agent import AgentGathered, AgentStep, run_agent_gather
 from raghub.modules.chat.events import (
     CitationRef,
@@ -34,7 +35,14 @@ from raghub.modules.chat.events import (
     token_event,
 )
 from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
-from raghub.modules.chat.models import DEFAULT_CHAT_TITLE, Chat, Citation, Message, MessageFeedback
+from raghub.modules.chat.models import (
+    DEFAULT_CHAT_TITLE,
+    Chat,
+    ChatAttachment,
+    Citation,
+    Message,
+    MessageFeedback,
+)
 from raghub.modules.chat.prompting import (
     PromptSource,
     build_conversational_messages,
@@ -137,6 +145,35 @@ async def delete_chat(session: AsyncSession, ctx: TenantContext, chat_id: UUID) 
     chat = await get_chat(session, ctx, chat_id)
     await session.delete(chat)  # messages + citations cascade at the DB layer
     await session.commit()
+
+
+_ATTACHMENT_KINDS = {
+    "text/plain", "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def _attachment_kind(mime: str) -> str:
+    return "image" if mime.startswith("image/") else "document"
+
+
+async def create_attachment(
+    session: AsyncSession, ctx: TenantContext, chat_id: UUID,
+    *, filename: str, mime: str, data: bytes,
+) -> ChatAttachment:
+    await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
+    kind = _attachment_kind(mime)
+    attachment = ChatAttachment(
+        chat_id=chat_id, kind=kind, filename=filename, mime=mime, storage_key="",
+    )
+    session.add(attachment)
+    await session.flush()  # assigns attachment.id for the storage key
+    attachment.storage_key = f"{ctx.org_id}/chats/{chat_id}/{attachment.id}/{filename}"
+    storage = build_storage(get_settings())
+    await storage.ensure_bucket()
+    await storage.put(attachment.storage_key, data, content_type=mime)
+    await session.commit()
+    return attachment
 
 
 async def list_messages(session: AsyncSession, chat_id: UUID) -> list[Message]:
