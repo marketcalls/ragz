@@ -20,6 +20,8 @@ from raghub.modules.chat.schemas import (
     ChatOut,
     ChatPatch,
     ChatTreeOut,
+    FeedbackOut,
+    MessageFeedbackIn,
     MessageSend,
     RegenerateRequest,
 )
@@ -245,3 +247,18 @@ async def regenerate(
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
         reasoning_effort=reasoning_effort,
     ))
+
+
+@router.put("/messages/{message_id}/feedback", response_model=FeedbackOut)
+async def set_feedback(
+    message_id: UUID, body: MessageFeedbackIn, session: SessionDep, ctx: CtxDep,
+) -> FeedbackOut:
+    fb = await service.set_message_feedback(
+        session, ctx, message_id, rating=body.rating, comment=body.comment
+    )
+    return FeedbackOut.model_validate(fb)
+
+
+@router.delete("/messages/{message_id}/feedback", status_code=204)
+async def clear_feedback(message_id: UUID, session: SessionDep, ctx: CtxDep) -> None:
+    await service.clear_message_feedback(session, ctx, message_id)

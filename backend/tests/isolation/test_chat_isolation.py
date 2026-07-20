@@ -90,3 +90,21 @@ async def test_same_org_users_have_private_chats(
         headers=h_peer,
     )
     assert r.status_code == 404
+
+
+async def test_cross_org_feedback_denied(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, org_b_user: User,
+) -> None:
+    chat_id, message_id, _ = await seeded_chat_with_message(
+        chat_client, chat_env, session, seeded_superadmin
+    )
+    h_b = await auth(chat_client, "b@rival.com")
+    assert (
+        await chat_client.put(
+            f"/api/v1/messages/{message_id}/feedback", json={"rating": "down"}, headers=h_b,
+        )
+    ).status_code == 404
+    assert (
+        await chat_client.delete(f"/api/v1/messages/{message_id}/feedback", headers=h_b)
+    ).status_code == 404
