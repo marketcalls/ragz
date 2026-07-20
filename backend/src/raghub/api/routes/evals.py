@@ -44,7 +44,13 @@ async def delete_golden_query(query_id: UUID, session: SessionDep, ctx: Configur
 
 
 @router.post("/workspaces/{workspace_id}/evals/run", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_eval_run(workspace_id: UUID, ctx: ConfigureDep) -> None:
+async def trigger_eval_run(workspace_id: UUID, session: SessionDep, ctx: ConfigureDep) -> None:
+    # Task 11 review fix: workspace.configure alone doesn't prove workspace_id
+    # belongs to ctx.org_id -- resolve it the same way every other route in
+    # this file does before enqueuing (see evals/service.py's
+    # check_workspace_for_trigger), otherwise a caller can burn another org's
+    # LLM/quota budget by guessing a UUID.
+    await service.check_workspace_for_trigger(session, ctx, workspace_id)
     enqueue_eval_run(workspace_id, "manual")
 
 

@@ -98,3 +98,33 @@ async def test_eval_run_routes_require_configure_permission(
     assert r.status_code == 403
     r = await evals_client.get(f"/api/v1/workspaces/{ws_id}/evals/runs", headers=h_engineer)
     assert r.status_code == 403
+
+
+async def test_trigger_eval_run_rejects_cross_org_workspace(
+    evals_client: httpx.AsyncClient, h_admin: dict[str, str], session: AsyncSession, monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Task 11 review fix: workspace.configure in Acme must not be able to
+    enqueue (and burn LLM/quota budget for) a run against a workspace that
+    belongs to a different org, by guessing/observing its UUID. Mirrors
+    test_workspaces.py's test_add_member_rejects_cross_org / test_document_approve.py's
+    test_approve_cross_org_is_404 second-org fixture pattern."""
+    from raghub.modules.tenancy.models import Organization, Workspace
+
+    rival_org = Organization(name="Rival")
+    session.add(rival_org)
+    await session.flush()
+    rival_ws = Workspace(org_id=rival_org.id, name="RivalWS")
+    session.add(rival_ws)
+    await session.commit()
+
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        "raghub.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
+    )
+    r = await evals_client.post(f"/api/v1/workspaces/{rival_ws.id}/evals/run", headers=h_admin)
+    # get_workspace_checked raises WorkspaceAccessDenied (403) uniformly for
+    # cross-org and non-member so existence never leaks (tenancy/service.py's
+    # own docstring) -- not a 404. That's the real, established status for
+    # every route in this file that already goes through this same check.
+    assert r.status_code == 403
+    assert enqueued == []

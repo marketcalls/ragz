@@ -82,6 +82,19 @@ async def list_golden_queries_for_run(
     )
 
 
+async def check_workspace_for_trigger(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+) -> None:
+    """Workspace-scoping gate for the on-demand eval-run trigger route (Task 11
+    review fix). Reuses the same check as list_golden_queries/list_eval_runs
+    below (get_workspace_checked -- raises WorkspaceAccessDenied for a
+    workspace_id that isn't in ctx.org_id, or that the caller isn't a member
+    of), so a user with workspace.configure in one org cannot enqueue a run --
+    and burn LLM/quota budget -- against another org's workspace by guessing
+    its UUID."""
+    await get_workspace_checked(session, ctx, workspace_id)
+
+
 async def list_eval_runs(
     session: AsyncSession, ctx: TenantContext, workspace_id: UUID, limit: int = 50
 ) -> list[EvalRun]:
