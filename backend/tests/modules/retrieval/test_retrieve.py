@@ -7,12 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.auth.models import User
+from raghub.modules.retrieval import service as retrieval_service
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.service import (
     RetrievedChunk,
     _dedupe_hq,
     delete_document_points,
+    ensure_collection,
     retrieve,
 )
 from raghub.modules.tenancy.context import TenantContext
@@ -192,6 +194,29 @@ def test_dedupe_hq_keeps_max_score_per_chunk_ref() -> None:
     assert len(result) == 2
     kept = next(r for r in result if r.chunk_index == 0)
     assert kept.score == 0.9
+
+
+async def test_ensure_collection_heal_branch_runs_once_per_process(
+    qdrant_collection: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """qdrant_collection already ensures the collection exists (via a prior
+    ensure_collection() call in the fixture), so the calls made here run the
+    heal (else) branch. _HEALED is module-level and persists across the test
+    process, so it's reset here for a deterministic first-touch state."""
+    monkeypatch.setattr(retrieval_service, "_HEALED", set())
+    client = get_qdrant()
+    calls: list[int] = []
+    original = client.create_payload_index
+
+    async def counting(*a, **kw):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return await original(*a, **kw)
+
+    monkeypatch.setattr(client, "create_payload_index", counting)
+    await ensure_collection()
+    await ensure_collection()
+    await ensure_collection()
+    assert len(calls) == 2  # exactly the first call's 2 heal indexes, never repeated
 
 
 def test_dedupe_hq_noop_when_no_duplicates() -> None:

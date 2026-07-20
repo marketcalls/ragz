@@ -13,6 +13,7 @@ from raghub.modules.documents.metadata import (
 )
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
+from raghub.modules.retrieval.service import MetadataClause
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
@@ -140,6 +141,18 @@ async def test_set_document_metadata_valid_date_accepted(
     )
     updated = await set_document_metadata(session, ctx, doc.id, {"revision_date": "2026-05-01"})
     assert updated.meta == {"revision_date": "2026-05-01"}
+
+
+async def test_build_clauses_seeds_presets_on_first_use(
+    session: AsyncSession, stack_env: None
+) -> None:
+    """A workspace whose fields UI was never opened (list_fields never
+    called) must not spuriously 404 on a preset field name — build_clauses
+    now shares list_fields' lazy-seed path instead of querying MetadataField
+    directly."""
+    ctx, ws = await seed_workspace(session, "meta_fresh")
+    clauses = await build_clauses(session, ctx, ws.id, {"doc_type": "policy"})
+    assert clauses == [MetadataClause(key="meta.doc_type", kind="eq", value="policy")]
 
 
 async def test_build_clauses_unknown_field_not_found(

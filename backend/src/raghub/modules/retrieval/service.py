@@ -170,6 +170,9 @@ def _ctx_acl(ctx: TenantContext) -> frozenset[UUID] | None:
     return None if ctx.role in ("admin", "superadmin") else ctx.group_ids
 
 
+_HEALED: set[str] = set()  # collections whose Plan H heal indexes have run this process
+
+
 async def ensure_collection(embedding_model: str = "bge-m3") -> str:
     """Idempotent collection setup. Any model other than bge-m3 is rejected —
     the Phase 1 embedding-model lock (workspaces default to bge-m3)."""
@@ -198,13 +201,18 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
     else:
         # Heal collections created before Phase 2/H: acl_groups and is_current
         # gain their indexes on first touch (create_payload_index is idempotent
-        # in Qdrant).
-        await client.create_payload_index(
-            COLLECTION, field_name="acl_groups", field_schema=models.PayloadSchemaType.KEYWORD
-        )
-        await client.create_payload_index(
-            COLLECTION, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
-        )
+        # in Qdrant). Gated to once per process (Plan K carried finding) —
+        # every subsequent retrieve() call hit this branch and re-issued both
+        # calls needlessly.
+        if COLLECTION not in _HEALED:
+            await client.create_payload_index(
+                COLLECTION, field_name="acl_groups",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+            await client.create_payload_index(
+                COLLECTION, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
+            )
+            _HEALED.add(COLLECTION)
     return COLLECTION
 
 

@@ -228,15 +228,7 @@ async def build_clauses(
     user-supplied filter input can never address a bare Qdrant payload key
     (tenant_id/workspace_id/acl_groups/is_current) — those live outside
     `meta.*` and this function only ever emits `meta.`-prefixed keys."""
-    ws = await get_workspace_checked(session, ctx, workspace_id)
-    fields = {
-        f.name: f
-        for f in (
-            await session.execute(
-                select(MetadataField).where(MetadataField.workspace_id == ws.id)
-            )
-        ).scalars()
-    }
+    fields = {f.name: f for f in await list_fields(session, ctx, workspace_id)}
     clauses: list[MetadataClause] = []
     for name, raw in metadata.items():
         field = fields.get(name)
