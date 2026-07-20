@@ -29,6 +29,7 @@ const summary: DashboardSummaryOut = {
     low_score_count: 0,
   },
   worst_answers: [],
+  eval_trend: [],
 };
 
 beforeEach(() => {
@@ -106,4 +107,34 @@ test("worst-answers table renders a link to the answer's chat", () => {
 test('empty worst_answers renders neither the table nor a broken empty-state', () => {
   renderDashboard();
   expect(screen.queryByText('Lowest-scoring answers')).not.toBeInTheDocument();
+});
+
+test('eval trend table renders workspace name and formatted metrics', () => {
+  useUsageSummary.mockReturnValue({
+    data: {
+      ...summary,
+      eval_trend: [
+        {
+          workspace_id: 'w1',
+          workspace_name: 'Engineering',
+          hit_rate: 0.8,
+          citation_precision: 0.6,
+          avg_faithfulness: 4.2,
+          created_at: '2026-07-01T00:00:00Z',
+        },
+      ],
+    },
+    isPending: false,
+  });
+  renderDashboard();
+  expect(screen.getByText('Eval trend (latest run per workspace)')).toBeInTheDocument();
+  expect(screen.getByText('Engineering')).toBeInTheDocument();
+  expect(screen.getByText('80%')).toBeInTheDocument();
+  expect(screen.getByText('60%')).toBeInTheDocument();
+  expect(screen.getByText('4.2')).toBeInTheDocument();
+});
+
+test('empty eval_trend renders neither the table nor a broken empty-state', () => {
+  renderDashboard();
+  expect(screen.queryByText('Eval trend (latest run per workspace)')).not.toBeInTheDocument();
 });

@@ -37,6 +37,12 @@ def build_celery() -> Celery:
                 "task": "models.refresh_catalog",
                 "schedule": 24 * 60 * 60,
             },
+            # Task 12 (Plan J, §6): nightly eval fan-out, same interval-seconds
+            # style as the entry above (not a crontab).
+            "nightly-eval-run": {
+                "task": "evals.run_all_workspaces",
+                "schedule": 24 * 60 * 60,
+            },
         },
     )
     return app

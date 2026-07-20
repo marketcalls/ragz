@@ -96,4 +96,10 @@ layers = ["raghub.api", "raghub.worker", "raghub.modules", "raghub.core"]
 # documented, narrow exception, not a general modules->worker allowance.
 ignore_imports = [
     "raghub.modules.documents.service -> raghub.worker.tasks",
+    # Task 12 (Plan J, §6): same narrow exception as the entry above --
+    # update_retrieval_settings's settings-change eval trigger needs
+    # worker.tasks.enqueue_eval_run, and importing it at module scope would
+    # be a real circular import (evals.service, which this function also
+    # imports locally, already imports tenancy.service at module scope).
+    "raghub.modules.tenancy.service -> raghub.worker.tasks",
 ]

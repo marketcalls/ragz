@@ -27,6 +27,9 @@ export type ModelPublic = components['schemas']['ModelPublic'];
 export type DashboardSummaryOut = components['schemas']['DashboardSummaryOut'];
 export type AnswerQualityOut = components['schemas']['AnswerQualityOut'];
 export type WorstAnswerOut = components['schemas']['WorstAnswerOut'];
+// Task 12 (Plan J, §6): the latest EvalRun per workspace, for the dashboard's
+// eval-trend table (worst_answers' sibling in DashboardSummaryOut).
+export type EvalTrendOut = components['schemas']['EvalTrendOut'];
 // GET /api/v1/superadmin/client-errors (Task 6). message/stack/url are
 // attacker-controlled — render as text only, never dangerouslySetInnerHTML.
 export type ClientErrorOut = components['schemas']['ClientErrorOut'];

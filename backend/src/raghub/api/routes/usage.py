@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.core.config import Settings, get_settings
 from raghub.modules.chat import service as chat_service
+from raghub.modules.evals import service as evals_service
 from raghub.modules.models import keys
 from raghub.modules.quotas import service
 from raghub.modules.quotas.schemas import (
@@ -113,9 +114,27 @@ class WorstAnswerOut(BaseModel):
     created_at: datetime
 
 
+class EvalTrendOut(BaseModel):
+    """Task 12 (Plan J, §6): the latest EvalRun per workspace, for the
+    org-wide dashboard trend table. model_config enables model_validate
+    straight off the evals_service.EvalRun ORM instance (which carries
+    workspace_name as an extra attribute -- see
+    latest_eval_run_per_workspace's docstring)."""
+
+    model_config = {"from_attributes": True}
+
+    workspace_id: UUID
+    workspace_name: str
+    hit_rate: float | None
+    citation_precision: float | None
+    avg_faithfulness: float | None
+    created_at: datetime
+
+
 class DashboardSummaryOut(UsageSummaryOut):
     answer_quality: AnswerQualityOut
     worst_answers: list[WorstAnswerOut]
+    eval_trend: list[EvalTrendOut]
 
 
 @router.get("/admin/usage/summary", response_model=DashboardSummaryOut)
@@ -125,6 +144,7 @@ async def usage_summary(
 ) -> DashboardSummaryOut:
     base = await service.org_usage_summary(session, org_id=ctx.org_id, days=days)
     quality = await chat_service.answer_quality_summary(session, ctx, days=days)
+    trend = await evals_service.latest_eval_run_per_workspace(session, ctx.org_id)
     return DashboardSummaryOut(
         **UsageSummaryOut.model_validate(base).model_dump(),
         answer_quality=AnswerQualityOut(
@@ -141,6 +161,7 @@ async def usage_summary(
             )
             for w in quality.worst
         ],
+        eval_trend=[EvalTrendOut.model_validate(t) for t in trend],
     )
 
 

@@ -142,6 +142,38 @@ export function DashboardPage() {
                 </table>
               </div>
             ) : null}
+            {query.data.eval_trend.length > 0 ? (
+              <ChartCard title="Eval trend (latest run per workspace)">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-raised text-left text-xs text-secondary">
+                      <th className="px-4 py-2 font-medium">Workspace</th>
+                      <th className="px-4 py-2 text-right font-medium">Hit rate</th>
+                      <th className="px-4 py-2 text-right font-medium">Citation precision</th>
+                      <th className="px-4 py-2 text-right font-medium">Faithfulness</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {query.data.eval_trend.map((t) => (
+                      <tr key={t.workspace_id} className="border-t border-line-faint">
+                        <td className="px-4 py-2 text-ink">{t.workspace_name}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {t.hit_rate != null ? `${Math.round(t.hit_rate * 100)}%` : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {t.citation_precision != null
+                            ? `${Math.round(t.citation_precision * 100)}%`
+                            : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {t.avg_faithfulness != null ? t.avg_faithfulness.toFixed(1) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ChartCard>
+            ) : null}
           </div>
         ) : null}
       </div>

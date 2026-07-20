@@ -241,6 +241,36 @@ async def test_usage_summary_includes_answer_quality(
     assert body["worst_answers"] == []
 
 
+async def test_usage_summary_includes_eval_trend(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """Task 12 (Plan J, §6): the dashboard's single summary call also carries
+    the latest EvalRun per workspace in the org, newest-first, with the
+    workspace name attached (not a bare id)."""
+    from raghub.modules.evals.models import EvalRun
+
+    ws = Workspace(org_id=seeded_user.org_id, name="EvalTrendWS")
+    session.add(ws)
+    await session.flush()
+    session.add(EvalRun(
+        workspace_id=ws.id, triggered_by="manual", query_count=3, hit_rate=0.5,
+        citation_precision=0.75, avg_faithfulness=4.0,
+    ))
+    await session.commit()
+
+    h = await auth(client, "a@acme.com")
+    r = await client.get("/api/v1/admin/usage/summary?days=30", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert "eval_trend" in body
+    assert [t["workspace_id"] for t in body["eval_trend"]] == [str(ws.id)]
+    trend = body["eval_trend"][0]
+    assert trend["workspace_name"] == "EvalTrendWS"
+    assert trend["hit_rate"] == 0.5
+    assert trend["citation_precision"] == 0.75
+    assert trend["avg_faithfulness"] == 4.0
+
+
 async def test_org_quota_change_survives_gateway_down(
     client: httpx.AsyncClient, seeded_user: User, seeded_superadmin: User,
     session: AsyncSession, test_settings: Settings,

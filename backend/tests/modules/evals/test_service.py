@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.errors import NotFoundError
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.evals import service
+from raghub.modules.evals.models import EvalRun
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
 
@@ -51,3 +52,55 @@ async def test_delete_golden_query(
     )
     await service.delete_golden_query(session, ctx, gq.id)
     assert await service.list_golden_queries(session, ctx, ws.id) == []
+
+
+async def test_workspace_ids_with_golden_queries_excludes_workspaces_without_any(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    """Backs the nightly fan-out (Task 12): only workspaces with >=1 golden
+    query are worth a run."""
+    other_ws = Workspace(org_id=ctx.org_id, name="no-golden-queries")
+    session.add(other_ws)
+    await session.flush()
+    await session.commit()
+    await service.create_golden_query(session, ctx, ws.id, question="q", expected_document_ids=[])
+    ids = await service.workspace_ids_with_golden_queries(session)
+    assert ws.id in ids
+    assert other_ws.id not in ids
+
+
+async def test_has_any_golden_query(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    assert await service.has_any_golden_query(session, ws.id) is False
+    await service.create_golden_query(session, ctx, ws.id, question="q", expected_document_ids=[])
+    assert await service.has_any_golden_query(session, ws.id) is True
+
+
+async def test_latest_eval_run_per_workspace_returns_newest_first_with_workspace_name(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    from datetime import datetime
+
+    older = EvalRun(
+        workspace_id=ws.id, triggered_by="manual", hit_rate=0.1,
+        created_at=datetime(2026, 1, 1),
+    )
+    newer = EvalRun(
+        workspace_id=ws.id, triggered_by="nightly", hit_rate=0.9,
+        created_at=datetime(2026, 1, 2),
+    )
+    session.add_all([older, newer])
+    await session.commit()
+
+    other_org_ws = Workspace(org_id=ctx.org_id, name="other-workspace")
+    session.add(other_org_ws)
+    await session.flush()
+    session.add(EvalRun(workspace_id=other_org_ws.id, triggered_by="manual", hit_rate=0.4))
+    await session.commit()
+
+    trend = await service.latest_eval_run_per_workspace(session, ctx.org_id)
+    by_ws = {t.workspace_id: t for t in trend}
+    assert by_ws[ws.id].hit_rate == 0.9  # the newer of the two ws runs, not the older
+    assert by_ws[ws.id].workspace_name == ws.name  # type: ignore[attr-defined]
+    assert by_ws[other_org_ws.id].hit_rate == 0.4

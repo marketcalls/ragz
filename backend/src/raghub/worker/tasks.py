@@ -17,6 +17,7 @@ from raghub.modules.chat.llm import LiteLLMStreamer
 from raghub.modules.documents import ingest
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.evals.runner import run_eval
+from raghub.modules.evals.service import workspace_ids_with_golden_queries
 from raghub.modules.models import catalog
 from raghub.modules.retrieval.service import retrieve
 from raghub.modules.tenancy.models import Workspace
@@ -170,6 +171,27 @@ def run_eval_task(workspace_id: str, triggered_by: str) -> None:
 
 def enqueue_eval_run(workspace_id: UUID, triggered_by: str) -> None:
     run_eval_task.si(str(workspace_id), triggered_by).apply_async(queue="default")
+
+
+@celery_app.task(name="evals.run_all_workspaces")
+def run_all_workspaces_task() -> None:
+    """Nightly fan-out (Task 12, §6; Plan G Task 12 precedent: interval-based,
+    not true crontab). Only workspaces with >=1 golden query get a run -
+    most workspaces will never author any, and a run over zero queries is a
+    wasted DB write."""
+
+    async def _run() -> None:
+        settings = get_settings()
+        engine = build_engine(settings.database_url)
+        try:
+            factory = build_session_factory(engine)
+            async with factory() as session:
+                for workspace_id in await workspace_ids_with_golden_queries(session):
+                    enqueue_eval_run(workspace_id, "nightly")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
 
 
 @celery_app.task(name="models.refresh_catalog")

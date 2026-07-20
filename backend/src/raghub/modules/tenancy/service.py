@@ -112,6 +112,12 @@ _RETRIEVAL_SETTINGS_FIELDS = {
     "web_search_enabled", "strict_mode",
 }
 
+# Task 12 (§6): the subset of _RETRIEVAL_SETTINGS_FIELDS that actually changes
+# what gets retrieved/ranked -- NOT fallback_policy/strict_mode/
+# web_search_enabled/system_prompt_override, which affect generation-time
+# behavior, not retrieval itself.
+_RANKING_FIELDS = {"top_k", "min_score", "rerank_enabled"}
+
 
 async def update_retrieval_settings(
     session: AsyncSession, ctx: TenantContext, workspace_id: UUID,
@@ -133,6 +139,26 @@ async def update_retrieval_settings(
         await session.commit()
     else:
         await session.flush()
+    if _RANKING_FIELDS & updates.keys():
+        # Task 12 (§6): a ranking-relevant change re-runs the eval suite (if
+        # any golden query exists) so admins see the impact without waiting
+        # for the nightly job. Local imports break a REAL circular import
+        # (evals.service already imports tenancy.service at module scope;
+        # worker.tasks -> ... -> tenancy.service transitively too) -- see
+        # this module's ignore_imports entry in pyproject.toml's layering
+        # contract, mirroring documents/service.py's enqueue_reindex
+        # precedent. The enqueue is a fire-and-forget Celery apply_async
+        # (never raises against a healthy broker) placed after the write
+        # above (commit or flush) rather than gated on `commit` itself:
+        # PATCH /workspaces calls this with commit=False and commits the
+        # SAME session immediately afterward in the same request, so there
+        # is no meaningful window in which a rolled-back write could still
+        # have scheduled a run.
+        from raghub.modules.evals.service import has_any_golden_query
+        from raghub.worker.tasks import enqueue_eval_run
+
+        if await has_any_golden_query(session, workspace_id):
+            enqueue_eval_run(workspace_id, "settings_change")
     return ws
 
 

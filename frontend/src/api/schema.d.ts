@@ -434,6 +434,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/evals/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger Eval Run */
+        post: operations["trigger_eval_run_api_v1_workspaces__workspace_id__evals_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/evals/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Eval Runs */
+        get: operations["list_eval_runs_api_v1_workspaces__workspace_id__evals_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/groups": {
         parameters: {
             query?: never;
@@ -1205,6 +1239,8 @@ export interface components {
             answer_quality: components["schemas"]["AnswerQualityOut"];
             /** Worst Answers */
             worst_answers: components["schemas"]["WorstAnswerOut"][];
+            /** Eval Trend */
+            eval_trend: components["schemas"]["EvalTrendOut"][];
         };
         /** DayCount */
         DayCount: {
@@ -1276,6 +1312,62 @@ export interface components {
         DocumentPatch: {
             /** Pinned */
             pinned: boolean;
+        };
+        /** EvalRunOut */
+        EvalRunOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+            /** Triggered By */
+            triggered_by: string;
+            /** Query Count */
+            query_count: number;
+            /** Hit Rate */
+            hit_rate: number | null;
+            /** Citation Precision */
+            citation_precision: number | null;
+            /** Avg Faithfulness */
+            avg_faithfulness: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * EvalTrendOut
+         * @description Task 12 (Plan J, §6): the latest EvalRun per workspace, for the
+         *     org-wide dashboard trend table. model_config enables model_validate
+         *     straight off the evals_service.EvalRun ORM instance (which carries
+         *     workspace_name as an extra attribute -- see
+         *     latest_eval_run_per_workspace's docstring).
+         */
+        EvalTrendOut: {
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+            /** Workspace Name */
+            workspace_name: string;
+            /** Hit Rate */
+            hit_rate: number | null;
+            /** Citation Precision */
+            citation_precision: number | null;
+            /** Avg Faithfulness */
+            avg_faithfulness: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** GoldenQueryCreate */
         GoldenQueryCreate: {
@@ -2835,6 +2927,68 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_eval_run_api_v1_workspaces__workspace_id__evals_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_eval_runs_api_v1_workspaces__workspace_id__evals_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunOut"][];
+                };
             };
             /** @description Validation Error */
             422: {
