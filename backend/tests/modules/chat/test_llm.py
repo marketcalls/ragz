@@ -140,3 +140,30 @@ async def test_complete_network_error_raises_upstream() -> None:
                         transport=httpx.MockTransport(handler))
     with pytest.raises(UpstreamError):
         await s.complete(model="m", messages=[])
+
+
+async def test_complete_satisfies_plan_k_utility_completion_contract() -> None:
+    """Plan K Task 1 contract pin: enrichment (Task 3) and rolling-summary
+    memory (Task 8) call `LiteLLMStreamer.complete(model=..., messages=...)`
+    exactly like this — no `tools` kwarg — and only read `result.text` and
+    `result.usage.{prompt,completion}_tokens`. Plan J's `LLMCompletion` is a
+    superset (it also carries `tool_calls`) but satisfies this minimal
+    two-field contract without any new primitive being defined."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["stream"] is False
+        assert "tools" not in body
+        return _completion_handler({
+            "choices": [{"message": {"content": '{"summary": "ok"}'}}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 3},
+        })
+
+    s = LiteLLMStreamer(base_url="http://llm", master_key="k",
+                        transport=httpx.MockTransport(handler))
+    result: LLMCompletion = await s.complete(
+        model="utility-model", messages=[{"role": "user", "content": "summarize"}]
+    )
+    assert isinstance(result, LLMCompletion)
+    assert result.text == '{"summary": "ok"}'
+    assert result.usage.prompt_tokens == 9 and result.usage.completion_tokens == 3

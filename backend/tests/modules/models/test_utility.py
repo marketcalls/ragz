@@ -2,14 +2,23 @@
 design D5/§4). Follows this module's existing test convention: a local
 `settings` fixture + `super_ctx(user)` helper (see test_service.py /
 test_mock_response.py) rather than shared `ctx`/`test_settings` fixtures,
-which don't exist in this package."""
+which don't exist in this package.
 
+Plan K Task 1 (efficiency & ops) reconciled its planned `resolve_utility_model`
+against this module's `get_utility_model`: Plan K's own later task briefs
+(task-3-brief.md, task-8-brief.md) already import `get_utility_model` by its
+real name, so no alias was added — this file's tests (plus the single-seam
+pin below) are Task 1's actual deliverable, proving the primitive Plan K's
+enrichment (Task 3) and rolling-summary memory (Task 8) will build on."""
+
+import re
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import raghub.modules as modules_pkg
 from raghub.core.config import Settings
 from raghub.modules.auth.models import User
 from raghub.modules.models import service
@@ -106,3 +115,45 @@ async def test_unsetting_only_clears_itself(
         api_key=None, settings=settings, is_utility=False,
     )
     assert await get_utility_model(session) is None
+
+
+def test_is_utility_has_exactly_one_query_site() -> None:
+    """Plan K Task 1 go/no-go pin (K-C16): guards against a second resolver
+    ever being introduced that queries `Model.is_utility` directly (e.g. a
+    parallel `resolve_utility_model` in models/service.py), which would
+    violate the single-seam convention this module's own docstring claims.
+    Matches `select(Model).where(...is_utility...)` specifically — writes
+    such as service.py's exclusivity-enforcing `update(Model)...values(
+    is_utility=False)` and the plain attribute assignment `model.is_utility =
+    True` are not query sites and must NOT trip this pin."""
+    pattern = re.compile(r"select\(Model\)\.where\([^)]*is_utility", re.DOTALL)
+    modules_root = Path(modules_pkg.__file__).resolve().parent
+    hits: list[str] = []
+    for path in modules_root.rglob("*.py"):
+        text = path.read_text()
+        if pattern.search(text):
+            hits.append(str(path.relative_to(modules_root)))
+    assert hits == [str(Path("models") / "utility.py")], (
+        f"expected the ONE is_utility query site to be models/utility.py, found: {hits}"
+    )
+
+
+async def test_get_utility_model_satisfies_plan_ks_minimal_contract(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """Plan K Task 1 contract pin: enrichment (Task 3) and rolling-summary
+    memory (Task 8) call this exact function (imported by its real name, no
+    alias) to discover the designated utility model, treating None as
+    'skip silently' per spec D5/D6. This pins the Model | None return shape
+    Plan K's future callers depend on."""
+    ctx = super_ctx(seeded_user)
+    resolved_before = await get_utility_model(session)
+    assert resolved_before is None
+    m = await _make(session, ctx, settings, "utility-candidate")
+    await service.update_model(
+        session, ctx, m.id, display_name=None, base_url=None, enabled=None,
+        api_key=None, settings=settings, is_utility=True,
+    )
+    resolved = await get_utility_model(session)
+    assert isinstance(resolved, Model)
+    assert resolved.id == m.id
