@@ -5,6 +5,7 @@ import type { CatalogEntryOut, ModelOut } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
+import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
@@ -58,6 +59,9 @@ export function ModelsPage() {
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-4xl">
           {models.isPending ? <Spinner label="Loading models…" /> : null}
+          {models.isError ? (
+            <QueryError error={models.error} onRetry={() => models.refetch()} />
+          ) : null}
           {models.data ? (
             <Table>
               <THead>

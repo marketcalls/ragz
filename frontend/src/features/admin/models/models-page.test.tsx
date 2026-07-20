@@ -89,3 +89,18 @@ test('a short caption explains the utility model designation', () => {
     screen.getByText(/powers answer-quality scoring, evals, and \(later\) enrichment/),
   ).toBeInTheDocument();
 });
+
+test('shows an error message and retry button when the query fails', async () => {
+  const refetch = vi.fn();
+  useAdminModels.mockReturnValue({
+    data: undefined,
+    isPending: false,
+    isError: true,
+    error: new Error('failed to load models'),
+    refetch,
+  });
+  render(<ModelsPage />);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load/i);
+  await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+  expect(refetch).toHaveBeenCalledTimes(1);
+});

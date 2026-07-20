@@ -1,4 +1,5 @@
 import { TopBar } from '@/components/layout/top-bar';
+import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatTile } from '@/components/ui/stat-tile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
@@ -41,6 +42,9 @@ export function HealthPage() {
       <TopBar title="System health" />
       <div className="flex-1 overflow-y-auto p-6">
         {health.isPending ? <Spinner label="Loading system health…" /> : null}
+        {health.isError ? (
+          <QueryError error={health.error} onRetry={() => health.refetch()} />
+        ) : null}
         {data ? (
           <div className="mx-auto max-w-5xl space-y-6">
             <div className="flex flex-wrap gap-2">

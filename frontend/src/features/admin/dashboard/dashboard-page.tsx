@@ -5,6 +5,7 @@ import { ChartCard } from '@/components/charts/chart-card';
 import { StackedBars } from '@/components/charts/stacked-bars';
 import { TimeSeriesLine } from '@/components/charts/time-series-line';
 import { TopBar } from '@/components/layout/top-bar';
+import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatTile } from '@/components/ui/stat-tile';
 
@@ -62,6 +63,7 @@ export function DashboardPage() {
       />
       <div className="flex-1 overflow-y-auto p-6">
         {query.isPending ? <Spinner label="Loading usage…" /> : null}
+        {query.isError ? <QueryError error={query.error} onRetry={() => query.refetch()} /> : null}
         {query.data ? (
           <div className="mx-auto max-w-5xl space-y-6">
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

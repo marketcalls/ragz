@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 
@@ -64,23 +65,26 @@ export function AuditPage() {
           <Button type="submit" size="sm">Apply</Button>
         </form>
         {log.isPending ? <Spinner label="Loading audit log…" /> : null}
-        <Table>
-          <THead>
-            <TR>{COLUMNS.map((c) => <TH key={c}>{c}</TH>)}</TR>
-          </THead>
-          <TBody>
-            {events.map((e) => (
-              <TR key={e.id}>
-                <TD className="whitespace-nowrap">{new Date(e.created_at).toLocaleString()}</TD>
-                <TD className="font-medium">{e.action}</TD>
-                <TD className="font-mono text-[11px]">{e.actor_id ?? '—'}</TD>
-                <TD className="font-mono text-[11px]">{e.org_id ?? '—'}</TD>
-                <TD>{e.target_type}</TD>
-                <TD className="font-mono text-[11px]">{e.target_id}</TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
+        {log.isError ? <QueryError error={log.error} onRetry={() => log.refetch()} /> : null}
+        {log.data ? (
+          <Table>
+            <THead>
+              <TR>{COLUMNS.map((c) => <TH key={c}>{c}</TH>)}</TR>
+            </THead>
+            <TBody>
+              {events.map((e) => (
+                <TR key={e.id}>
+                  <TD className="whitespace-nowrap">{new Date(e.created_at).toLocaleString()}</TD>
+                  <TD className="font-medium">{e.action}</TD>
+                  <TD className="font-mono text-[11px]">{e.actor_id ?? '—'}</TD>
+                  <TD className="font-mono text-[11px]">{e.org_id ?? '—'}</TD>
+                  <TD>{e.target_type}</TD>
+                  <TD className="font-mono text-[11px]">{e.target_id}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        ) : null}
         {log.hasNextPage ? (
           <Button className="mt-3" onClick={() => void log.fetchNextPage()}
             disabled={log.isFetchingNextPage}>

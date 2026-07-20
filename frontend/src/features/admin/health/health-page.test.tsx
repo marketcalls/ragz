@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import type { ClientErrorOut } from '@/api/types';
 
@@ -57,4 +58,22 @@ test('degraded qdrant renders a Failed-styled pill with visible text, plus one c
   // one client-error row rendered
   expect(screen.getByText('user-1')).toBeInTheDocument();
   expect(screen.getByText('https://app.example.com/chat')).toBeInTheDocument();
+});
+
+test('shows an error message and retry button when the health query fails', async () => {
+  const refetch = vi.fn();
+  useSystemHealth.mockReturnValue({
+    data: undefined,
+    isPending: false,
+    isError: true,
+    error: new Error('failed to load system health'),
+    refetch,
+  });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load/i);
+  await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+  expect(refetch).toHaveBeenCalledTimes(1);
 });

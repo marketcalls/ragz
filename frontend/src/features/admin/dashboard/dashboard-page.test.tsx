@@ -138,3 +138,18 @@ test('empty eval_trend renders neither the table nor a broken empty-state', () =
   renderDashboard();
   expect(screen.queryByText('Eval trend (latest run per workspace)')).not.toBeInTheDocument();
 });
+
+test('shows an error message and retry button when the query fails', async () => {
+  const refetch = vi.fn();
+  useUsageSummary.mockReturnValue({
+    data: undefined,
+    isPending: false,
+    isError: true,
+    error: new Error('failed to load usage summary'),
+    refetch,
+  });
+  renderDashboard();
+  expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load/i);
+  await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+  expect(refetch).toHaveBeenCalledTimes(1);
+});
