@@ -296,6 +296,120 @@ async def run_embed_upsert(document_id: UUID) -> None:
         await documents_service.promote_lineage(session, org_id, doc.lineage_id)
 
 
+async def run_enrichment_backfill_for_workspace(workspace_id: UUID) -> None:
+    """Plan K Task 7 fan-out: one IngestJob(stage="enrich") + one
+    run_enrichment_backfill call per current, indexed, not-yet-enriched
+    document in the workspace. Triggered only by a genuine
+    enrichment_enabled False->True PATCH transition; runs on the `default`
+    queue (bulk, non-interactive) so it never blocks a live upload."""
+    async with _session() as session:
+        docs = list(
+            (
+                await session.execute(
+                    select(Document).where(
+                        Document.workspace_id == workspace_id,
+                        Document.is_current.is_(True),
+                        Document.status == "indexed",
+                        Document.enriched.is_(False),
+                    )
+                )
+            ).scalars()
+        )
+        for doc in docs:
+            session.add(IngestJob(document_id=doc.id, stage="enrich"))
+        await session.commit()
+    for doc in docs:
+        await run_enrichment_backfill(doc.id)
+
+
+async def run_enrichment_backfill(document_id: UUID) -> None:
+    """Re-enrich one already-indexed document in place: same deterministic
+    point ids as the original ingest (upsert_points/upsert_hq_points), so
+    this OVERWRITES the parent points' sparse vector + summary and ADDS hq
+    points, without duplicating or re-parsing anything. Guards mirror
+    run_embed_upsert's enrichment gate so this is safe to no-op if the
+    document is already enriched or preconditions no longer hold by the
+    time this runs (e.g. the workspace was toggled back OFF between enqueue
+    and execution, or the document was deleted/edited concurrently).
+    Ingestion-quota attribution per spec §4."""
+    async with _session() as session:
+        doc = (
+            await session.execute(select(Document).where(Document.id == document_id))
+        ).scalar_one_or_none()
+        if doc is None or doc.enriched:
+            return
+        workspace = await session.get(Workspace, doc.workspace_id)
+        if workspace is None or not workspace.enrichment_enabled:
+            return
+        utility_model = await models_service.resolve_utility_model(session)
+        if utility_model is None:
+            return
+
+        raw = await _storage().get(doc.storage_key + ".chunks.json")
+        chunks = [Chunk(**c) for c in json.loads(raw)]
+        completer: LLMCompleter = LiteLLMStreamer(
+            base_url=get_settings().litellm_url, master_key=get_settings().litellm_master_key,
+        )
+        dense_embedder = get_dense_embedder()
+        total_prompt_tokens = total_completion_tokens = 0
+
+        for i in range(0, len(chunks), _BATCH_SIZE):
+            batch = chunks[i : i + _BATCH_SIZE]
+            enrichments = [
+                await enrich_chunk(completer, utility_model.litellm_model_name, c.text)
+                for c in batch
+            ]
+            summaries = [e.summary for e in enrichments]
+            sparse_texts = [
+                f"{c.text} {' '.join(e.keywords)}".strip()
+                for c, e in zip(batch, enrichments, strict=True)
+            ]
+            dense, sparse = await embed_batch(
+                [c.text for c in batch], dense_embedder, sparse_texts=sparse_texts
+            )
+            await upsert_points(
+                org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
+                mime=doc.mime, created_at=doc.created_at,
+                acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
+                chunks=batch, dense=dense, sparse=sparse, version=doc.version,
+                meta=doc.meta, is_current=doc.is_current, summaries=summaries,
+            )
+            hq_by_chunk = [e.hypothetical_questions for e in enrichments]
+            if any(hq_by_chunk):
+                hq_dense: list[list[list[float]]] = []
+                hq_sparse: list[list[qdrant_models.SparseVector]] = []
+                for qs in hq_by_chunk:
+                    if not qs:
+                        hq_dense.append([])
+                        hq_sparse.append([])
+                        continue
+                    d, s = await embed_batch(qs, dense_embedder)
+                    hq_dense.append(d)
+                    hq_sparse.append(s)
+                await upsert_hq_points(
+                    org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
+                    mime=doc.mime, created_at=doc.created_at,
+                    acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
+                    version=doc.version, meta=doc.meta, is_current=doc.is_current,
+                    parent_chunks=batch, parent_summaries=summaries,
+                    hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
+                )
+            total_prompt_tokens += sum(len(c.text) for c in batch) // 4
+            total_completion_tokens += sum(len(s or "") for s in summaries) // 4
+
+        doc.enriched = True
+        # QUOTA-5 / spec §4: attributed as `feature="ingestion"` usage to the
+        # toggling admin's org, same estimation convention as
+        # run_embed_upsert's own record_usage call (chars//4, no model token
+        # accounting from TEI/the utility model's embedding calls).
+        await quota_service.record_usage(
+            session, org_id=doc.org_id, user_id=doc.created_by, model_id=utility_model.id,
+            feature="ingestion",
+            prompt_tokens=total_prompt_tokens, completion_tokens=total_completion_tokens,
+        )
+        await session.commit()
+
+
 async def run_delete(document_id: UUID, actor_id: UUID | None) -> None:
     """One task propagating deletion: Qdrant points → MinIO objects → Postgres
     rows, with an audit entry (spec §2.3, DOC-8). Idempotent."""

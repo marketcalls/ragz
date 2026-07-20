@@ -18,6 +18,7 @@ from raghub.modules.tenancy.schemas import (
     WorkspaceOut,
     WorkspacePatch,
 )
+from raghub.worker.tasks import enqueue_enrichment_backfill
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -66,6 +67,16 @@ async def patch_workspace(
     updates = {
         f: getattr(body, f) for f in _SETTINGS_FIELDS if f in body.model_fields_set
     }
+    # Task 7 (Plan K §4): capture the PRE-update value before
+    # update_retrieval_settings mutates the same session-identity-mapped
+    # workspace row via setattr — reading it afterwards would only ever see
+    # the new value, making a False->True transition indistinguishable from
+    # an already-True no-op PATCH.
+    was_enrichment_enabled: bool | None = None
+    if updates.get("enrichment_enabled") is True:
+        was_enrichment_enabled = (
+            await service.get_workspace(session, ctx, workspace_id)
+        ).enrichment_enabled
     if updates:
         ws = await service.update_retrieval_settings(
             session, ctx, workspace_id, updates, commit=False
@@ -75,4 +86,9 @@ async def patch_workspace(
         await session.commit()
     if ws is None:
         ws = await service.get_workspace(session, ctx, workspace_id)
+    # Backfill only on a genuine False->True transition (spec §4) — a
+    # redundant `{"enrichment_enabled": true}` PATCH when it's already true
+    # must not re-enqueue.
+    if was_enrichment_enabled is False:
+        enqueue_enrichment_backfill(workspace_id)
     return WorkspaceOut.model_validate(ws)

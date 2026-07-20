@@ -1,4 +1,7 @@
+from uuid import UUID
+
 import httpx
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.auth.models import User
@@ -244,3 +247,70 @@ async def test_patch_atomicity_with_mixed_valid_invalid_fields(
         ws_after["default_model_id"] is None
     ), "default_model_id should not change on validation failure"
     assert ws_after["top_k"] == 8, "top_k should remain unchanged"
+
+
+# --- Plan K Task 7: backfill enqueued on a genuine False->True transition ---
+
+
+@pytest.fixture
+def captured_backfill(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
+    calls: list[UUID] = []
+    monkeypatch.setattr(
+        "raghub.api.routes.workspaces.enqueue_enrichment_backfill", calls.append
+    )
+    return calls
+
+
+async def test_toggle_on_enqueues_backfill(
+    client: httpx.AsyncClient, seeded_user: User, captured_backfill: list[UUID]
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": True}, headers=h
+    )
+    assert r.status_code == 200
+    assert captured_backfill == [UUID(ws_id)]
+
+
+async def test_toggle_already_on_does_not_reenqueue(
+    client: httpx.AsyncClient, seeded_user: User, captured_backfill: list[UUID]
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    r1 = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": True}, headers=h
+    )
+    assert r1.status_code == 200
+    assert len(captured_backfill) == 1
+    # PATCH with the same value is a no-op diff -> no re-enqueue
+    r2 = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": True}, headers=h
+    )
+    assert r2.status_code == 200
+    assert len(captured_backfill) == 1
+
+
+async def test_toggling_off_then_on_does_not_enqueue_on_the_off_leg(
+    client: httpx.AsyncClient, seeded_user: User, captured_backfill: list[UUID]
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    # Starts False; flipping to False again is a no-op diff, not a transition.
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": False}, headers=h
+    )
+    assert r.status_code == 200
+    assert captured_backfill == []
+    # Now the real False->True transition fires exactly once.
+    r2 = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": True}, headers=h
+    )
+    assert r2.status_code == 200
+    assert captured_backfill == [UUID(ws_id)]
+    # Toggling back OFF never enqueues (no code path — documented, not coded).
+    r3 = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"enrichment_enabled": False}, headers=h
+    )
+    assert r3.status_code == 200
+    assert captured_backfill == [UUID(ws_id)]

@@ -90,6 +90,16 @@ def reindex_task(self: Task, document_id: str) -> str:
     return document_id
 
 
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="documents.enrich_backfill")
+def enrich_backfill_task(self: Task, workspace_id: str) -> str:
+    """Plan K Task 7: fan-out to every current/indexed/not-yet-enriched
+    document in the workspace, triggered by the PATCH route on a genuine
+    enrichment_enabled False->True transition."""
+    _run(self, lambda: ingest.run_enrichment_backfill_for_workspace(UUID(workspace_id)))
+    return workspace_id
+
+
 def select_queue(size_bytes: int) -> str:
     """Uploads under the interactive threshold jump the bulk queue (spec §3.2)."""
     limit = get_settings().interactive_upload_mb * 1024 * 1024
@@ -114,6 +124,12 @@ def enqueue_delete(document_id: UUID, actor_id: UUID) -> None:
 
 def enqueue_reindex(document_id: UUID) -> None:
     reindex_task.si(str(document_id)).apply_async(queue="interactive")
+
+
+def enqueue_enrichment_backfill(workspace_id: UUID) -> None:
+    """Bulk background work (default queue) — never the interactive queue,
+    so a toggle-ON never blocks a live upload (Plan K Task 7)."""
+    enrich_backfill_task.si(str(workspace_id)).apply_async(queue="default")
 
 
 @celery_app.task(name="chat.audit_message")

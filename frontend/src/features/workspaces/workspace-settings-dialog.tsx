@@ -188,7 +188,9 @@ export function WorkspaceSettingsDialog({
                   onChange={(e) => setEnrichment(e.target.checked)}
                   aria-label="Enable search-recall enrichment"
                 />
-                Enrich chunks for better search recall (uses the utility model)
+                Enrich chunks for better search recall (uses the utility model) — turning this
+                off stops new enrichment but does not remove enrichment already applied to
+                existing documents
               </label>
               <div className="space-y-1">
                 <Label htmlFor="ws-prompt-override">System prompt additions</Label>
