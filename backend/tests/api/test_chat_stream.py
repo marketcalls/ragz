@@ -315,7 +315,9 @@ async def test_upstream_error_yields_generic_message(
 ) -> None:
     """UpstreamError from LLM gateway yields generic error message to client."""
     class FailingStreamer:
-        async def stream(self, *, model: str, messages: list[dict[str, str]]):  # type: ignore[no-untyped-def]
+        async def stream(  # type: ignore[no-untyped-def]
+            self, *, model: str, messages: list[dict[str, str]], reasoning_effort: str | None = None
+        ):
             if False:
                 yield  # Make this an async generator
             raise UpstreamError(detail="<html>502 Bad Gateway</html>")
@@ -450,7 +452,9 @@ async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
     from raghub.modules.chat.llm import LLMDelta
 
     class MidStreamFailingStreamer:
-        async def stream(self, *, model: str, messages: list[dict[str, str]]):  # type: ignore[no-untyped-def]
+        async def stream(  # type: ignore[no-untyped-def]
+            self, *, model: str, messages: list[dict[str, str]], reasoning_effort: str | None = None
+        ):
             yield LLMDelta("partial")
             raise RuntimeError("unexpected failure")
 

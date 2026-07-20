@@ -233,6 +233,26 @@ async def test_malformed_judge_output_fails_open_no_regeneration() -> None:
     assert out.extra_completion_tokens == 5
 
 
+async def test_reasoning_effort_applied_to_chat_calls_only() -> None:
+    completer = FakeCompleter([
+        LLMCompletion(text="unsupported claim.", tool_calls=[], usage=LLMUsage(50, 10)),  # synth 1
+        LLMCompletion(text='{"passed": false, "critique": "fabricated"}', tool_calls=[],
+                      usage=LLMUsage(20, 5)),  # judge
+        LLMCompletion(text="[1] Gate B, revised.", tool_calls=[], usage=LLMUsage(60, 12)),  # synth2
+    ])
+    await synthesize_with_gatekeeper(
+        completer, chat_model_name="chat-m", utility_model_name="util-m",
+        prompt=[{"role": "user", "content": "q"}], question="q?", sources=[],
+        system_prompt_override=None, rebuild_prompt=_rebuild,
+        reasoning_effort="high",
+    )
+    # chat_model_name calls (initial synth + critique-guided regeneration) carry
+    # the effort; the utility-model verdict call never does.
+    assert completer.calls[0]["reasoning_effort"] == "high"  # synth
+    assert completer.calls[1]["reasoning_effort"] is None  # judge (utility model)
+    assert completer.calls[2]["reasoning_effort"] == "high"  # retry synth
+
+
 async def test_failing_candidate_with_empty_critique_uses_fallback_reason() -> None:
     completer = FakeCompleter([
         LLMCompletion(text="unsupported claim.", tool_calls=[], usage=LLMUsage(50, 10)),

@@ -142,6 +142,72 @@ async def test_complete_network_error_raises_upstream() -> None:
         await s.complete(model="m", messages=[])
 
 
+async def test_stream_includes_reasoning_effort_when_set() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200, content=sse_body([delta_chunk("hi")]),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    streamer = make(httpx.MockTransport(handler))
+    async for _ in streamer.stream(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+        reasoning_effort="high",
+    ):
+        pass
+    assert seen[0]["reasoning_effort"] == "high"
+
+
+async def test_stream_omits_reasoning_effort_when_none() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200, content=sse_body([delta_chunk("hi")]),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async for _ in make(httpx.MockTransport(handler)).stream(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+    ):
+        pass
+    assert "reasoning_effort" not in seen[0]
+
+
+async def test_complete_includes_reasoning_effort_when_set() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _completion_handler({"choices": [{"message": {"content": "ok"}}]})
+
+    streamer = make(httpx.MockTransport(handler))
+    await streamer.complete(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+        reasoning_effort="low",
+    )
+    assert seen[0]["reasoning_effort"] == "low"
+
+
+async def test_complete_omits_reasoning_effort_when_off() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _completion_handler({"choices": [{"message": {"content": "ok"}}]})
+
+    streamer = make(httpx.MockTransport(handler))
+    await streamer.complete(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+        reasoning_effort="off",
+    )
+    assert "reasoning_effort" not in seen[0]
+
+
 async def test_complete_satisfies_plan_k_utility_completion_contract() -> None:
     """Plan K Task 1 contract pin: enrichment (Task 3) and rolling-summary
     memory (Task 8) call `LiteLLMStreamer.complete(model=..., messages=...)`

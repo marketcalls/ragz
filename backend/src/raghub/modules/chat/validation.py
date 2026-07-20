@@ -170,6 +170,7 @@ async def synthesize_with_gatekeeper(
     sources: Sequence[PromptSource],
     system_prompt_override: str | None,
     rebuild_prompt: Callable[[str | None], list[dict[str, str]]],
+    reasoning_effort: str | None = None,
 ) -> GatekeptAnswer:
     """Gatekeeper (design §3): one non-streaming synth, one utility-model
     judge call. On failure, ONE critique-guided regeneration via
@@ -180,7 +181,9 @@ async def synthesize_with_gatekeeper(
     second judge call, so there is no way to know if the retry actually
     passed - the UI badge communicates "this answer wasn't re-verified", not
     "this answer is wrong"."""
-    attempt = await completer.complete(model=chat_model_name, messages=prompt)
+    attempt = await completer.complete(
+        model=chat_model_name, messages=prompt, reasoning_effort=reasoning_effort
+    )
     verdict_completion = await completer.complete(
         model=utility_model_name,
         messages=build_gatekeeper_messages(question=question, answer=attempt.text, sources=sources),
@@ -201,7 +204,10 @@ async def synthesize_with_gatekeeper(
         "every claim is directly supported by the numbered excerpts and it directly addresses "
         "the question."
     )
-    retry = await completer.complete(model=chat_model_name, messages=rebuild_prompt(critique_note))
+    retry = await completer.complete(
+        model=chat_model_name, messages=rebuild_prompt(critique_note),
+        reasoning_effort=reasoning_effort,
+    )
     return GatekeptAnswer(
         text=retry.text, usage=retry.usage, validation_failed=True,
         extra_prompt_tokens=extra_prompt + attempt.usage.prompt_tokens,

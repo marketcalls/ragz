@@ -800,6 +800,7 @@ async def stream_reply(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     completer: LLMCompleter | None = None,
     web_searcher: WebSearcher | None = None,
+    reasoning_effort: str | None = None,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -842,7 +843,10 @@ async def stream_reply(
             # this request's teardown. aclosing's __aexit__ awaits aclose()
             # deterministically, in the same unwind.
             async with contextlib.aclosing(
-                streamer.stream(model=model.litellm_model_name, messages=prompt)
+                streamer.stream(
+                    model=model.litellm_model_name, messages=prompt,
+                    reasoning_effort=reasoning_effort,
+                )
             ) as llm_stream:
                 async for item in llm_stream:
                     if isinstance(item, LLMDelta):
@@ -1040,7 +1044,10 @@ async def stream_reply(
             # aclosing: same deterministic-cleanup-on-abort reasoning as the
             # conversational branch.
             async with contextlib.aclosing(
-                streamer.stream(model=model.litellm_model_name, messages=prompt)
+                streamer.stream(
+                    model=model.litellm_model_name, messages=prompt,
+                    reasoning_effort=reasoning_effort,
+                )
             ) as llm_stream:
                 async for item in llm_stream:
                     if isinstance(item, LLMDelta):
@@ -1143,6 +1150,7 @@ async def stream_reply(
                     system_prompt_override=override, model_hint=model_hint,
                     summary=summary_text,
                 ),
+                reasoning_effort=reasoning_effort,
             )
             streamed_parts.append(gatekept.text)
             yield token_event(gatekept.text)
@@ -1154,7 +1162,10 @@ async def stream_reply(
             # See the aclosing note in the conversational branch above - same
             # deterministic-cleanup-on-abort reasoning applies here.
             async with contextlib.aclosing(
-                streamer.stream(model=model.litellm_model_name, messages=prompt)
+                streamer.stream(
+                    model=model.litellm_model_name, messages=prompt,
+                    reasoning_effort=reasoning_effort,
+                )
             ) as llm_stream:
                 async for item in llm_stream:
                     if isinstance(item, LLMDelta):

@@ -41,7 +41,8 @@ class LLMCompletion:
 
 class LLMStreamer(Protocol):
     def stream(
-        self, *, model: str, messages: list[dict[str, str]]
+        self, *, model: str, messages: list[dict[str, str]],
+        reasoning_effort: str | None = None,
     ) -> AsyncGenerator[LLMDelta | LLMUsage, None]: ...
 
 
@@ -52,6 +53,7 @@ class LLMCompleter(Protocol):
         model: str,
         messages: list[dict[str, str]],
         tools: list[dict[str, object]] | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMCompletion: ...
 
 
@@ -72,14 +74,17 @@ class LiteLLMStreamer:
         self._limits = limits if limits is not None else httpx.Limits()
 
     async def stream(
-        self, *, model: str, messages: list[dict[str, str]]
+        self, *, model: str, messages: list[dict[str, str]],
+        reasoning_effort: str | None = None,
     ) -> AsyncGenerator[LLMDelta | LLMUsage, None]:
-        payload = {
+        payload: dict[str, object] = {
             "model": model,
             "messages": messages,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if reasoning_effort is not None and reasoning_effort != "off":
+            payload["reasoning_effort"] = reasoning_effort
         headers = {"Authorization": f"Bearer {self._master_key}"}
         try:
             async with httpx.AsyncClient(
@@ -125,6 +130,7 @@ class LiteLLMStreamer:
         model: str,
         messages: list[dict[str, str]],
         tools: list[dict[str, object]] | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMCompletion:
         """One non-streaming completion (agent planner rounds). Optional
         OpenAI-style `tools` for models that do native tool calling; the raw
@@ -132,6 +138,8 @@ class LiteLLMStreamer:
         payload: dict[str, object] = {"model": model, "messages": messages, "stream": False}
         if tools:
             payload["tools"] = tools
+        if reasoning_effort is not None and reasoning_effort != "off":
+            payload["reasoning_effort"] = reasoning_effort
         headers = {"Authorization": f"Bearer {self._master_key}"}
         try:
             async with httpx.AsyncClient(

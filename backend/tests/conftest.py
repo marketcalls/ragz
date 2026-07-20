@@ -232,8 +232,12 @@ class FakeStreamer:
         self.deltas = deltas if deltas is not None else ["Revenue was 12M ", "[1]."]
         self.calls: list[dict[str, object]] = []
 
-    async def stream(self, *, model: str, messages: list[dict[str, str]]):  # type: ignore[no-untyped-def]
-        self.calls.append({"model": model, "messages": messages})
+    async def stream(  # type: ignore[no-untyped-def]
+        self, *, model: str, messages: list[dict[str, str]], reasoning_effort: str | None = None
+    ):
+        self.calls.append(
+            {"model": model, "messages": messages, "reasoning_effort": reasoning_effort}
+        )
         for d in self.deltas:
             yield LLMDelta(d)
         yield LLMUsage(prompt_tokens=42, completion_tokens=7)
@@ -247,8 +251,11 @@ class FakeCompleter:
         self.script = list(script or [])
         self.calls: list[dict[str, object]] = []
 
-    async def complete(self, *, model, messages, tools=None):  # type: ignore[no-untyped-def]
-        self.calls.append({"model": model, "messages": messages, "tools": tools})
+    async def complete(self, *, model, messages, tools=None, reasoning_effort=None):  # type: ignore[no-untyped-def]
+        self.calls.append(
+            {"model": model, "messages": messages, "tools": tools,
+             "reasoning_effort": reasoning_effort}
+        )
         if self.script:
             return self.script.pop(0)
         return LLMCompletion(

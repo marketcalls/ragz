@@ -28,7 +28,7 @@ class SlowStreamer:
         self.closed = False
 
     async def stream(
-        self, *, model: str, messages: list[dict[str, str]]
+        self, *, model: str, messages: list[dict[str, str]], reasoning_effort: str | None = None
     ) -> AsyncIterator[LLMDelta | LLMUsage]:
         try:
             for d in self.deltas:
