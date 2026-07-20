@@ -211,6 +211,26 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
 _RERANK_PREFETCH = 50  # CHAT-2: rerank the top-50 fused candidates
 
 
+def _dedupe_hq(candidates: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Collapse {parent, hq×N} groups sharing (document_id, page,
+    chunk_index) into one RetrievedChunk carrying the max score (spec §4:
+    "retrieval dedupes hq hits into their parent chunk"). Runs on Qdrant's
+    already-fused candidate list — Qdrant's RRF fusion (K-C2) is one opaque
+    server call with no earlier client-side hook, so this is the earliest
+    point a chunk_ref-level merge is possible. Order-preserving: keeps each
+    group's first-seen position, never re-ranks what fusion already ranked."""
+    best: dict[tuple[UUID, int, int], RetrievedChunk] = {}
+    order: list[tuple[UUID, int, int]] = []
+    for c in candidates:
+        key = (c.document_id, c.page, c.chunk_index)
+        if key not in best:
+            order.append(key)
+            best[key] = c
+        elif c.score > best[key].score:
+            best[key] = c
+    return [best[key] for key in order]
+
+
 def _chunk_from_point(point: models.ScoredPoint) -> RetrievedChunk:
     payload = point.payload or {}
     return RetrievedChunk(
@@ -238,6 +258,10 @@ async def retrieve(
     2. top_k=None resolves to workspace.top_k (ADM-3).
     3. Qdrant prefetch dense + sparse under the tenant filter → RRF fusion
        (top-50 candidates when workspace.rerank_enabled, else top_k).
+       Plan K Task 5: fused candidates are then deduped by (document_id,
+       page, chunk_index) via `_dedupe_hq` — collapses a chunk's own point
+       and its hq siblings into one RetrievedChunk (max score wins) before
+       any no_answer/top_k decision. No-op when no hq points exist.
     4. rerank_enabled: cross-encoder scores the candidates; final top_k come
        back in reranker order carrying RERANKER scores, and no_answer compares
        the best reranker score against workspace.min_score. CALIBRATION: that
@@ -273,6 +297,7 @@ async def retrieve(
         with_payload=True,
     )
     candidates = [_chunk_from_point(p) for p in fused.points]
+    candidates = _dedupe_hq(candidates)
     if not candidates:
         return RetrievalResult(chunks=[], no_answer=True)
 

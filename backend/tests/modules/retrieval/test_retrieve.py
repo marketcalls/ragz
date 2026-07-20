@@ -9,7 +9,12 @@ from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.auth.models import User
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-from raghub.modules.retrieval.service import delete_document_points, retrieve
+from raghub.modules.retrieval.service import (
+    RetrievedChunk,
+    _dedupe_hq,
+    delete_document_points,
+    retrieve,
+)
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
 
@@ -176,3 +181,23 @@ async def test_delete_points_tolerates_missing_collection(stack_env: None) -> No
     if await client.collection_exists(COLLECTION):
         await client.delete_collection(COLLECTION)
     await delete_document_points(uuid4(), uuid4())  # must not raise
+
+
+def test_dedupe_hq_keeps_max_score_per_chunk_ref() -> None:
+    doc_id = uuid4()
+    parent = RetrievedChunk(document_id=doc_id, page=1, chunk_index=0, text="t", score=0.4)
+    hq_hit = RetrievedChunk(document_id=doc_id, page=1, chunk_index=0, text="t", score=0.9)
+    other = RetrievedChunk(document_id=doc_id, page=1, chunk_index=1, text="u", score=0.5)
+    result = _dedupe_hq([parent, hq_hit, other])
+    assert len(result) == 2
+    kept = next(r for r in result if r.chunk_index == 0)
+    assert kept.score == 0.9
+
+
+def test_dedupe_hq_noop_when_no_duplicates() -> None:
+    doc_id = uuid4()
+    chunks = [
+        RetrievedChunk(document_id=doc_id, page=1, chunk_index=0, text="a", score=0.5),
+        RetrievedChunk(document_id=doc_id, page=1, chunk_index=1, text="b", score=0.3),
+    ]
+    assert _dedupe_hq(chunks) == chunks

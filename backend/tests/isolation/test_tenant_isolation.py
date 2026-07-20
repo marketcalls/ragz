@@ -3,6 +3,7 @@
 If any test here fails, treat it as a security incident, not a flake.
 """
 
+import asyncio
 from datetime import datetime
 from uuid import uuid4
 
@@ -12,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.documents.ingest import run_delete
+from raghub.modules.documents.pipeline import Chunk, upsert_hq_points
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.embeddings import get_dense_embedder
+from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.service import (
     MetadataClause,
     _tenant_filter,
@@ -21,7 +23,11 @@ from raghub.modules.retrieval.service import (
     list_document_chunks,
     retrieve,
 )
-from tests.isolation.conftest import ingest_text, seed_same_org_two_workspaces
+from tests.isolation.conftest import (
+    ingest_text,
+    seed_acl_workspace,
+    seed_same_org_two_workspaces,
+)
 
 
 async def test_org_a_never_sees_org_b_chunks(
@@ -296,3 +302,60 @@ async def test_document_chunks_cross_workspace_never_resolve(
     # -- regardless of which document_id is passed.
     with pytest.raises(WorkspaceAccessDenied):
         await list_document_chunks(ctx1, ws2.id, doc2.id)
+
+
+async def test_hq_point_respects_tenant_and_acl_filters(
+    session: AsyncSession, two_orgs: dict  # type: ignore[type-arg]
+) -> None:
+    """An hq point (Task 4's upsert_hq_points) is a plain Qdrant point written
+    through the SAME payload/filter posture as its parent chunk point — it
+    must be filtered out by _tenant_filter exactly like a normal chunk point
+    would be, for both a cross-org query (tenant clause) and a same-org
+    wrong-ACL-group query (ACL clause). Proves Task 4 introduced no second,
+    unfiltered read surface (iron rule 1). Each hq point's vector IS the
+    hypothetical question's embedding (per spec §4), so querying with the
+    EXACT question text is the strongest possible lure: if the tenant/ACL
+    filter were broken, this hq point would be the top hit by construction."""
+    ctx_a, ws_a, _ = two_orgs["a"]
+    ctx_b, ws_b, _ = two_orgs["b"]
+
+    question = "what is the hq secret launch code?"
+    q_dense = (await get_dense_embedder().embed([question]))[0]
+    q_sparse = (await asyncio.to_thread(embed_sparse, [question]))[0]
+    await upsert_hq_points(
+        org_id=ctx_a.org_id, workspace_id=ws_a.id, document_id=uuid4(),
+        mime="text/plain", created_at=datetime.now(), acl_group_ids=[],
+        version=1, meta=None, is_current=True,
+        parent_chunks=[Chunk(text="hq secret: the launch code is 4471", page=1, chunk_index=0)],
+        parent_summaries=[None], hq_texts=[[question]],
+        hq_dense=[[q_dense]], hq_sparse=[[q_sparse]],
+    )
+    # Org B, replaying the EXACT question embedded into org A's hq point,
+    # must never see it — the tenant clause has to exclude it entirely.
+    result_b = await retrieve(session, ctx_b, ws_b.id, question, top_k=10)
+    assert not any("4471" in c.text for c in result_b.chunks)
+    # Not a vacuous pass: the SAME hq point resolves for its rightful org.
+    result_a = await retrieve(session, ctx_a, ws_a.id, question, top_k=10)
+    assert any("4471" in c.text for c in result_a.chunks)
+
+    # Same org, one workspace, wrong ACL group — the ACL clause must also
+    # exclude an hq point exactly like it excludes its parent chunk.
+    ctx_in, ctx_out, _, acl_ws, finance = await seed_acl_workspace(session)
+    acl_question = "what is the finance hq secret budget code?"
+    acl_dense = (await get_dense_embedder().embed([acl_question]))[0]
+    acl_sparse = (await asyncio.to_thread(embed_sparse, [acl_question]))[0]
+    await upsert_hq_points(
+        org_id=ctx_in.org_id, workspace_id=acl_ws.id, document_id=uuid4(),
+        mime="text/plain", created_at=datetime.now(),
+        acl_group_ids=[str(finance.id)],
+        version=1, meta=None, is_current=True,
+        parent_chunks=[Chunk(text="finance hq secret: the budget code is 8820",
+                              page=1, chunk_index=0)],
+        parent_summaries=[None], hq_texts=[[acl_question]],
+        hq_dense=[[acl_dense]], hq_sparse=[[acl_sparse]],
+    )
+    result_outsider = await retrieve(session, ctx_out, acl_ws.id, acl_question, top_k=10)
+    assert not any("8820" in c.text for c in result_outsider.chunks)
+    # Not a vacuous pass: the group member resolves it.
+    result_insider = await retrieve(session, ctx_in, acl_ws.id, acl_question, top_k=10)
+    assert any("8820" in c.text for c in result_insider.chunks)
