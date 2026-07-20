@@ -590,6 +590,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Feedback Queue */
+        get: operations["get_feedback_queue_api_v1_admin_feedback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/sso": {
         parameters: {
             query?: never;
@@ -851,6 +868,24 @@ export interface paths {
         /** Regenerate */
         post: operations["regenerate_api_v1_messages__message_id__regenerate_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/messages/{message_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Feedback */
+        put: operations["set_feedback_api_v1_messages__message_id__feedback_put"];
+        post?: never;
+        /** Clear Feedback */
+        delete: operations["clear_feedback_api_v1_messages__message_id__feedback_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1246,6 +1281,7 @@ export interface components {
             worst_answers: components["schemas"]["WorstAnswerOut"][];
             /** Eval Trend */
             eval_trend: components["schemas"]["EvalTrendOut"][];
+            feedback_summary: components["schemas"]["FeedbackSummaryOut"];
         };
         /** DayCount */
         DayCount: {
@@ -1376,6 +1412,62 @@ export interface components {
              */
             created_at: string;
         };
+        /** FeedbackOut */
+        FeedbackOut: {
+            /** Rating */
+            rating: string;
+            /** Comment */
+            comment: string | null;
+        };
+        /** FeedbackQueueItemOut */
+        FeedbackQueueItemOut: {
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /**
+             * Chat Id
+             * Format: uuid
+             */
+            chat_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+            /** Question */
+            question: string;
+            /** Answer */
+            answer: string;
+            /** Rating */
+            rating: string;
+            /** Comment */
+            comment: string | null;
+            /** Citations */
+            citations: components["schemas"]["CitationOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** FeedbackQueuePageOut */
+        FeedbackQueuePageOut: {
+            /** Items */
+            items: components["schemas"]["FeedbackQueueItemOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** FeedbackSummaryOut */
+        FeedbackSummaryOut: {
+            /** Total Count */
+            total_count: number;
+            /** Down Count */
+            down_count: number;
+            /** Down Rate */
+            down_rate: number | null;
+        };
         /** GoldenQueryCreate */
         GoldenQueryCreate: {
             /** Question */
@@ -1481,6 +1573,16 @@ export interface components {
              */
             role: string;
         };
+        /** MessageFeedbackIn */
+        MessageFeedbackIn: {
+            /**
+             * Rating
+             * @enum {string}
+             */
+            rating: "up" | "down";
+            /** Comment */
+            comment?: string | null;
+        };
         /** MessageNode */
         MessageNode: {
             /**
@@ -1533,6 +1635,7 @@ export interface components {
             validation_failed: boolean;
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
+            feedback: components["schemas"]["FeedbackOut"] | null;
             /** Children */
             children: components["schemas"]["MessageNode"][];
         };
@@ -1557,6 +1660,8 @@ export interface components {
             parent_message_id?: string | null;
             /** Model Id */
             model_id?: string | null;
+            /** Reasoning Effort */
+            reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
         };
         /**
          * MetadataFieldCreate
@@ -1795,6 +1900,8 @@ export interface components {
         RegenerateRequest: {
             /** Model Id */
             model_id?: string | null;
+            /** Reasoning Effort */
+            reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
         };
         /** RoleTemplateCreate */
         RoleTemplateCreate: {
@@ -3358,6 +3465,40 @@ export interface operations {
             };
         };
     };
+    get_feedback_queue_api_v1_admin_feedback_get: {
+        parameters: {
+            query?: {
+                rating?: string;
+                workspace_id?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackQueuePageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_sso_api_v1_admin_sso_get: {
         parameters: {
             query?: never;
@@ -3979,6 +4120,70 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_feedback_api_v1_messages__message_id__feedback_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageFeedbackIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_feedback_api_v1_messages__message_id__feedback_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

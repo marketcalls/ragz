@@ -271,6 +271,34 @@ async def test_usage_summary_includes_eval_trend(
     assert trend["avg_faithfulness"] == 4.0
 
 
+async def test_dashboard_feedback_summary(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """Task 3 (CHAT-10/ADM-5): the dashboard's single summary call also
+    carries the org-scoped feedback rollup, additively."""
+    _, ws = await _org_with_workspace(session, "AcmeWS-Feedback")
+    chat = Chat(org_id=seeded_user.org_id, workspace_id=ws.id, user_id=seeded_user.id)
+    session.add(chat)
+    await session.flush()
+    msg_down = Message(chat_id=chat.id, role="assistant", content="a", sibling_index=0)
+    msg_up = Message(chat_id=chat.id, role="assistant", content="b", sibling_index=1)
+    session.add_all([msg_down, msg_up])
+    await session.commit()
+
+    h = await auth(client, "a@acme.com")
+    r_down = await client.put(f"/api/v1/messages/{msg_down.id}/feedback",
+                              json={"rating": "down"}, headers=h)
+    assert r_down.status_code == 200
+    r_up = await client.put(f"/api/v1/messages/{msg_up.id}/feedback",
+                            json={"rating": "up"}, headers=h)
+    assert r_up.status_code == 200
+
+    r = await client.get("/api/v1/admin/usage/summary?days=30", headers=h)
+    body = r.json()
+    assert body["feedback_summary"]["total_count"] == 2
+    assert body["feedback_summary"]["down_count"] == 1
+    assert body["feedback_summary"]["down_rate"] == 0.5
+
 async def test_get_user_quota_returns_override_and_usage(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

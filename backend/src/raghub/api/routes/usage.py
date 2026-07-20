@@ -141,10 +141,17 @@ class EvalTrendOut(BaseModel):
     created_at: datetime
 
 
+class FeedbackSummaryOut(BaseModel):
+    total_count: int
+    down_count: int
+    down_rate: float | None
+
+
 class DashboardSummaryOut(UsageSummaryOut):
     answer_quality: AnswerQualityOut
     worst_answers: list[WorstAnswerOut]
     eval_trend: list[EvalTrendOut]
+    feedback_summary: FeedbackSummaryOut
 
 
 @router.get("/admin/usage/summary", response_model=DashboardSummaryOut)
@@ -154,6 +161,7 @@ async def usage_summary(
 ) -> DashboardSummaryOut:
     base = await service.org_usage_summary(session, org_id=ctx.org_id, days=days)
     quality = await chat_service.answer_quality_summary(session, ctx, days=days)
+    feedback = await chat_service.feedback_summary(session, ctx, days=days)
     trend = await evals_service.latest_eval_run_per_workspace(session, ctx.org_id)
     return DashboardSummaryOut(
         **UsageSummaryOut.model_validate(base).model_dump(),
@@ -172,6 +180,10 @@ async def usage_summary(
             for w in quality.worst
         ],
         eval_trend=[EvalTrendOut.model_validate(t) for t in trend],
+        feedback_summary=FeedbackSummaryOut(
+            total_count=feedback.total_count, down_count=feedback.down_count,
+            down_rate=feedback.down_rate,
+        ),
     )
 
 
