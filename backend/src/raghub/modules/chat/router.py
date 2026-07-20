@@ -37,7 +37,10 @@ _CLOSER_EXACT = {
     "bye", "goodbye", "see you",
 }
 _COURTESY_EXACT = {"how are you", "what's up", "whats up"}
-_META_EXACT = {"who are you", "what can you do", "help"}
+_META_EXACT = {
+    "who are you", "what can you do", "help",
+    "what is your name", "what's your name", "whats your name",
+}
 
 
 def _strip_trailing_decoration(text: str) -> str:
