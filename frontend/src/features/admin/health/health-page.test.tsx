@@ -12,6 +12,16 @@ vi.mock('./queries', () => ({
   useClientErrors: () => useClientErrors(),
 }));
 
+// OrgQuotaDialog (Task 15) is only mounted once an org row is picked; its own
+// queries are mocked here rather than the dialog component, mirroring how
+// users-page.test.tsx mocks GroupsDialog's queries instead of the component.
+const useOrgQuota = vi.fn();
+const usePutOrgQuota = vi.fn();
+vi.mock('../quotas/queries', () => ({
+  useOrgQuota: (orgId: string, enabled: boolean) => useOrgQuota(orgId, enabled),
+  usePutOrgQuota: () => usePutOrgQuota(),
+}));
+
 import { HealthPage } from './health-page';
 
 const healthyHealth: SystemHealth = {
@@ -37,6 +47,11 @@ const clientErrors: ClientErrorOut[] = [
   },
 ];
 
+beforeEach(() => {
+  useOrgQuota.mockReturnValue({ data: undefined, isPending: false, isError: false });
+  usePutOrgQuota.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false });
+});
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -58,6 +73,17 @@ test('degraded qdrant renders a Failed-styled pill with visible text, plus one c
   // one client-error row rendered
   expect(screen.getByText('user-1')).toBeInTheDocument();
   expect(screen.getByText('https://app.example.com/chat')).toBeInTheDocument();
+});
+
+test('clicking Manage quota on an org row opens the org quota dialog for that org', async () => {
+  useSystemHealth.mockReturnValue({ data: healthyHealth, isPending: false });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+  await userEvent.click(screen.getByRole('button', { name: 'Manage quota' }));
+
+  expect(await screen.findByText('Quota — Acme')).toBeInTheDocument();
+  expect(useOrgQuota).toHaveBeenCalledWith('org-1', true);
 });
 
 test('shows an error message and retry button when the health query fails', async () => {

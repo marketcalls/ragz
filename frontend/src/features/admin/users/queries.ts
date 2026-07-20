@@ -40,3 +40,41 @@ export function useInvite() {
     },
   });
 }
+
+// GET/PUT /api/v1/users/{user_id}/quota (Task 15): the per-user override
+// editor's data source. `enabled` gates the fetch so the dialog can be
+// mounted closed (no target row selected) without firing a request.
+export function useUserQuota(userId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['user-quota', userId],
+    enabled: enabled && userId !== '',
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/users/{user_id}/quota', {
+        params: { path: { user_id: userId } },
+      });
+      if (error) throw new Error('failed to load user quota');
+      return data;
+    },
+  });
+}
+
+export function useSetUserQuota() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      userId,
+      monthlyTokens,
+    }: {
+      userId: string;
+      monthlyTokens: number | null;
+    }) => {
+      const { error } = await api.PUT('/api/v1/users/{user_id}/quota', {
+        params: { path: { user_id: userId } },
+        body: { monthly_tokens: monthlyTokens },
+      });
+      if (error) throw new Error('failed to save user quota');
+    },
+    onSuccess: (_, { userId }) =>
+      void queryClient.invalidateQueries({ queryKey: ['user-quota', userId] }),
+  });
+}

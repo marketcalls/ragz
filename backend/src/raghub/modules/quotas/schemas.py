@@ -25,6 +25,14 @@ class UserQuotaIn(BaseModel):
     monthly_tokens: int | None = Field(default=None, ge=0)
 
 
+class UserQuotaOut(BaseModel):
+    user_id: UUID
+    monthly_tokens: int | None
+    used_tokens: int
+    allocated_tokens: int | None
+    resets_at: datetime
+
+
 class UsageMeterOut(BaseModel):
     used_tokens: int
     allocated_tokens: int | None

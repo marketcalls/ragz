@@ -881,7 +881,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get User Quota */
+        get: operations["get_user_quota_api_v1_users__user_id__quota_get"];
         /** Put User Quota */
         put: operations["put_user_quota_api_v1_users__user_id__quota_put"];
         post?: never;
@@ -1917,6 +1918,25 @@ export interface components {
         UserQuotaIn: {
             /** Monthly Tokens */
             monthly_tokens?: number | null;
+        };
+        /** UserQuotaOut */
+        UserQuotaOut: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Monthly Tokens */
+            monthly_tokens: number | null;
+            /** Used Tokens */
+            used_tokens: number;
+            /** Allocated Tokens */
+            allocated_tokens: number | null;
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
         };
         /** UserUsage */
         UserUsage: {
@@ -3995,6 +4015,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgQuotaOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_quota_api_v1_users__user_id__quota_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserQuotaOut"];
                 };
             };
             /** @description Validation Error */

@@ -25,6 +25,7 @@ from raghub.modules.auth.models import User
 from raghub.modules.chat.models import Chat, Message
 from raghub.modules.models.models import Model
 from raghub.modules.quotas.models import OrgQuota, UsageRecord, UserQuota
+from raghub.modules.quotas.schemas import UserQuotaOut
 from raghub.modules.tenancy.context import TenantContext
 
 _CACHE_TTL_SECONDS = 60
@@ -235,6 +236,31 @@ async def set_user_quota(
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="quota.user_set", target_type="user", target_id=str(user_id))
     await session.commit()
+
+
+async def get_user_quota_with_usage(
+    session: AsyncSession, redis: Redis | None, ctx: TenantContext, user_id: UUID
+) -> UserQuotaOut:
+    """Org-scopes the target user exactly like set_user_quota; the usage half
+    is a plain new caller of the existing get_usage_status aggregation (no
+    new usage-aggregation logic)."""
+    user = (
+        await session.execute(
+            select(User).where(User.id == user_id, User.org_id == ctx.org_id)
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError("user not found")
+    override = (
+        await session.execute(select(UserQuota).where(UserQuota.user_id == user_id))
+    ).scalar_one_or_none()
+    status = await get_usage_status(session, redis, org_id=ctx.org_id, user_id=user_id)
+    return UserQuotaOut(
+        user_id=user_id,
+        monthly_tokens=override.monthly_tokens if override else None,
+        used_tokens=status.used_tokens, allocated_tokens=status.allocated_tokens,
+        resets_at=status.resets_at,
+    )
 
 
 async def org_usage_summary(

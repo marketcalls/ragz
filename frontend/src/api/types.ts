@@ -50,6 +50,13 @@ export type RoleTemplateOut = components['schemas']['RoleTemplateOut'];
 // eval fixtures — a question plus the document ids retrieval should hit.
 export type GoldenQueryOut = components['schemas']['GoldenQueryOut'];
 export type GoldenQueryCreate = components['schemas']['GoldenQueryCreate'];
+// GET/PUT /api/v1/admin/orgs/{org_id}/quota (QUOTA-1, K-C11): superadmin-only
+// org-wide monthly allocation + default per-user allocation + reset day.
+export type OrgQuotaOut = components['schemas']['OrgQuotaOut'];
+export type OrgQuotaIn = components['schemas']['OrgQuotaIn'];
+// GET /api/v1/users/{user_id}/quota (Task 15): the target user's override
+// (null = using the org default) plus their current-period usage, in one call.
+export type UserQuotaOut = components['schemas']['UserQuotaOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 

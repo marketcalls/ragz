@@ -1,10 +1,12 @@
 import { UserPlus, Users as UsersIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 
-import type { UserOut } from '@/api/types';
+import type { UserOut, UserQuotaOut } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { QueryError } from '@/components/ui/query-error';
 import { NativeSelect } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
@@ -16,8 +18,107 @@ import { GroupsDialog } from '../groups/groups-dialog';
 import { useAssignCustomRole, useRoles } from '../roles/queries';
 
 import { InviteDialog } from './invite-dialog';
-import { usePatchUser, useUsers } from './queries';
+import { usePatchUser, useSetUserQuota, useUserQuota, useUsers } from './queries';
 import { UserGroupsCell } from './user-groups-cell';
+
+/** Pre-filled directly from the settled query result (same synchronous-prop
+ * seeding trick as OrgQuotaDialog/ModelFormDialog) — rendered only once
+ * useUserQuota has data, so there is no async-refill-after-mount race. */
+function UserQuotaFields({
+  userId,
+  quota,
+  onDone,
+}: {
+  userId: string;
+  quota: UserQuotaOut;
+  onDone: () => void;
+}) {
+  const setUserQuota = useSetUserQuota();
+  const [override, setOverride] = useState(
+    quota.monthly_tokens != null ? String(quota.monthly_tokens) : '',
+  );
+
+  const onSubmit = (e: FormEvent): void => {
+    e.preventDefault();
+    setUserQuota.mutate(
+      { userId, monthlyTokens: override === '' ? null : Number(override) },
+      {
+        onSuccess: () => {
+          toast('User quota saved');
+          onDone();
+        },
+        onError: (err: Error) => toast.error(err.message),
+      },
+    );
+  };
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <p className="text-[12px] text-secondary">
+        Used {quota.used_tokens.toLocaleString()} /{' '}
+        {quota.allocated_tokens != null ? quota.allocated_tokens.toLocaleString() : '—'} tokens
+        this period · resets {new Date(quota.resets_at).toLocaleDateString()}
+      </p>
+      <div>
+        <Label htmlFor="user-quota-override">Monthly token override</Label>
+        <Input
+          id="user-quota-override"
+          type="number"
+          min={0}
+          placeholder="Use org default"
+          value={override}
+          onChange={(e) => setOverride(e.target.value)}
+        />
+      </div>
+      {setUserQuota.isError ? (
+        <p role="alert" className="text-[12px] text-danger">
+          {setUserQuota.error.message}
+        </p>
+      ) : null}
+      <DialogFooter>
+        <Button type="button" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="primary" disabled={setUserQuota.isPending}>
+          Save
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+function UserQuotaDialog({
+  user,
+  onOpenChange,
+}: {
+  user: UserOut | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const quota = useUserQuota(user?.id ?? '', user !== null);
+
+  return (
+    <Dialog open={user !== null} onOpenChange={onOpenChange}>
+      <DialogContent
+        title={user ? `Quota — ${user.email}` : 'Quota'}
+        description="Override this user's monthly token allocation, or leave blank to use the org default."
+      >
+        {quota.isPending ? <Spinner label="Loading quota…" /> : null}
+        {quota.isError ? (
+          <p role="alert" className="text-[12px] text-danger">
+            Failed to load user quota.
+          </p>
+        ) : null}
+        {user && quota.data ? (
+          <UserQuotaFields
+            userId={user.id}
+            quota={quota.data}
+            onDone={() => onOpenChange(false)}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function UsersPage() {
   const users = useUsers();
@@ -27,6 +128,7 @@ export function UsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [confirmUser, setConfirmUser] = useState<UserOut | null>(null);
+  const [quotaUser, setQuotaUser] = useState<UserOut | null>(null);
 
   return (
     <>
@@ -124,9 +226,14 @@ export function UsersPage() {
                     </TD>
                     <TD className="text-right">
                       {user.role !== 'superadmin' ? (
-                        <Button size="sm" onClick={() => setConfirmUser(user)}>
-                          {user.active ? 'Deactivate' : 'Reactivate'}
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" onClick={() => setQuotaUser(user)}>
+                            Quota
+                          </Button>
+                          <Button size="sm" onClick={() => setConfirmUser(user)}>
+                            {user.active ? 'Deactivate' : 'Reactivate'}
+                          </Button>
+                        </div>
                       ) : null}
                     </TD>
                   </TR>
@@ -138,6 +245,7 @@ export function UsersPage() {
       </div>
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
       <GroupsDialog open={groupsOpen} onOpenChange={setGroupsOpen} />
+      <UserQuotaDialog user={quotaUser} onOpenChange={(o) => !o && setQuotaUser(null)} />
       <Dialog open={confirmUser !== null} onOpenChange={(o) => !o && setConfirmUser(null)}>
         <DialogContent
           title={confirmUser?.active ? 'Deactivate user' : 'Reactivate user'}

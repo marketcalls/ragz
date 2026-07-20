@@ -271,6 +271,41 @@ async def test_usage_summary_includes_eval_trend(
     assert trend["avg_faithfulness"] == 4.0
 
 
+async def test_get_user_quota_returns_override_and_usage(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    session.add(UserQuota(user_id=seeded_user.id, monthly_tokens=5_000))
+    await session.commit()
+    h = await auth(client, "a@acme.com")
+    r = await client.get(f"/api/v1/users/{seeded_user.id}/quota", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["monthly_tokens"] == 5_000
+    assert "used_tokens" in body and "resets_at" in body
+
+
+async def test_get_user_quota_none_override_when_using_org_default(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    h = await auth(client, "a@acme.com")
+    r = await client.get(f"/api/v1/users/{seeded_user.id}/quota", headers=h)
+    assert r.status_code == 200
+    assert r.json()["monthly_tokens"] is None
+
+
+async def test_get_user_quota_404_for_other_org_user(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    other_org, _ = await _org_with_workspace(session, "OtherOrg")
+    other_user = User(org_id=other_org.id, email="other@foreign.example",
+                      password_hash=hash_password("pw123456"), role="user")
+    session.add(other_user)
+    await session.commit()
+    h = await auth(client, "a@acme.com")
+    r = await client.get(f"/api/v1/users/{other_user.id}/quota", headers=h)
+    assert r.status_code == 404
+
+
 async def test_org_quota_change_survives_gateway_down(
     client: httpx.AsyncClient, seeded_user: User, seeded_superadmin: User,
     session: AsyncSession, test_settings: Settings,

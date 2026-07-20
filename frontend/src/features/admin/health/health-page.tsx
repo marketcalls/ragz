@@ -1,10 +1,15 @@
+import { useState } from 'react';
+
 import { TopBar } from '@/components/layout/top-bar';
+import { Button } from '@/components/ui/button';
 import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatTile } from '@/components/ui/stat-tile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 
-import { useClientErrors, useSystemHealth, type OrgsHealth } from './queries';
+import { OrgQuotaDialog } from '../quotas/org-quota-dialog';
+
+import { useClientErrors, useSystemHealth, type OrgsHealth, type OrgUsageRow } from './queries';
 
 // Pill carries the status word in visible text (never color-only) — a11y
 // rule from the brief.
@@ -36,6 +41,9 @@ export function HealthPage() {
   const health = useSystemHealth();
   const clientErrors = useClientErrors();
   const data = health.data;
+  // Task 15: superadmin org-quota editor, mounted from this existing per-org
+  // table — there is no standalone org list/settings page yet.
+  const [quotaOrg, setQuotaOrg] = useState<OrgUsageRow | null>(null);
 
   return (
     <>
@@ -95,6 +103,7 @@ export function HealthPage() {
                     <TR>
                       <TH>Org</TH>
                       <TH className="text-right">Tokens</TH>
+                      <TH />
                     </TR>
                   </THead>
                   <TBody>
@@ -102,6 +111,11 @@ export function HealthPage() {
                       <TR key={o.org_id}>
                         <TD>{o.name}</TD>
                         <TD className="text-right">{o.tokens.toLocaleString()}</TD>
+                        <TD className="text-right">
+                          <Button size="sm" onClick={() => setQuotaOrg(o)}>
+                            Manage quota
+                          </Button>
+                        </TD>
                       </TR>
                     ))}
                   </TBody>
@@ -139,6 +153,15 @@ export function HealthPage() {
           </div>
         ) : null}
       </div>
+      {quotaOrg ? (
+        <OrgQuotaDialog
+          open
+          onOpenChange={(o) => !o && setQuotaOrg(null)}
+          orgId={quotaOrg.org_id}
+          orgName={quotaOrg.name}
+          usageTokens={quotaOrg.tokens}
+        />
+      ) : null}
     </>
   );
 }

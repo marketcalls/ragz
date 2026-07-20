@@ -19,6 +19,7 @@ from raghub.modules.quotas.schemas import (
     UsageMeterOut,
     UsageSummaryOut,
     UserQuotaIn,
+    UserQuotaOut,
 )
 from raghub.modules.tenancy.context import (
     TenantContext,
@@ -70,6 +71,15 @@ async def put_org_quota(
             transport=transport,
         )
     return OrgQuotaOut.model_validate(row)
+
+
+@router.get("/users/{user_id}/quota", response_model=UserQuotaOut)
+async def get_user_quota(
+    user_id: UUID, request: Request, session: SessionDep, ctx: AdminDep,
+) -> UserQuotaOut:
+    return await service.get_user_quota_with_usage(
+        session, request.app.state.redis, ctx, user_id
+    )
 
 
 @router.put("/users/{user_id}/quota", status_code=204)
