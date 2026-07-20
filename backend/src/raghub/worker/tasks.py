@@ -44,9 +44,9 @@ class DeleteTask(Task):
         asyncio.run(ingest.mark_failed(UUID(str(args[0])), f"delete failed: {exc}"))
 
 
-def _run(self: Task, coro_factory: Any) -> None:
+def _run(self: Task, coro_factory: Any) -> Any:
     try:
-        asyncio.run(coro_factory())
+        return asyncio.run(coro_factory())
     except IngestFailure:
         raise  # terminal: already recorded on the document; stops the chain, no retry
     except Exception as exc:
@@ -68,15 +68,25 @@ def chunk_task(self: Task, document_id: str) -> str:
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
                  name="documents.embed_upsert")
 def embed_upsert_task(self: Task, document_id: str) -> str:
-    _run(self, lambda: ingest.run_embed_upsert(UUID(document_id)))
+    # Plan K Task 11: run_embed_upsert returns promote_lineage's needs-reindex
+    # id instead of enqueueing itself (modules/ must never import worker/) --
+    # this is the entrypoint that performs the actual enqueue, using the
+    # enqueue_reindex defined right here in the same module.
+    needs_reindex = _run(self, lambda: ingest.run_embed_upsert(UUID(document_id)))
+    if needs_reindex is not None:
+        enqueue_reindex(needs_reindex)
     return document_id
 
 
 @celery_app.task(base=DeleteTask, bind=True, max_retries=_MAX_RETRIES, name="documents.delete")
 def delete_task(self: Task, document_id: str, actor_id: str | None = None) -> None:
     try:
-        asyncio.run(ingest.run_delete(UUID(document_id),
-                                      UUID(actor_id) if actor_id else None))
+        # Plan K Task 11: same inversion as embed_upsert_task above -- run_delete
+        # returns the needs-reindex id, this entrypoint enqueues it.
+        needs_reindex = asyncio.run(ingest.run_delete(UUID(document_id),
+                                                       UUID(actor_id) if actor_id else None))
+        if needs_reindex is not None:
+            enqueue_reindex(needs_reindex)
     except Exception as exc:
         raise self.retry(exc=exc, countdown=2 ** self.request.retries) from exc
 
@@ -85,8 +95,12 @@ def delete_task(self: Task, document_id: str, actor_id: str | None = None) -> No
 def reindex_task(self: Task, document_id: str) -> str:
     """Re-run embed+upsert from stored chunks.json (deterministic point ids
     make this idempotent) when promote_lineage picks a winner whose points
-    were previously deleted (DOC-5). Its tail re-runs promote_lineage."""
-    _run(self, lambda: ingest.run_embed_upsert(UUID(document_id)))
+    were previously deleted (DOC-5). Its tail re-runs promote_lineage, which
+    may again return a (different) needs-reindex id if the newly-effective
+    winner also lacks points -- same entrypoint-enqueues pattern as above."""
+    needs_reindex = _run(self, lambda: ingest.run_embed_upsert(UUID(document_id)))
+    if needs_reindex is not None:
+        enqueue_reindex(needs_reindex)
     return document_id
 
 

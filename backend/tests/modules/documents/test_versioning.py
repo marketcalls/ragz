@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.documents.ingest import run_chunk, run_delete, run_embed_upsert, run_parse
 from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload, set_approved
+from raghub.modules.documents.service import create_from_upload, promote_lineage, set_approved
 from raghub.modules.retrieval.service import retrieve
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
@@ -61,7 +61,8 @@ async def test_approved_older_version_wins(
 ) -> None:
     ctx, ws = await seed_workspace(session, "ver3")
     v1 = await _index(session, ctx, ws, "policy.txt", "the muster point is DOCK 4")
-    v1 = await set_approved(session, ctx, v1.id, True)
+    v1, needs_reindex = await set_approved(session, ctx, v1.id, True)
+    assert needs_reindex is None  # v1 still has its own points -- flip, no reindex needed
     v2 = await _index(session, ctx, ws, "policy.txt", "the muster point is GATE 9")
     await session.refresh(v1)
     await session.refresh(v2)
@@ -72,21 +73,20 @@ async def test_approved_older_version_wins(
 
 
 async def test_approving_pointless_version_enqueues_reindex(
-    session: AsyncSession, qdrant_collection: None, monkeypatch  # type: ignore[no-untyped-def]
+    session: AsyncSession, qdrant_collection: None,
 ) -> None:
+    """Plan K Task 11: set_approved no longer enqueues the reindex itself --
+    it returns the needs-reindex document id and its ENTRYPOINT caller (the
+    approve route in production; this test stands in for that entrypoint)
+    is responsible for the actual enqueue_reindex call."""
     ctx, ws = await seed_workspace(session, "ver4")
     v1 = await _index(session, ctx, ws, "policy.txt", "the muster point is DOCK 4")
     v2 = await _index(session, ctx, ws, "policy.txt", "the muster point is GATE 9")
     await session.refresh(v1)
     assert v1.vectors_present is False  # demoted+deleted when v2 was promoted
 
-    calls: list = []  # type: ignore[type-arg]
-    monkeypatch.setattr(
-        "raghub.worker.tasks.enqueue_reindex", lambda document_id: calls.append(document_id)
-    )
-
-    v1 = await set_approved(session, ctx, v1.id, True)
-    assert calls == [v1.id]  # no points to promote onto -> reindex enqueued instead
+    v1, needs_reindex = await set_approved(session, ctx, v1.id, True)
+    assert needs_reindex == v1.id  # no points to promote onto -> reindex needed instead
     await session.refresh(v1)
     await session.refresh(v2)
     assert v1.is_current is False  # unchanged: flags don't flip until reindex completes
@@ -113,15 +113,18 @@ async def test_unapprove_falls_back_to_newest_via_reindex(
     ctx, ws = await seed_workspace(session, "ver6")
     v1 = await _index(session, ctx, ws, "policy.txt", "the muster point is DOCK 4")
     v2 = await _index(session, ctx, ws, "policy.txt", "the muster point is GATE 9")
-    v1 = await set_approved(session, ctx, v1.id, True)
-    await run_embed_upsert(v1.id)  # v1's points were deleted at v2's promotion
+    await session.refresh(v1)  # un-expire before reuse (matches the sibling tests' pattern)
+    v1, needs_reindex = await set_approved(session, ctx, v1.id, True)
+    assert needs_reindex == v1.id  # v1's points were deleted at v2's promotion
+    await run_embed_upsert(v1.id)  # simulate the reindex task completing
     await session.refresh(v1)
     await session.refresh(v2)
     assert v1.is_current is True
     assert v2.is_current is False
     assert v2.vectors_present is False  # deleted when v1 (approved) was promoted
 
-    v1 = await set_approved(session, ctx, v1.id, False)
+    v1, needs_reindex = await set_approved(session, ctx, v1.id, False)
+    assert needs_reindex == v2.id  # new effective (v2) has no points yet -- reindex needed
     await session.refresh(v1)
     await session.refresh(v2)
     assert v1.is_current is True  # unchanged: new effective (v2) has no points yet
@@ -150,14 +153,17 @@ async def test_approving_both_versions_highest_approved_wins(
     ctx, ws = await seed_workspace(session, "ver8")
     v1 = await _index(session, ctx, ws, "policy.txt", "the muster point is DOCK 4")
     v2 = await _index(session, ctx, ws, "policy.txt", "the muster point is GATE 9")
-    v1 = await set_approved(session, ctx, v1.id, True)
-    await run_embed_upsert(v1.id)  # v1's points were deleted at v2's promotion
+    await session.refresh(v1)  # un-expire before reuse (matches the sibling tests' pattern)
+    v1, needs_reindex = await set_approved(session, ctx, v1.id, True)
+    assert needs_reindex == v1.id  # v1's points were deleted at v2's promotion
+    await run_embed_upsert(v1.id)  # simulate the reindex task completing
     await session.refresh(v1)
     await session.refresh(v2)
     assert v1.is_current is True
     assert v2.is_current is False
 
-    v2 = await set_approved(session, ctx, v2.id, True)
+    v2, needs_reindex = await set_approved(session, ctx, v2.id, True)
+    assert needs_reindex == v2.id  # v2 has no points yet -- reindex needed
     await session.refresh(v1)
     await session.refresh(v2)
     assert v1.is_current is True  # unchanged: v2 has no points yet, reindex pending
@@ -171,21 +177,19 @@ async def test_approving_both_versions_highest_approved_wins(
 
 
 async def test_delete_current_version_promotes_survivor(
-    session: AsyncSession, qdrant_collection: None, monkeypatch  # type: ignore[no-untyped-def]
+    session: AsyncSession, qdrant_collection: None,
 ) -> None:
+    """Plan K Task 11: run_delete's tail returns the needs-reindex document id
+    (from promote_lineage) instead of enqueueing itself -- worker/tasks.py's
+    delete_task performs the actual enqueue_reindex call in production."""
     ctx, ws = await seed_workspace(session, "ver5")
     v1 = await _index(session, ctx, ws, "policy.txt", "the muster point is DOCK 4")
     v2 = await _index(session, ctx, ws, "policy.txt", "the muster point is GATE 9")
     await session.refresh(v1)
     assert v1.vectors_present is False  # demoted+deleted when v2 was promoted
 
-    calls: list = []  # type: ignore[type-arg]
-    monkeypatch.setattr(
-        "raghub.worker.tasks.enqueue_reindex", lambda document_id: calls.append(document_id)
-    )
-
-    await run_delete(v2.id, ctx.user_id)
-    assert calls == [v1.id]  # only surviving version has no points -> reindex enqueued
+    needs_reindex = await run_delete(v2.id, ctx.user_id)
+    assert needs_reindex == v1.id  # only surviving version has no points -> reindex needed
     await session.refresh(v1)
     assert v1.is_current is False  # unchanged until the reindex completes
 
@@ -193,3 +197,44 @@ async def test_delete_current_version_promotes_survivor(
     await session.refresh(v1)
     assert v1.is_current is True
     assert v1.vectors_present is True
+
+
+async def test_promote_lineage_returns_needs_reindex_id_without_enqueuing(
+    session: AsyncSession, qdrant_collection: None,
+) -> None:
+    """Plan K Task 11 (carried K-C7 fix): promote_lineage returns the
+    needs-reindex document id instead of enqueueing itself. Same
+    v1-approved-after-v2-deleted-its-points scenario as
+    test_approving_pointless_version_enqueues_reindex, but promote_lineage is
+    called directly (bypassing set_approved) so the return contract is pinned
+    in isolation from any caller-side enqueue behavior."""
+    ctx, ws = await seed_workspace(session, "ver-promote-return")
+    v1 = await _index(session, ctx, ws, "policy.txt", "the muster point is DOCK 4")
+    await _index(session, ctx, ws, "policy.txt", "the muster point is GATE 9")
+    await session.refresh(v1)
+    assert v1.vectors_present is False  # demoted+deleted when v2 was promoted
+
+    v1.approved = True
+    await session.commit()
+
+    result = await promote_lineage(session, ctx.org_id, v1.lineage_id)
+    assert result == v1.id
+
+
+def test_import_linter_documents_service_worker_exception_removed() -> None:
+    """Plan K Task 11's load-bearing assertion: the ignore_imports entry that
+    excused documents/service.py's promote_lineage from importing
+    worker.tasks is gone now that the enqueue moved to the entrypoints. This
+    intentionally does NOT assert the ignore_imports list is empty overall --
+    Plan J's Task 12 added an unrelated, still-live exception for
+    tenancy.service -> worker.tasks (the eval-run settings-change trigger),
+    which is out of this task's scope and must remain."""
+    import tomllib
+
+    with open("pyproject.toml", "rb") as f:
+        config = tomllib.load(f)
+    contracts = config["tool"]["importlinter"]["contracts"]
+    ignored = {
+        entry for contract in contracts for entry in contract.get("ignore_imports", [])
+    }
+    assert "raghub.modules.documents.service -> raghub.worker.tasks" not in ignored

@@ -88,18 +88,18 @@ root_package = "raghub"
 name = "Layered architecture"
 type = "layers"
 layers = ["raghub.api", "raghub.worker", "raghub.modules", "raghub.core"]
-# DOC-5 (Plan H Task 6): promote_lineage's reindex-enqueue call is deliberately
-# a function-local import, not a design escape from the layering rule -- it
-# exists solely to break the REAL circular Python import (worker.tasks imports
-# modules.documents.ingest, which now imports modules.documents.service at
-# module scope). The layering direction itself is unchanged: this is the one
-# documented, narrow exception, not a general modules->worker allowance.
 ignore_imports = [
-    "raghub.modules.documents.service -> raghub.worker.tasks",
-    # Task 12 (Plan J, §6): same narrow exception as the entry above --
-    # update_retrieval_settings's settings-change eval trigger needs
-    # worker.tasks.enqueue_eval_run, and importing it at module scope would
-    # be a real circular import (evals.service, which this function also
-    # imports locally, already imports tenancy.service at module scope).
+    # Task 12 (Plan J, §6): update_retrieval_settings's settings-change eval
+    # trigger needs worker.tasks.enqueue_eval_run, and importing it at module
+    # scope would be a real circular import (evals.service, which this
+    # function also imports locally, already imports tenancy.service at
+    # module scope). Plan K Task 11 removed the sibling documents.service
+    # exception (DOC-5's promote_lineage) by inverting control instead:
+    # promote_lineage/set_approved/the ingest.py runners now return a
+    # needs-reindex document id, and their ENTRYPOINT callers -- worker/
+    # tasks.py's Celery task wrappers (which define enqueue_reindex in the
+    # same module, no import needed) and the approve route (api -> worker is
+    # an allowed layer direction) -- perform the actual enqueue. This entry
+    # remains a live, narrow exception for the unrelated tenancy.service edge.
     "raghub.modules.tenancy.service -> raghub.worker.tasks",
 ]

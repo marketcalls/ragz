@@ -186,7 +186,7 @@ async def set_document_acl(
     return doc
 
 
-async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID) -> None:
+async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID) -> UUID | None:
     """Converge one lineage on its effective current version (DOC-5).
 
     effective = highest-version APPROVED indexed row if any indexed row is
@@ -204,6 +204,17 @@ async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID)
     could each compute a stale "effective" row and both end up is_current
     (pattern precedent: chat/service.py's add_message, auth/service.py's
     rotate_refresh).
+
+    Returns the id of a document that needs re-indexing (the effective winner
+    has no live points), or None once flags have converged and nothing needs
+    a reindex. This function never enqueues anything itself (Plan K Task 11,
+    carried Plan H TODO): modules/ must never import worker/ (the layering
+    rule this was the one narrow exception to), so the decision of WHETHER
+    and HOW to enqueue belongs to the entrypoint that called promote_lineage
+    -- ingest.py's runner tails (via worker/tasks.py's Celery task wrappers,
+    which already define enqueue_reindex in the same module) and set_approved's
+    ONE route call site (api/routes/documents.py, which may freely import
+    worker.tasks per the layers contract).
     """
     rows = list(
         (
@@ -216,28 +227,20 @@ async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID)
     )
     if not rows:
         await session.commit()  # release the (empty) lock scope
-        return
+        return None
     approved_rows = [r for r in rows if r.approved]
     effective = max(approved_rows or rows, key=lambda d: d.version)
 
     if not effective.vectors_present:
         # Points were deleted when this version was demoted. Rebuild first;
-        # the reindex task ends by calling promote_lineage again. Commit BEFORE
-        # enqueueing: it releases the FOR UPDATE locks (the reindex task opens
-        # its own session and re-runs promotion -- holding the locks here would
-        # deadlock an eager worker) and makes the enqueue-after-state durable.
-        # local import: avoids the real ingest<->service circular import;
-        # explicitly allow-listed in pyproject.toml's import-linter
-        # ignore_imports.
-        # TODO(plan-h-followup): invert to remove ignore_imports exception --
-        # have promote_lineage return the needs-reindex document id and let
-        # the entrypoints (ingest tail / route) enqueue, so modules/ never
-        # imports worker/.
+        # the reindex task ends by calling promote_lineage again. Commit
+        # before returning: it releases the FOR UPDATE locks (the reindex
+        # task opens its own session and re-runs promotion -- holding the
+        # locks here would deadlock an eager worker) and makes the
+        # needs-reindex state durable before the caller decides how to act
+        # on it.
         await session.commit()
-        from raghub.worker.tasks import enqueue_reindex
-
-        enqueue_reindex(effective.id)
-        return
+        return effective.id
 
     for row in rows:
         row.is_current = row.id == effective.id
@@ -249,11 +252,16 @@ async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID)
             await retrieval_service.delete_document_points(org_id, row.id)
             row.vectors_present = False
     await session.commit()
+    return None
 
 
 async def set_approved(
     session: AsyncSession, ctx: TenantContext, document_id: UUID, approved: bool
-) -> Document:
+) -> tuple[Document, UUID | None]:
+    """Returns (doc, needs_reindex) -- needs_reindex mirrors promote_lineage's
+    own return contract (Plan K Task 11): set_approved never enqueues, its ONE
+    route call site (api/routes/documents.py) does, since that's the layer
+    allowed to import worker.tasks without a layering exception."""
     doc = await get_document_checked(session, ctx, document_id)
     doc.approved = approved
     await record_audit(
@@ -262,6 +270,6 @@ async def set_approved(
         target_type="document", target_id=str(doc.id),
     )
     await session.commit()
-    await promote_lineage(session, ctx.org_id, doc.lineage_id)
+    needs_reindex = await promote_lineage(session, ctx.org_id, doc.lineage_id)
     await session.refresh(doc)
-    return doc
+    return doc, needs_reindex

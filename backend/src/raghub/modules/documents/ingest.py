@@ -138,19 +138,25 @@ async def run_chunk(document_id: UUID) -> None:
         await _finish_stage(session, job)
 
 
-async def run_embed_upsert(document_id: UUID) -> None:
+async def run_embed_upsert(document_id: UUID) -> UUID | None:
     """Stages 3+4 in one runner: embedding a batch and upserting it immediately
     avoids persisting vectors between tasks; ingest_jobs still shows both stages.
 
     run_delete is idempotent and doesn't coordinate with in-flight ingest, so it
     can win the race either before this runner starts or partway through it.
-    Both must be handled without raising and without leaving retrievable points."""
+    Both must be handled without raising and without leaving retrievable points.
+
+    Returns promote_lineage's needs-reindex document id (or None): this runner
+    never imports worker.tasks itself (Plan K Task 11) -- the Celery task
+    wrapper that calls it (worker/tasks.py's embed_upsert_task/reindex_task,
+    which already define enqueue_reindex in the same module) performs the
+    actual enqueue."""
     async with _session() as session:
         doc = (
             await session.execute(select(Document).where(Document.id == document_id))
         ).scalar_one_or_none()
         if doc is None:
-            return  # deleted before we started: nothing was written, nothing to clean up
+            return None  # deleted before we started: nothing was written, nothing to clean up
         org_id = doc.org_id  # captured now: doc may be gone by the time we re-check below
         embed_job = await _start_stage(session, document_id, "embed")
         upsert_job = await _start_stage(session, document_id, "upsert")
@@ -258,7 +264,7 @@ async def run_embed_upsert(document_id: UUID) -> None:
         ).scalar_one_or_none()
         if still_exists is None:
             await delete_document_points(org_id, document_id)
-            return
+            return None
 
         # An ACL admin PUT racing mid-ingest may have stamped only the points
         # upserted so far (update_document_acl re-stamps existing points, not
@@ -293,7 +299,7 @@ async def run_embed_upsert(document_id: UUID) -> None:
         doc.vectors_present = True
         await _finish_stage(session, embed_job)
         await _finish_stage(session, upsert_job)
-        await documents_service.promote_lineage(session, org_id, doc.lineage_id)
+        return await documents_service.promote_lineage(session, org_id, doc.lineage_id)
 
 
 async def run_enrichment_backfill_for_workspace(workspace_id: UUID) -> None:
@@ -410,15 +416,19 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
         await session.commit()
 
 
-async def run_delete(document_id: UUID, actor_id: UUID | None) -> None:
+async def run_delete(document_id: UUID, actor_id: UUID | None) -> UUID | None:
     """One task propagating deletion: Qdrant points → MinIO objects → Postgres
-    rows, with an audit entry (spec §2.3, DOC-8). Idempotent."""
+    rows, with an audit entry (spec §2.3, DOC-8). Idempotent.
+
+    Returns promote_lineage's needs-reindex document id (or None) -- see
+    run_embed_upsert's docstring; worker/tasks.py's delete_task performs the
+    actual enqueue."""
     async with _session() as session:
         doc = (
             await session.execute(select(Document).where(Document.id == document_id))
         ).scalar_one_or_none()
         if doc is None:
-            return
+            return None
         org_id = doc.org_id  # captured before the row is gone
         lineage_id = doc.lineage_id
         await delete_document_points(doc.org_id, document_id)
@@ -434,7 +444,7 @@ async def run_delete(document_id: UUID, actor_id: UUID | None) -> None:
         await session.commit()
         # Plan H: deleting the current version leaves the lineage without one
         # until a survivor is promoted (DOC-5).
-        await documents_service.promote_lineage(session, org_id, lineage_id)
+        return await documents_service.promote_lineage(session, org_id, lineage_id)
 
 
 async def mark_failed(document_id: UUID, reason: str) -> None:

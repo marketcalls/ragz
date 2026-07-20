@@ -7,11 +7,13 @@ from raghub.modules.auth.models import User
 
 @pytest.fixture
 def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # type: ignore[type-arg]
-    calls: dict[str, list] = {"ingest": [], "delete": []}  # type: ignore[type-arg]
+    calls: dict[str, list] = {"ingest": [], "delete": [], "reindex": []}  # type: ignore[type-arg]
     monkeypatch.setattr("raghub.api.routes.documents.enqueue_ingest",
                         lambda doc_id, size: calls["ingest"].append((doc_id, size)))
     monkeypatch.setattr("raghub.api.routes.documents.enqueue_delete",
                         lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
+    monkeypatch.setattr("raghub.api.routes.documents.enqueue_reindex",
+                        lambda doc_id: calls["reindex"].append(doc_id))
     return calls
 
 
@@ -132,3 +134,84 @@ async def test_oversized_upload_chunked_abort_413(
     assert r.status_code == 413
     assert captured_enqueues["ingest"] == []
     get_settings.cache_clear()
+
+
+async def test_approve_route_enqueues_reindex_when_needed(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    stack_env: None, qdrant_collection: None,
+    captured_enqueues: dict,  # type: ignore[type-arg]
+) -> None:
+    """Plan K Task 11: the approve route (api/routes/documents.py) is the
+    ENTRYPOINT that performs the enqueue -- service.set_approved only returns
+    (doc, needs_reindex). Drives the real ingestion pipeline directly (same
+    pattern as tests/api/test_search_route.py) to build the
+    v1-demoted-then-reapproved scenario, then hits the HTTP approve route and
+    asserts enqueue_reindex fires with v1's id."""
+    from sqlalchemy import select
+
+    from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+    from raghub.modules.documents.service import create_from_upload
+    from raghub.modules.tenancy.context import TenantContext
+    from raghub.modules.tenancy.models import Workspace
+
+    h = await auth(client, "a@acme.com")
+    await make_workspace(client, h)  # created via HTTP so the route exercises real membership
+    ws = (await session.execute(select(Workspace))).scalar_one()
+    ctx = TenantContext(user_id=seeded_user.id, org_id=seeded_user.org_id,
+                        role="admin", workspace_ids=frozenset())
+
+    async def _index(filename: str, text: str):  # type: ignore[no-untyped-def]
+        doc = await create_from_upload(
+            session, ctx, ws.id, filename=filename, mime="text/plain", data=text.encode()
+        )
+        await run_parse(doc.id)
+        await run_chunk(doc.id)
+        await run_embed_upsert(doc.id)
+        await session.refresh(doc)
+        return doc
+
+    v1 = await _index("policy.txt", "the muster point is DOCK 4")
+    await _index("policy.txt", "the muster point is GATE 9")  # demotes v1, deletes its points
+    await session.refresh(v1)
+    assert v1.vectors_present is False
+
+    r = await client.put(
+        f"/api/v1/documents/{v1.id}/approved", headers=h, json={"approved": True},
+    )
+    assert r.status_code == 200
+    assert captured_enqueues["reindex"] == [v1.id]
+
+
+async def test_approve_route_no_reindex_when_points_already_present(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    stack_env: None, qdrant_collection: None,
+    captured_enqueues: dict,  # type: ignore[type-arg]
+) -> None:
+    """Companion to the above: approving a version that already has live
+    points is a pure flip -- no reindex needed, route must not enqueue."""
+    from sqlalchemy import select
+
+    from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+    from raghub.modules.documents.service import create_from_upload
+    from raghub.modules.tenancy.context import TenantContext
+    from raghub.modules.tenancy.models import Workspace
+
+    h = await auth(client, "a@acme.com")
+    await make_workspace(client, h)  # created via HTTP so the route exercises real membership
+    ws = (await session.execute(select(Workspace))).scalar_one()
+    ctx = TenantContext(user_id=seeded_user.id, org_id=seeded_user.org_id,
+                        role="admin", workspace_ids=frozenset())
+
+    doc = await create_from_upload(
+        session, ctx, ws.id, filename="policy.txt",
+        mime="text/plain", data=b"the muster point is DOCK 4",
+    )
+    await run_parse(doc.id)
+    await run_chunk(doc.id)
+    await run_embed_upsert(doc.id)
+
+    r = await client.put(
+        f"/api/v1/documents/{doc.id}/approved", headers=h, json={"approved": True},
+    )
+    assert r.status_code == 200
+    assert captured_enqueues["reindex"] == []

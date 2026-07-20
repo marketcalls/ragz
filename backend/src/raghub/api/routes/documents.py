@@ -25,7 +25,7 @@ from raghub.modules.tenancy.context import (
     require_permission,
     require_role,
 )
-from raghub.worker.tasks import enqueue_delete, enqueue_ingest
+from raghub.worker.tasks import enqueue_delete, enqueue_ingest, enqueue_reindex
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -128,7 +128,13 @@ async def set_document_acl(
 async def set_document_approved(
     document_id: UUID, body: ApprovedPatch, session: SessionDep, ctx: AdminDep
 ) -> DocumentOut:
-    doc = await service.set_approved(session, ctx, document_id, body.approved)
+    # Plan K Task 11: set_approved returns (doc, needs_reindex) instead of
+    # enqueueing itself -- this route is the entrypoint layer allowed to
+    # import worker.tasks without a layering exception, so it performs the
+    # actual enqueue.
+    doc, needs_reindex = await service.set_approved(session, ctx, document_id, body.approved)
+    if needs_reindex is not None:
+        enqueue_reindex(needs_reindex)
     return _serialize_document(doc, ctx)
 
 
