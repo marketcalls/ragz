@@ -187,6 +187,7 @@ export function ModelFormDialog({
   const [defaultEffort, setDefaultEffort] = useState<'off' | 'low' | 'medium' | 'high'>(
     model?.default_reasoning_effort ?? 'off',
   );
+  const [supportsVision, setSupportsVision] = useState(model?.supports_vision ?? false);
 
   const isCustom = catalogProvider === CUSTOM;
   // null until a provider is chosen in add mode — downstream fields stay hidden.
@@ -242,6 +243,7 @@ export function ModelFormDialog({
       setToolsUnreliable(model?.tools_unreliable ?? false);
       setSupportsReasoning(model?.supports_reasoning ?? false);
       setDefaultEffort(model?.default_reasoning_effort ?? 'off');
+      setSupportsVision(model?.supports_vision ?? false);
       create.reset();
       patch.reset();
     }
@@ -303,6 +305,9 @@ export function ModelFormDialog({
       if (defaultEffort !== (model.default_reasoning_effort ?? 'off')) {
         body.default_reasoning_effort = defaultEffort;
       }
+      if (supportsVision !== (model.supports_vision ?? false)) {
+        body.supports_vision = supportsVision;
+      }
       patch.mutate({ modelId: model.id, body }, handleSettled);
       return;
     }
@@ -316,6 +321,7 @@ export function ModelFormDialog({
       tools_unreliable: toolsUnreliable,
       supports_reasoning: supportsReasoning,
       default_reasoning_effort: defaultEffort,
+      supports_vision: supportsVision,
     };
     create.mutate(body, handleSettled);
   };
@@ -470,6 +476,15 @@ export function ModelFormDialog({
                   </NativeSelect>
                 </div>
               ) : null}
+              <label className="flex items-center gap-2 text-[13px] text-secondary">
+                <input
+                  type="checkbox"
+                  checked={supportsVision}
+                  onChange={(e) => setSupportsVision(e.target.checked)}
+                  aria-label="Supports vision"
+                />
+                Supports vision — lets chat users attach images
+              </label>
             </>
           ) : null}
           {activeError && !(activeError instanceof PartialSyncError) ? (

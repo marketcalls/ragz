@@ -34,6 +34,7 @@ const modelA: ModelOut = {
   is_utility: true,
   supports_reasoning: false,
   default_reasoning_effort: 'off',
+  supports_vision: false,
 };
 
 const modelB: ModelOut = {
@@ -50,6 +51,7 @@ const modelB: ModelOut = {
   is_utility: false,
   supports_reasoning: false,
   default_reasoning_effort: 'off',
+  supports_vision: false,
 };
 
 const patchMutate = vi.fn();

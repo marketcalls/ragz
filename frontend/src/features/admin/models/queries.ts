@@ -19,6 +19,7 @@ export interface ModelCreate {
   tools_unreliable: boolean;
   supports_reasoning: boolean;
   default_reasoning_effort: 'off' | 'low' | 'medium' | 'high';
+  supports_vision: boolean;
 }
 
 export interface ModelPatchInput {
@@ -29,6 +30,7 @@ export interface ModelPatchInput {
   tools_unreliable?: boolean;
   supports_reasoning?: boolean;
   default_reasoning_effort?: 'off' | 'low' | 'medium' | 'high';
+  supports_vision?: boolean;
   // Phase 3 Plan J (D5/§4): setting true designates this model as THE utility
   // model, clearing every other row's flag server-side in the same
   // transaction — callers only ever send `true`, never `false` (the backend

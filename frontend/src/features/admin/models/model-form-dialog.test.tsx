@@ -27,6 +27,7 @@ const fixtureModel: ModelOut = {
   is_utility: false,
   supports_reasoning: false,
   default_reasoning_effort: 'off',
+  supports_vision: false,
 };
 
 // Entries as the API returns them: provider ASC, position DESC (newest first).
@@ -393,6 +394,27 @@ test('editing an existing model only sends changed reasoning fields', async () =
 
   const body = (await mutationBodies(fetchMock))[0]!;
   expect(body).toEqual({ supports_reasoning: true });
+});
+
+test('supports-vision checkbox sends the field on create', async () => {
+  const user = userEvent.setup();
+  const fetchMock = routedFetch(created());
+  vi.stubGlobal('fetch', fetchMock);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ModelFormDialog open onOpenChange={() => {}} />
+    </QueryClientProvider>,
+  );
+  await user.click(screen.getByLabelText('Provider'));
+  await user.click(await screen.findByRole('option', { name: 'openai' }));
+  await user.click(screen.getByLabelText('Model'));
+  await user.click(await screen.findByRole('option', { name: /gpt-4o-mini/ }));
+  await user.click(screen.getByLabelText('Supports vision'));
+  await user.type(screen.getByLabelText('API key'), 'sk-live-abc');
+  await user.click(screen.getByRole('button', { name: 'Add model' }));
+  const body = (await mutationBodies(fetchMock))[0]!;
+  expect(body.supports_vision).toBe(true);
 });
 
 test('deriveProviderKind maps openai and ollama through, everything else to litellm', () => {
