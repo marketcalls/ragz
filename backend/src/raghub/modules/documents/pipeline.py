@@ -235,11 +235,15 @@ def chunk_blocks(
 
 
 async def embed_batch(
-    texts: list[str], dense_embedder: DenseEmbedder
+    texts: list[str], dense_embedder: DenseEmbedder, *, sparse_texts: list[str] | None = None
 ) -> tuple[list[list[float]], list[models.SparseVector]]:
-    """Embed one batch dense + sparse (spec §3.2 stage 3)."""
+    """Embed one batch dense + sparse (spec §3.2 stage 3). `sparse_texts`
+    (Plan K §4) lets keyword-augmented text feed ONLY the sparse/BM25 side —
+    dense embeddings stay semantically anchored to the chunk's real content;
+    keywords are a lexical-match aid, not a meaning shift. Defaults to
+    `texts` so every pre-K caller is byte-identical."""
     dense = await dense_embedder.embed(texts)
-    sparse = await asyncio.to_thread(embed_sparse, texts)
+    sparse = await asyncio.to_thread(embed_sparse, sparse_texts or texts)
     return dense, sparse
 
 
@@ -257,6 +261,7 @@ async def upsert_points(
     version: int,
     meta: dict[str, str] | None,
     is_current: bool = False,
+    summaries: list[str | None] | None = None,
 ) -> None:
     """Upsert one batch of chunk points with the spec §2.2 payload. Constructs
     points, never filters (iron rule 1 — filters live in retrieval only).
@@ -268,7 +273,11 @@ async def upsert_points(
     default, so every caller states its posture) is the document's metadata
     field values, mirrored verbatim under the payload's nested `meta` key;
     `None` becomes `{}` so every point carries the key (never a KeyError on
-    the read side)."""
+    the read side). `summaries` (Plan K §4) is an optional per-chunk LLM
+    summary, aligned by index with `chunks`; omitted or a `None` entry keeps
+    the payload's `summary` key `None` so pre-K points and non-enriched
+    ingests are unaffected."""
+    summaries = summaries or [None] * len(chunks)
     points = [
         models.PointStruct(
             id=str(uuid5(_CHUNK_NAMESPACE, f"{document_id}:{c.chunk_index}")),
@@ -287,8 +296,73 @@ async def upsert_points(
                 "version": version,
                 "is_current": is_current,
                 "meta": meta or {},
+                "summary": summary,
             },
         )
-        for c, d, s in zip(chunks, dense, sparse, strict=True)
+        for c, d, s, summary in zip(chunks, dense, sparse, summaries, strict=True)
     ]
     await get_qdrant().upsert(COLLECTION, points=points, wait=True)
+
+
+# Distinct from _CHUNK_NAMESPACE (Plan K §4): hq points must never collide
+# with or overwrite their parent chunk point.
+_HQ_NAMESPACE = UUID("9f3c1a86-7b2e-4d5f-8e1a-3c6b9d0f2a71")
+
+
+async def upsert_hq_points(
+    *,
+    org_id: UUID,
+    workspace_id: UUID,
+    document_id: UUID,
+    mime: str,
+    created_at: datetime,
+    acl_group_ids: list[str],
+    version: int,
+    meta: dict[str, str] | None,
+    is_current: bool,
+    parent_chunks: list[Chunk],
+    parent_summaries: list[str | None],
+    hq_texts: list[list[str]],
+    hq_dense: list[list[list[float]]],
+    hq_sparse: list[list[models.SparseVector]],
+) -> None:
+    """Hypothetical-question points (spec §4): one per generated question, up
+    to 3 per chunk. Payload is a FULL COPY of the parent chunk's payload
+    (identical text/page/chunk_index/section/version/is_current/meta/
+    acl_groups/summary) plus kind="hq" — an hq hit is immediately citable
+    with the parent's real content, and shares the parent's chunk_ref
+    (document_id, page, chunk_index) so retrieval can dedupe them (Task 5).
+    The question TEXT only ever feeds the embedding vectors, never the
+    payload — this function never constructs a Qdrant filter (iron rule 1);
+    it is a plain point-write, same posture as upsert_points."""
+    points: list[models.PointStruct] = []
+    for chunk, summary, questions, dense_vecs, sparse_vecs in zip(
+        parent_chunks, parent_summaries, hq_texts, hq_dense, hq_sparse, strict=True
+    ):
+        for i, (q_dense, q_sparse) in enumerate(zip(dense_vecs, sparse_vecs, strict=True)):
+            points.append(
+                models.PointStruct(
+                    id=str(uuid5(_HQ_NAMESPACE, f"{document_id}:{chunk.chunk_index}:hq:{i}")),
+                    vector={"dense": q_dense, "sparse": q_sparse},
+                    payload={
+                        "tenant_id": str(org_id),
+                        "workspace_id": str(workspace_id),
+                        "document_id": str(document_id),
+                        "page": chunk.page,
+                        "chunk_index": chunk.chunk_index,
+                        "text": chunk.text,
+                        "doc_type": mime,
+                        "date": created_at.isoformat(),
+                        "acl_groups": sorted(acl_group_ids),
+                        "section": chunk.section,
+                        "version": version,
+                        "is_current": is_current,
+                        "meta": meta or {},
+                        "summary": summary,
+                        "kind": "hq",
+                    },
+                )
+            )
+        del questions  # question text feeds embedding upstream of this function, not payload
+    if points:
+        await get_qdrant().upsert(COLLECTION, points=points, wait=True)

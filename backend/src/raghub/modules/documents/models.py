@@ -45,6 +45,10 @@ class Document(UUIDPk, Base):
     # Plan H (DOC-6): admin-defined metadata field values, keyed by
     # MetadataField.name. None = never set (distinct from {} = cleared).
     meta: Mapped[dict[str, str] | None] = mapped_column(JSONB, default=None)
+    # Plan K §4: True once the CURRENT indexed version's points include
+    # enrichment (hq points + keyword-augmented sparse text + summary
+    # payload). Gates backfill selection (Task 7) and re-ingest skip logic.
+    enriched: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class IngestJob(UUIDPk, Base):

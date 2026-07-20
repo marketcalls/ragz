@@ -23,6 +23,7 @@ class DocumentOut(BaseModel):
     approved: bool
     supersedes_document_id: UUID | None
     meta: dict[str, str] | None = None
+    enriched: bool
 
     model_config = {"from_attributes": True}
 
