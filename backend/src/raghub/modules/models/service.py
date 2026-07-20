@@ -80,6 +80,7 @@ async def to_model_out(session: AsyncSession, models: list[Model]) -> list[Model
             tools_unreliable=m.tools_unreliable,
             supports_reasoning=m.supports_reasoning,
             default_reasoning_effort=m.default_reasoning_effort,  # type: ignore[arg-type]
+            supports_vision=m.supports_vision,
             is_utility=m.is_utility,
         )
         for m in models
@@ -100,12 +101,13 @@ async def create_model(
     tools_unreliable: bool = False,
     supports_reasoning: bool = False,
     default_reasoning_effort: str = "off",
+    supports_vision: bool = False,
 ) -> Model:
     model = Model(
         litellm_model_name=litellm_model_name, display_name=display_name,
         provider_kind=provider_kind, base_url=base_url, mock_response=mock_response,
         tools_unreliable=tools_unreliable, supports_reasoning=supports_reasoning,
-        default_reasoning_effort=default_reasoning_effort,
+        default_reasoning_effort=default_reasoning_effort, supports_vision=supports_vision,
     )
     session.add(model)
     await session.flush()
@@ -134,6 +136,7 @@ async def update_model(
     tools_unreliable: bool | None = None,
     supports_reasoning: bool | None = None,
     default_reasoning_effort: str | None = None,
+    supports_vision: bool | None = None,
     is_utility: bool | None = None,
 ) -> Model:
     model = await get_model(session, model_id)
@@ -151,6 +154,8 @@ async def update_model(
         model.supports_reasoning = supports_reasoning
     if default_reasoning_effort is not None:
         model.default_reasoning_effort = default_reasoning_effort
+    if supports_vision is not None:
+        model.supports_vision = supports_vision
     if is_utility is not None:
         if is_utility:
             # "exactly one" (design D5): clear every OTHER row in the same

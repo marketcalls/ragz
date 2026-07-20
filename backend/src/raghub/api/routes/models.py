@@ -71,6 +71,7 @@ async def create_model(
         mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
         supports_reasoning=body.supports_reasoning,
         default_reasoning_effort=body.default_reasoning_effort,
+        supports_vision=body.supports_vision,
     )
     _schedule_sync(background_tasks, request, settings)
     return (await service.to_model_out(session, [model]))[0]
@@ -88,6 +89,7 @@ async def patch_model(
         mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
         supports_reasoning=body.supports_reasoning,
         default_reasoning_effort=body.default_reasoning_effort,
+        supports_vision=body.supports_vision,
         is_utility=body.is_utility,
     )
     _schedule_sync(background_tasks, request, settings)

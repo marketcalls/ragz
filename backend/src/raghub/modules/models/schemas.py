@@ -25,6 +25,7 @@ class ModelCreate(BaseModel):
     tools_unreliable: bool = False
     supports_reasoning: bool = False
     default_reasoning_effort: ReasoningEffort = "off"
+    supports_vision: bool = False
 
     @model_validator(mode="after")
     def _base_url_required_for_self_hosted(self) -> "ModelCreate":
@@ -43,6 +44,7 @@ class ModelPatch(BaseModel):
     tools_unreliable: bool | None = None
     supports_reasoning: bool | None = None
     default_reasoning_effort: ReasoningEffort | None = None
+    supports_vision: bool | None = None
     # Phase 3 Plan J (D5/§4): setting True clears every OTHER model's flag in
     # the same transaction (service.update_model) — exactly one utility model.
     is_utility: bool | None = None
@@ -68,6 +70,7 @@ class ModelOut(BaseModel):
     tools_unreliable: bool
     supports_reasoning: bool
     default_reasoning_effort: ReasoningEffort
+    supports_vision: bool
     # Phase 3 Plan J (D5/§4): superadmin-designated utility model. Exactly
     # one row is True at a time — enforced in service.update_model.
     is_utility: bool
@@ -80,5 +83,6 @@ class ModelPublic(BaseModel):
     display_name: str
     supports_reasoning: bool
     default_reasoning_effort: ReasoningEffort
+    supports_vision: bool
 
     model_config = {"from_attributes": True}

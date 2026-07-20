@@ -270,3 +270,29 @@ async def test_catalog_listing_preserves_zero_cost_entries(
     by_name = {e["name"]: e for e in r.json()["entries"]}
     assert by_name["free-local-model"]["input_cost_per_1m"] == 0.0
     assert by_name["free-local-model"]["output_cost_per_1m"] == 0.0
+
+
+async def test_supports_vision_round_trips_and_defaults_false(
+    client: httpx.AsyncClient, seeded_superadmin: User,
+) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.post(
+        "/api/v1/admin/models",
+        json={
+            "litellm_model_name": "gpt-4o-mini", "display_name": "GPT-4o mini",
+            "provider_kind": "openai", "api_key": "sk-live-abc", "supports_vision": True,
+        },
+        headers=h,
+    )
+    assert r.status_code == 201
+    assert r.json()["supports_vision"] is True
+
+    r2 = await client.post(
+        "/api/v1/admin/models",
+        json={
+            "litellm_model_name": "llama3", "display_name": "Llama",
+            "provider_kind": "ollama", "base_url": "http://ollama:11434",
+        },
+        headers=h,
+    )
+    assert r2.json()["supports_vision"] is False

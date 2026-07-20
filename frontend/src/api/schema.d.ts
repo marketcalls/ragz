@@ -891,6 +891,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chats/{chat_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Attachment */
+        post: operations["upload_attachment_api_v1_chats__chat_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/orgs/{org_id}/quota": {
         parameters: {
             query?: never;
@@ -1075,6 +1092,22 @@ export interface components {
             /** Approved */
             approved: boolean;
         };
+        /** AttachmentOut */
+        AttachmentOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Filename */
+            filename: string;
+            /** Mime */
+            mime: string;
+            /** Status */
+            status: string;
+        };
         /** AuditEventOut */
         AuditEventOut: {
             /**
@@ -1104,6 +1137,11 @@ export interface components {
             events: components["schemas"]["AuditEventOut"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** Body_upload_attachment_api_v1_chats__chat_id__attachments_post */
+        Body_upload_attachment_api_v1_chats__chat_id__attachments_post: {
+            /** File */
+            file: string;
         };
         /** Body_upload_document_api_v1_workspaces__workspace_id__documents_post */
         Body_upload_document_api_v1_workspaces__workspace_id__documents_post: {
@@ -1738,6 +1776,11 @@ export interface components {
              * @enum {string}
              */
             default_reasoning_effort: "off" | "low" | "medium" | "high";
+            /**
+             * Supports Vision
+             * @default false
+             */
+            supports_vision: boolean;
         };
         /** ModelDayTokens */
         ModelDayTokens: {
@@ -1792,6 +1835,8 @@ export interface components {
              * @enum {string}
              */
             default_reasoning_effort: "off" | "low" | "medium" | "high";
+            /** Supports Vision */
+            supports_vision: boolean;
             /** Is Utility */
             is_utility: boolean;
         };
@@ -1813,6 +1858,8 @@ export interface components {
             supports_reasoning?: boolean | null;
             /** Default Reasoning Effort */
             default_reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
+            /** Supports Vision */
+            supports_vision?: boolean | null;
             /** Is Utility */
             is_utility?: boolean | null;
         };
@@ -1835,6 +1882,8 @@ export interface components {
              * @enum {string}
              */
             default_reasoning_effort: "off" | "low" | "medium" | "high";
+            /** Supports Vision */
+            supports_vision: boolean;
         };
         /** ModelUsage */
         ModelUsage: {
@@ -4184,6 +4233,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_attachment_api_v1_chats__chat_id__attachments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_attachment_api_v1_chats__chat_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentOut"];
+                };
             };
             /** @description Validation Error */
             422: {

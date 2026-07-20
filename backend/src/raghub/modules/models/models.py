@@ -32,3 +32,7 @@ class Model(UUIDPk, Base):
     # snapshot (that data isn't in this table) — see the design doc for why.
     supports_reasoning: Mapped[bool] = mapped_column(default=False, server_default="false")
     default_reasoning_effort: Mapped[str] = mapped_column(default="off", server_default="off")
+    # DOC-9 (per-chat ephemeral attachments): admin-set capability flag so the
+    # chat/agent loop knows this model can accept image content blocks. Plain
+    # boolean, no tiered setting (unlike supports_reasoning) - vision is on/off.
+    supports_vision: Mapped[bool] = mapped_column(default=False, server_default="false")
