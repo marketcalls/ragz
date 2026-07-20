@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.core.config import Settings, get_settings
-from raghub.core.errors import ConflictError, PayloadTooLarge
+from raghub.core.errors import ConflictError, NotFoundError, PayloadTooLarge
 from raghub.modules.chat import service
 from raghub.modules.chat.events import SSEEvent
 from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMStreamer
-from raghub.modules.chat.models import Chat
+from raghub.modules.chat.models import Chat, ChatAttachment
+from raghub.modules.chat.prompting import PromptSource
 from raghub.modules.chat.schemas import (
     AttachmentOut,
     ChatCreate,
@@ -194,6 +195,24 @@ async def send_message(
     await quota_service.check_quota(
         session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
     )
+    # DOC-9 Task 5: resolve + route attachments BEFORE persisting the user
+    # message -- same "fail fast" convention as the workspace/model
+    # resolution and quota check above. Ownership is re-verified per
+    # attachment (chat_id == chat.id) rather than trusted from create_
+    # attachment's own check: that only proved the id belonged to THIS chat
+    # at upload time, not that the caller didn't slip in an id from a
+    # different chat in this request's body.
+    attachment_sources: list[PromptSource] = []
+    if body.attachment_ids:
+        for marker, attachment_id in enumerate(body.attachment_ids, start=1):
+            attachment = await session.get(ChatAttachment, attachment_id)
+            if attachment is None or attachment.chat_id != chat.id:
+                raise NotFoundError("attachment not found in this chat")
+            source = await service.route_attachment(
+                session, ctx.org_id, chat.id, attachment, marker, model.litellm_model_name,
+            )
+            if source is not None:
+                attachment_sources.append(source)
     messages = await service.list_messages(session, chat.id)
     parent = service.resolve_parent(
         messages, body.parent_message_id,
@@ -212,7 +231,7 @@ async def send_message(
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
-        reasoning_effort=reasoning_effort,
+        reasoning_effort=reasoning_effort, attachment_sources=attachment_sources,
     ))
 
 

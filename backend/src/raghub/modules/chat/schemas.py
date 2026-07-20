@@ -23,6 +23,7 @@ class MessageSend(BaseModel):
     parent_message_id: UUID | None = None
     model_id: UUID | None = None
     reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
+    attachment_ids: list[UUID] | None = None
 
 
 class RegenerateRequest(BaseModel):

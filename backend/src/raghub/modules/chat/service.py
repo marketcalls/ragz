@@ -8,7 +8,7 @@ import asyncio
 import contextlib
 from collections import defaultdict
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
@@ -65,10 +65,19 @@ from raghub.modules.chat.validation import (
 from raghub.modules.chat.web import TAVILY_SECRET_NAME, WebResult, WebSearcher
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service as documents_service
+from raghub.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch
 from raghub.modules.models.models import Model  # type only; resolution stays in models service
 from raghub.modules.models.utility import get_utility_model
 from raghub.modules.quotas import service as quota_service
-from raghub.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
+from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from raghub.modules.retrieval.service import (
+    MetadataClause,
+    RetrievalResult,
+    RetrievedChunk,
+    ensure_ephemeral_collection,
+    search_ephemeral_attachments,
+    upsert_ephemeral_chunks,
+)
 from raghub.modules.secrets import service as secrets_service
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
@@ -198,6 +207,40 @@ async def mark_attachment_failed(session: AsyncSession, attachment_id: UUID) -> 
     if attachment is not None:
         attachment.status = "failed"
         await session.commit()
+
+
+_ATTACHMENT_INLINE_TOKEN_BUDGET = 4000
+
+
+async def route_attachment(
+    session: AsyncSession, org_id: UUID, chat_id: UUID,
+    attachment: ChatAttachment, marker: int, model_hint: str | None,
+) -> "PromptSource | None":
+    """Inline if the attachment's extracted text fits the budget; otherwise
+    chunk+embed+upsert into the ephemeral collection and return None (the
+    caller's existing retrieval call picks it up via search_ephemeral_attachments,
+    merged like any other candidate chunk group)."""
+    text = attachment.extracted_text or ""
+    if not text.strip():
+        return None
+    if count_tokens(text, model_hint) <= _ATTACHMENT_INLINE_TOKEN_BUDGET:
+        attachment.routed_to = "inline"
+        await session.commit()
+        return PromptSource(marker=marker, filename=attachment.filename, page=1, text=text)
+
+    attachment.routed_to = "retrieval"
+    await session.commit()
+    chunks = chunk_blocks(
+        [PageBlock(page=1, text=text, kind="text")]
+    )
+    dense_embedder = get_dense_embedder()
+    dense, sparse = await embed_batch([c.text for c in chunks], dense_embedder)
+    await ensure_ephemeral_collection()
+    await upsert_ephemeral_chunks(
+        org_id=org_id, chat_id=chat_id, attachment_id=attachment.id,
+        chunks=chunks, dense=dense, sparse=sparse,
+    )
+    return None
 
 
 async def list_messages(session: AsyncSession, chat_id: UUID) -> list[Message]:
@@ -612,17 +655,31 @@ async def _previous_citation_refs(
 
 
 async def _source_refs(
-    session: AsyncSession, ctx: TenantContext, chunks: Sequence[RetrievedChunk]
+    session: AsyncSession, ctx: TenantContext, chunks: Sequence[RetrievedChunk],
+    *, attachment_filenames: dict[UUID, str] | None = None,
 ) -> list[SourceRef]:
     # (filename, version) from the SAME get_document_checked fetch: version is
     # the document ROW's own version (each version lineage is its own row,
     # DOC-5), the canonical answer - not a chunk-local guess.
+    #
+    # DOC-9 Task 5: a chunk whose document_id is actually a ChatAttachment id
+    # (retrieval-routed via search_ephemeral_attachments) is NOT a row in the
+    # documents table -- get_document_checked would 404 on it. attachment_
+    # filenames short-circuits those chunks with the filename the caller
+    # already looked up, version pinned to 1 (attachments have no version
+    # lineage).
     docs: dict[UUID, tuple[str, int]] = {}
     refs: list[SourceRef] = []
+    attachment_filenames = attachment_filenames or {}
     for marker, chunk in enumerate(chunks, start=1):
         if chunk.document_id not in docs:
-            doc = await documents_service.get_document_checked(session, ctx, chunk.document_id)
-            docs[chunk.document_id] = (doc.filename, doc.version)
+            if chunk.document_id in attachment_filenames:
+                docs[chunk.document_id] = (attachment_filenames[chunk.document_id], 1)
+            else:
+                doc = await documents_service.get_document_checked(
+                    session, ctx, chunk.document_id
+                )
+                docs[chunk.document_id] = (doc.filename, doc.version)
         filename, doc_version = docs[chunk.document_id]
         refs.append(
             SourceRef(
@@ -649,14 +706,17 @@ async def _prepare_sources(
     max_tokens: int,
     model_hint: str | None,
     web_results: Sequence[WebResult] = (),
+    attachment_filenames: dict[UUID, str] | None = None,
 ) -> tuple[list[SourceRef], list[PromptSource]]:
     """Marker assignment + budget fitting in one place, so the `sources` SSE
     frame lists exactly the blocks the model receives (markers stay dense:
     fit_sources keeps a prefix). Web hits (D7/Task 11) are appended AFTER the
     document chunks with continuing markers -- documents outrank the web in
     the budget fit (fit_sources keeps a PREFIX, so a web source only survives
-    once every document source already fits)."""
-    refs = await _source_refs(session, ctx, chunks)
+    once every document source already fits). attachment_filenames (DOC-9
+    Task 5): id->filename for any retrieval-routed ChatAttachment whose
+    ephemeral chunks were merged into `chunks` -- see _source_refs."""
+    refs = await _source_refs(session, ctx, chunks, attachment_filenames=attachment_filenames)
     prompt_sources = [
         PromptSource(marker=r.marker, filename=r.filename, page=r.page,
                      text=chunks[i].text, section=r.section)
@@ -1036,6 +1096,7 @@ async def stream_reply(
     completer: LLMCompleter | None = None,
     web_searcher: WebSearcher | None = None,
     reasoning_effort: str | None = None,
+    attachment_sources: Sequence[PromptSource] = (),
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -1240,12 +1301,61 @@ async def stream_reply(
                     ctx, chat.workspace_id, prev_refs
                 )
         backfilled_keys = {(str(c.document_id), c.page, c.chunk_index) for c in backfilled}
-        merged = merge_chunks(pinned_chunks, result.chunks, backfilled)
+
+        # DOC-9 Task 5: retrieval-routed chat attachments (route_attachment's
+        # chunk+embed+upsert side effect into Task 4's ephemeral collection)
+        # join the candidate pool as a 4th group. Scoped to this CHAT, not
+        # just this turn's attachment_ids -- an attachment embedded on an
+        # earlier turn stays semantically searchable on later turns too,
+        # exactly like retrieve() picks up any already-indexed workspace
+        # document without being told its id. Query embedding mirrors
+        # retrieve()'s own dense+sparse encoding step exactly, so ephemeral
+        # search ranks against the same vector space retrieve() itself uses.
+        attachment_chunks: list[RetrievedChunk] = []
+        attachment_filenames: dict[UUID, str] = {}
+        retrieval_attachments = list(
+            (
+                await session.execute(
+                    select(ChatAttachment).where(
+                        ChatAttachment.chat_id == chat.id,
+                        ChatAttachment.routed_to == "retrieval",
+                    )
+                )
+            ).scalars()
+        )
+        if retrieval_attachments:
+            attachment_filenames = {a.id: a.filename for a in retrieval_attachments}
+            dense_vec = (await get_dense_embedder().embed([user_message.content]))[0]
+            sparse_vec = (await asyncio.to_thread(embed_sparse, [user_message.content]))[0]
+            attachment_chunks = await search_ephemeral_attachments(
+                org_id=ctx.org_id, chat_id=chat.id,
+                query_dense=dense_vec, query_sparse=sparse_vec, top_k=5,
+            )
+        merged = merge_chunks(pinned_chunks, result.chunks, backfilled, attachment_chunks)
 
         sources, kept_sources = await _prepare_sources(
             session, ctx, merged, max_tokens=sources_budget, model_hint=model_hint,
-            web_results=web_hits,
+            web_results=web_hits, attachment_filenames=attachment_filenames,
         )
+
+        # Inline-routed attachments (Task 5) join kept_sources ONLY -- the
+        # model's <data> block context -- with markers continuing PAST both
+        # the document refs and the web hits _prepare_sources just assigned
+        # above (mirrors that function's own next_marker continuation for
+        # web results). The real offset is only known now, after retrieval/
+        # web/budget-fit have all run, so route_attachment's provisional
+        # marker is discarded and replaced here, never reused. Deliberately
+        # NOT added to `sources`/citations: a ChatAttachment is ephemeral and
+        # not a citable Document, so a marker the model cites here falls
+        # outside parse_citation_markers' 1..len(sources) range and is inert
+        # -- the same accepted degradation this codebase already relies on
+        # for any other out-of-range/fabricated citation marker.
+        if attachment_sources:
+            next_marker = len(kept_sources) + 1
+            kept_sources.extend(
+                replace(src, marker=next_marker + i)
+                for i, src in enumerate(attachment_sources)
+            )
 
         # no_answer is decided AFTER the final fit: pinned/backfilled material
         # only counts as grounding if it actually survived into kept_sources
