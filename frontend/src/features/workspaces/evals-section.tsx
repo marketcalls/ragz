@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import type { GoldenQueryOut } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toaster';
 
@@ -59,13 +60,18 @@ export function EvalsSection({ workspaceId }: { workspaceId: string }) {
         precision, and (with a utility model designated) answer faithfulness against these.
       </p>
       <form onSubmit={onSubmit} className="space-y-2">
-        <textarea
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          rows={2}
-          placeholder="e.g. Where is the muster point?"
-          className="w-full rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-ink placeholder:text-muted"
-        />
+        <div className="space-y-1">
+          <Label htmlFor="gq-question">Question</Label>
+          <textarea
+            id="gq-question"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            rows={2}
+            maxLength={2000}
+            placeholder="e.g. Where is the muster point?"
+            className="w-full rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-ink placeholder:text-muted"
+          />
+        </div>
         <div className="flex flex-wrap gap-2">
           {(documents.data ?? []).map((d) => (
             <label key={d.id} className="flex items-center gap-1 text-[12px] text-secondary">

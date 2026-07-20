@@ -59,6 +59,16 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+test('question textarea has an accessible name', async () => {
+  const fetchMock = vi.fn(async () => jsonResponse([]));
+  renderSection(fetchMock);
+
+  const textarea = await screen.findByLabelText(/question/i);
+  expect(textarea).toBeInTheDocument();
+  expect(textarea.tagName).toBe('TEXTAREA');
+  expect(textarea).toHaveAttribute('maxlength', '2000');
+});
+
 test('creates a golden query with selected expected documents and lists it', async () => {
   let created = false;
   let capturedBody: unknown = null;
@@ -83,10 +93,7 @@ test('creates a golden query with selected expected documents and lists it', asy
 
   expect(await screen.findByText('policy.pdf')).toBeInTheDocument();
 
-  await user.type(
-    screen.getByPlaceholderText('e.g. Where is the muster point?'),
-    'Where is the muster point?',
-  );
+  await user.type(screen.getByLabelText(/question/i), 'Where is the muster point?');
   await user.click(screen.getByRole('checkbox', { name: 'policy.pdf' }));
   await user.click(screen.getByRole('button', { name: 'Add golden query' }));
 
