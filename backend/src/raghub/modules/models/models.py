@@ -27,3 +27,8 @@ class Model(UUIDPk, Base):
     # test at the service layer, matching update_document_current's
     # promotion-flip precedent rather than adding new SQL).
     is_utility: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Reasoning-effort control (2026-07-20 design): admin-set capability flag
+    # + default tier. Manual toggle, not auto-detected from LiteLLM's price
+    # snapshot (that data isn't in this table) — see the design doc for why.
+    supports_reasoning: Mapped[bool] = mapped_column(default=False, server_default="false")
+    default_reasoning_effort: Mapped[str] = mapped_column(default="off", server_default="off")

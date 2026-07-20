@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, model_validator
 # no base_url needed, api_key attached as usual.
 ProviderKind = Literal["openai", "ollama", "openai_compatible", "litellm"]
 
+ReasoningEffort = Literal["off", "low", "medium", "high"]
+
 
 class ModelCreate(BaseModel):
     litellm_model_name: str = Field(min_length=1, max_length=200)
@@ -21,6 +23,8 @@ class ModelCreate(BaseModel):
     # Phase 3 Plan I (MODEL-3): superadmin can flag a model as unreliable at
     # native tool calling from creation time.
     tools_unreliable: bool = False
+    supports_reasoning: bool = False
+    default_reasoning_effort: ReasoningEffort = "off"
 
     @model_validator(mode="after")
     def _base_url_required_for_self_hosted(self) -> "ModelCreate":
@@ -37,6 +41,8 @@ class ModelPatch(BaseModel):
     mock_response: str | None = None
     # Phase 3 Plan I (MODEL-3): superadmin toggle for the JSON-planner fallback.
     tools_unreliable: bool | None = None
+    supports_reasoning: bool | None = None
+    default_reasoning_effort: ReasoningEffort | None = None
     # Phase 3 Plan J (D5/§4): setting True clears every OTHER model's flag in
     # the same transaction (service.update_model) — exactly one utility model.
     is_utility: bool | None = None
@@ -60,6 +66,8 @@ class ModelOut(BaseModel):
     # Phase 3 Plan I (MODEL-3): agent loop (Task 9) uses this to skip native
     # tool-calling and fall back to the JSON-planner protocol.
     tools_unreliable: bool
+    supports_reasoning: bool
+    default_reasoning_effort: ReasoningEffort
     # Phase 3 Plan J (D5/§4): superadmin-designated utility model. Exactly
     # one row is True at a time — enforced in service.update_model.
     is_utility: bool
@@ -70,5 +78,7 @@ class ModelPublic(BaseModel):
 
     id: UUID
     display_name: str
+    supports_reasoning: bool
+    default_reasoning_effort: ReasoningEffort
 
     model_config = {"from_attributes": True}

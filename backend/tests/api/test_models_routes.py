@@ -207,6 +207,50 @@ async def test_patch_is_utility_roundtrip_and_exclusivity(
     assert b_row["is_utility"] is True
 
 
+async def test_reasoning_effort_fields_round_trip_and_are_public(
+    client: httpx.AsyncClient, seeded_superadmin: User, seeded_user: User,
+) -> None:
+    h_super = await auth(client, "root@platform.example")
+    r = await client.post(
+        "/api/v1/admin/models",
+        json={**OPENAI_BODY, "supports_reasoning": True, "default_reasoning_effort": "medium"},
+        headers=h_super,
+    )
+    assert r.status_code == 201
+    created = r.json()
+    assert created["supports_reasoning"] is True
+    assert created["default_reasoning_effort"] == "medium"
+    model_id = created["id"]
+
+    # Defaults when omitted on create.
+    r2 = await client.post(
+        "/api/v1/admin/models",
+        json={
+            "litellm_model_name": "gpt-4.1-mini", "display_name": "GPT-4.1 mini",
+            "provider_kind": "openai", "api_key": "sk-live-def",
+        },
+        headers=h_super,
+    )
+    assert r2.json()["supports_reasoning"] is False
+    assert r2.json()["default_reasoning_effort"] == "off"
+
+    # PATCH round-trip.
+    r3 = await client.patch(
+        f"/api/v1/admin/models/{model_id}",
+        json={"supports_reasoning": False, "default_reasoning_effort": "off"},
+        headers=h_super,
+    )
+    assert r3.json()["supports_reasoning"] is False
+    assert r3.json()["default_reasoning_effort"] == "off"
+
+    # ModelPublic (non-superadmin chat picker) exposes both fields.
+    h_admin = await auth(client, "a@acme.com")
+    public = await client.get("/api/v1/models", headers=h_admin)
+    row = next(m for m in public.json() if m["id"] == model_id)
+    assert row["supports_reasoning"] is False
+    assert row["default_reasoning_effort"] == "off"
+
+
 async def test_catalog_listing_preserves_zero_cost_entries(
     client: httpx.AsyncClient, seeded_superadmin: User, session: AsyncSession,
 ) -> None:

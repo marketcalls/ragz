@@ -1622,6 +1622,17 @@ export interface components {
              * @default false
              */
             tools_unreliable: boolean;
+            /**
+             * Supports Reasoning
+             * @default false
+             */
+            supports_reasoning: boolean;
+            /**
+             * Default Reasoning Effort
+             * @default off
+             * @enum {string}
+             */
+            default_reasoning_effort: "off" | "low" | "medium" | "high";
         };
         /** ModelDayTokens */
         ModelDayTokens: {
@@ -1669,6 +1680,13 @@ export interface components {
             mock_response: string | null;
             /** Tools Unreliable */
             tools_unreliable: boolean;
+            /** Supports Reasoning */
+            supports_reasoning: boolean;
+            /**
+             * Default Reasoning Effort
+             * @enum {string}
+             */
+            default_reasoning_effort: "off" | "low" | "medium" | "high";
             /** Is Utility */
             is_utility: boolean;
         };
@@ -1686,6 +1704,10 @@ export interface components {
             mock_response?: string | null;
             /** Tools Unreliable */
             tools_unreliable?: boolean | null;
+            /** Supports Reasoning */
+            supports_reasoning?: boolean | null;
+            /** Default Reasoning Effort */
+            default_reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
             /** Is Utility */
             is_utility?: boolean | null;
         };
@@ -1701,6 +1723,13 @@ export interface components {
             id: string;
             /** Display Name */
             display_name: string;
+            /** Supports Reasoning */
+            supports_reasoning: boolean;
+            /**
+             * Default Reasoning Effort
+             * @enum {string}
+             */
+            default_reasoning_effort: "off" | "low" | "medium" | "high";
         };
         /** ModelUsage */
         ModelUsage: {

@@ -69,6 +69,8 @@ async def create_model(
         display_name=body.display_name, provider_kind=body.provider_kind,
         base_url=body.base_url, api_key=body.api_key, settings=settings,
         mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
+        supports_reasoning=body.supports_reasoning,
+        default_reasoning_effort=body.default_reasoning_effort,
     )
     _schedule_sync(background_tasks, request, settings)
     return (await service.to_model_out(session, [model]))[0]
@@ -84,6 +86,8 @@ async def patch_model(
         session, ctx, model_id, display_name=body.display_name, base_url=body.base_url,
         enabled=body.enabled, api_key=body.api_key, settings=settings,
         mock_response=body.mock_response, tools_unreliable=body.tools_unreliable,
+        supports_reasoning=body.supports_reasoning,
+        default_reasoning_effort=body.default_reasoning_effort,
         is_utility=body.is_utility,
     )
     _schedule_sync(background_tasks, request, settings)
