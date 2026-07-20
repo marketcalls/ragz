@@ -5,6 +5,7 @@ from qdrant_client import AsyncQdrantClient
 from raghub.core.config import get_settings
 
 COLLECTION = "chunks_bge_m3"  # one collection per embedding model (foundation)
+EPHEMERAL_COLLECTION = "ephemeral_attachments"  # per-chat attachments, own store
 
 
 @lru_cache

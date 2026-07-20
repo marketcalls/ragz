@@ -1,19 +1,34 @@
-"""THE single Qdrant search code path (iron rule 1).
+"""Qdrant search code paths (iron rule 1: one code path PER STORE).
 
-`_tenant_filter` below is the only function in the codebase allowed to construct
-a Qdrant filter. Its only callers are `retrieve()`, `delete_document_points()`,
-`list_document_chunks()`, `get_chunks_by_refs()`, `update_document_acl()`,
-`update_document_current()`, and `update_document_metadata()` — all in this
-module. The adversarial suite in tests/isolation/ exists to catch any
-regression here. `_tenant_filter`'s ACL, current-only, and metadata postures
-are decided per caller — see the caller table in its docstring.
+`_tenant_filter` is the only function allowed to construct a filter against
+the MAIN per-workspace documents collection (`COLLECTION`). Its only callers
+are `retrieve()`, `delete_document_points()`, `list_document_chunks()`,
+`get_chunks_by_refs()`, `update_document_acl()`, `update_document_current()`,
+and `update_document_metadata()` — all in this module. Its ACL, current-only,
+and metadata postures are decided per caller — see the caller table in its
+docstring.
+
+`_attachment_filter` (below) is a SECOND, deliberately separate sanctioned
+filter function for a SEPARATE store — the ephemeral per-chat attachments
+collection (`EPHEMERAL_COLLECTION`). It exists because that collection has a
+fundamentally different access model: "visible to this one chat, to whoever
+can already see that chat" is not a workspace-membership or ACL-group
+question, so bolting a chat_id/ephemeral branch onto `_tenant_filter` would
+make one function serve two different security models behind one signature.
+Its only callers are `search_ephemeral_attachments()` and
+`delete_ephemeral_points()`, both in this module.
+
+The adversarial suite in tests/isolation/ exists to catch any regression in
+EITHER filter function — `test_tenant_isolation.py`-style tests for
+`_tenant_filter`, `test_ephemeral_attachment_isolation.py` for
+`_attachment_filter`.
 """
 
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import structlog
 from qdrant_client import models
@@ -21,7 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
 from raghub.core.errors import WorkspaceAccessDenied
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
+from raghub.modules.documents.pipeline import Chunk
+from raghub.modules.retrieval.client import COLLECTION, EPHEMERAL_COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.rerank import RerankUnavailable, get_reranker
 from raghub.modules.tenancy.context import TenantContext
@@ -214,6 +230,123 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
             )
             _HEALED.add(COLLECTION)
     return COLLECTION
+
+
+async def ensure_ephemeral_collection() -> str:
+    """Idempotent setup for the SEPARATE ephemeral-attachments store (not the
+    main documents collection). No embedding-model lock — attachments always
+    use whatever the deployment's single dense embedder is (get_dense_embedder()),
+    same as everything else; there is no per-workspace choice here."""
+    client = get_qdrant()
+    if not await client.collection_exists(EPHEMERAL_COLLECTION):
+        await client.create_collection(
+            EPHEMERAL_COLLECTION,
+            vectors_config={
+                "dense": models.VectorParams(
+                    size=get_settings().embedding_dim, distance=models.Distance.COSINE
+                )
+            },
+            sparse_vectors_config={
+                "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)
+            },
+        )
+        for field in ("tenant_id", "chat_id"):
+            await client.create_payload_index(
+                EPHEMERAL_COLLECTION, field_name=field,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
+    return EPHEMERAL_COLLECTION
+
+
+def _attachment_filter(*, org_id: UUID, chat_id: UUID) -> models.Filter:
+    """The SECOND sanctioned filter-building function (see module
+    docstring). No ACL, no workspace, no current-only posture — an
+    ephemeral attachment's only access rule is 'this org, this chat.'"""
+    return models.Filter(
+        must=[
+            models.FieldCondition(
+                key="tenant_id", match=models.MatchValue(value=str(org_id))
+            ),
+            models.FieldCondition(
+                key="chat_id", match=models.MatchValue(value=str(chat_id))
+            ),
+        ]
+    )
+
+
+# Distinct from documents/pipeline.py's _CHUNK_NAMESPACE and _HQ_NAMESPACE —
+# ephemeral attachment points must never collide with main-collection points
+# even if a UUID were somehow reused across stores.
+_EPHEMERAL_NAMESPACE = UUID("0f261cc1-a520-4fe5-9250-5271a316c23d")
+
+
+async def upsert_ephemeral_chunks(
+    *, org_id: UUID, chat_id: UUID, attachment_id: UUID,
+    chunks: list["Chunk"], dense: list[list[float]], sparse: list[models.SparseVector],
+) -> None:
+    """Constructs points, never filters (same convention documents/pipeline.py's
+    upsert_points already uses — writing has no filter to centralize)."""
+    points = [
+        models.PointStruct(
+            id=str(uuid5(_EPHEMERAL_NAMESPACE, f"{attachment_id}:{c.chunk_index}")),
+            vector={"dense": d, "sparse": s},
+            payload={
+                "tenant_id": str(org_id), "chat_id": str(chat_id),
+                "attachment_id": str(attachment_id),
+                "page": c.page, "chunk_index": c.chunk_index, "text": c.text,
+            },
+        )
+        for c, d, s in zip(chunks, dense, sparse, strict=True)
+    ]
+    await get_qdrant().upsert(EPHEMERAL_COLLECTION, points=points, wait=True)
+
+
+async def search_ephemeral_attachments(
+    *, org_id: UUID, chat_id: UUID, query_dense: list[float],
+    query_sparse: models.SparseVector, top_k: int = 5,
+) -> list[RetrievedChunk]:
+    """Hybrid dense+sparse RRF fusion, same fusion shape `retrieve()` already
+    uses for the main collection (Prefetch both, fuse with RRF) — no rerank
+    step, since that's a per-workspace-setting concept that doesn't apply to
+    an ephemeral per-chat store."""
+    flt = _attachment_filter(org_id=org_id, chat_id=chat_id)
+    result = await get_qdrant().query_points(
+        EPHEMERAL_COLLECTION,
+        prefetch=[
+            models.Prefetch(query=query_dense, using="dense", filter=flt, limit=top_k * 4),
+            models.Prefetch(query=query_sparse, using="sparse", filter=flt, limit=top_k * 4),
+        ],
+        query=models.FusionQuery(fusion=models.Fusion.RRF),
+        query_filter=flt,
+        limit=top_k,
+        with_payload=True,
+    )
+    chunks: list[RetrievedChunk] = []
+    for p in result.points:
+        payload = p.payload or {}
+        chunks.append(
+            RetrievedChunk(
+                document_id=UUID(str(payload["attachment_id"])),
+                page=int(payload["page"]),
+                chunk_index=int(payload["chunk_index"]),
+                text=str(payload["text"]),
+                score=float(p.score),
+            )
+        )
+    return chunks
+
+
+async def delete_ephemeral_points(chat_id: UUID) -> None:
+    await get_qdrant().delete(
+        EPHEMERAL_COLLECTION,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[models.FieldCondition(
+                    key="chat_id", match=models.MatchValue(value=str(chat_id))
+                )]
+            )
+        ),
+    )
 
 
 _RERANK_PREFETCH = 50  # CHAT-2: rerank the top-50 fused candidates
