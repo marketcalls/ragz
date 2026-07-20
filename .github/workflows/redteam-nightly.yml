@@ -1,0 +1,56 @@
+name: Red-team tier (nightly)
+
+# --------------------------------------------------------------------------
+# Phase 3 Plan J, Task 13: adversarial injection/evasion/fabrication probes
+# living in backend/tests/redteam/, gated behind REDTEAM=1 exactly like
+# RAGHUB_TEST_OCR (backend/tests/integration/test_ocr_e2e.py, J-C16).
+#
+# Deliberately NOT wired to `pull_request`/`push`: this tier spins up the
+# full testcontainers stack (Postgres/Redis/Qdrant/MinIO) for every probe,
+# and is expected to grow probes that make real LLM calls - both too slow/
+# expensive to gate every commit on. The existing isolation suite
+# (backend/tests/isolation/) already runs in the per-PR pipeline and covers
+# the same tenant/ACL security surface at a much cheaper cost; this tier is
+# the deeper, slower adversarial corpus that runs on a schedule instead.
+#
+# DO NOT "fix" the missing per-PR coverage by adding a pull_request/push
+# trigger here - that is a deliberate design decision (see the Task 13
+# brief), not an oversight.
+#
+# A probe FAILURE in this workflow is a release blocker (Task 14's gate
+# check reads this run), never a flaky-retry candidate - do not add retry
+# logic to this job.
+#
+# If a future probe needs REAL LLM/search-provider credentials: seed them
+# through the app's own encrypted-secrets flow (modules/secrets/) inside the
+# test fixture, the same way the rest of the suite does - never as bare CI
+# env vars (iron rule 3: secrets never live in .env/CI env beyond the DB
+# connection string and the KEK source).
+# --------------------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly, 03:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  redteam:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run red-team tier (REDTEAM=1)
+        env:
+          REDTEAM: "1"
+        run: uv run pytest tests/redteam -v
