@@ -245,3 +245,47 @@ test('stop() aborts the in-flight request, resets state, and refetches the tree'
   expect(result.current.status).toBe('idle');
   expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['chat', 'c1'] });
 });
+
+test('send includes reasoning_effort in the body when set and not "off"', async () => {
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({
+        type: 'done',
+        done: {
+          message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+          grounding: 'documents', validation_failed: false,
+        },
+      });
+    },
+  );
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('hi', undefined, 'model-1', 'high');
+  });
+
+  const [, body] = streamChatSse.mock.calls[0]!;
+  expect(body).toMatchObject({ reasoning_effort: 'high' });
+});
+
+test('send omits reasoning_effort from the body when "off" or absent', async () => {
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({
+        type: 'done',
+        done: {
+          message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+          grounding: 'documents', validation_failed: false,
+        },
+      });
+    },
+  );
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('hi', undefined, 'model-1', 'off');
+  });
+
+  const [, body] = streamChatSse.mock.calls[0]!;
+  expect(body).not.toHaveProperty('reasoning_effort');
+});

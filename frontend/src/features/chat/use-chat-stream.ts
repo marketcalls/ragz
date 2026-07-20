@@ -91,7 +91,12 @@ export function useChatStream(chatId: string | null) {
   );
 
   const send = useCallback(
-    (content: string, parentMessageId?: string | null, modelId?: string | null) => {
+    (
+      content: string,
+      parentMessageId?: string | null,
+      modelId?: string | null,
+      reasoningEffort?: string | null,
+    ) => {
       if (!chatId) return;
       run(
         `/api/v1/chats/${chatId}/messages`,
@@ -101,6 +106,9 @@ export function useChatStream(chatId: string | null) {
           // explicit null = new ROOT sibling; uuid = sibling under that parent.
           ...(parentMessageId !== undefined ? { parent_message_id: parentMessageId } : {}),
           ...(modelId ? { model_id: modelId } : {}),
+          ...(reasoningEffort && reasoningEffort !== 'off'
+            ? { reasoning_effort: reasoningEffort }
+            : {}),
         },
         content,
       );

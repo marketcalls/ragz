@@ -13,6 +13,7 @@ import { useWorkspace } from '@/features/workspaces/workspace-context';
 import { AssistantMessage } from './assistant-message';
 import { ChatInput } from './chat-input';
 import { EditMessageForm } from './edit-message-form';
+import { EffortSelector, type ReasoningEffort } from './effort-selector';
 import { MessageActions } from './message-actions';
 import { ModelSelector } from './model-selector';
 import { useChat, useCreateChat } from './queries';
@@ -36,6 +37,7 @@ export function ChatPage() {
   const stream = useChatStream(chatId);
   const { path, select } = useTreeSelection(chatQuery.data?.messages);
   const [modelId, setModelId] = useState<string | null>(null);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('off');
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // Persisted citations (MessageNode.citations) → source chips; filenames
@@ -70,6 +72,14 @@ export function ChatPage() {
   // workspace without a default shows a selected model but sends none (409, found by E2E).
   const effectiveModelId = modelId ?? workspaceDefault ?? models?.[0]?.id ?? null;
 
+  const selectedModel = models?.find((m) => m.id === effectiveModelId) ?? null;
+
+  const onModelChange = (id: string): void => {
+    setModelId(id);
+    const next = models?.find((m) => m.id === id);
+    setReasoningEffort((next?.default_reasoning_effort as ReasoningEffort | undefined) ?? 'off');
+  };
+
   // DEVIATION (Task 10, carry-forward from the Task 8 review): useChatStream's
   // status freezes after abort() — no terminal event follows, so the UI would
   // stay stuck showing the old chat's in-flight/frozen stream state. This hook
@@ -90,7 +100,7 @@ export function ChatPage() {
   useEffect(() => {
     if (chatId && initialMessage && !initialSentRef.current) {
       initialSentRef.current = true;
-      stream.send(initialMessage, undefined, effectiveModelId); // omit parent → append to leaf
+      stream.send(initialMessage, undefined, effectiveModelId, reasoningEffort); // omit parent → append to leaf
       navigate(location.pathname, { replace: true, state: null }); // consume the state
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount/handoff
@@ -110,7 +120,7 @@ export function ChatPage() {
 
   const onSend = (content: string): void => {
     if (chatId) {
-      stream.send(content, undefined, effectiveModelId); // omit parent → append to leaf
+      stream.send(content, undefined, effectiveModelId, reasoningEffort); // omit parent → append to leaf
       return;
     }
     if (!workspaceId) return;
@@ -131,7 +141,10 @@ export function ChatPage() {
         actions={
           <>
             <UsageMeter />
-            <ModelSelector models={models ?? []} value={effectiveModelId} onChange={setModelId} />
+            <ModelSelector models={models ?? []} value={effectiveModelId} onChange={onModelChange} />
+            {selectedModel?.supports_reasoning ? (
+              <EffortSelector value={reasoningEffort} onChange={setReasoningEffort} />
+            ) : null}
           </>
         }
       />
@@ -152,7 +165,7 @@ export function ChatPage() {
                       // Sibling of the edited message: same parent (phase1 spec §2.1).
                       // For a ROOT message this passes explicit null — which the backend
                       // reads as "new root sibling" (presence semantics, chat/schemas.py).
-                      stream.send(content, m.parent_message_id ?? null, effectiveModelId);
+                      stream.send(content, m.parent_message_id ?? null, effectiveModelId, reasoningEffort);
                     }}
                   />
                 );
