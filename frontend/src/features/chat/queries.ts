@@ -59,6 +59,34 @@ export function useRenameChat() {
   });
 }
 
+export function useSetMessageFeedback(chatId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { messageId: string; rating: 'up' | 'down'; comment?: string }) => {
+      const { data, error } = await api.PUT('/api/v1/messages/{message_id}/feedback', {
+        params: { path: { message_id: input.messageId } },
+        body: { rating: input.rating, comment: input.comment },
+      });
+      if (error) throw new Error('failed to save feedback');
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chat', chatId] }),
+  });
+}
+
+export function useClearMessageFeedback(chatId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (messageId: string) => {
+      const { error } = await api.DELETE('/api/v1/messages/{message_id}/feedback', {
+        params: { path: { message_id: messageId } },
+      });
+      if (error) throw new Error('failed to clear feedback');
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['chat', chatId] }),
+  });
+}
+
 export function useDeleteChat() {
   const queryClient = useQueryClient();
   return useMutation({

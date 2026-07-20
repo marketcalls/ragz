@@ -19,6 +19,7 @@ function entryFor(over: Partial<MessageNode>, siblings: string[] = ['m1'], posit
       completion_tokens: null,
       created_at: 't',
       citations: [],
+      feedback: null,
       children: [],
       ...over,
     } as MessageNode,
@@ -85,4 +86,56 @@ test('single sibling hides the nav; ends disable their arrow', () => {
   );
   expect(screen.getByRole('button', { name: 'Previous version' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Next version' })).toBeEnabled();
+});
+
+test('thumb buttons only appear when onSetFeedback is provided, and toggle', async () => {
+  const onSetFeedback = vi.fn();
+  const onClearFeedback = vi.fn();
+  const user = userEvent.setup();
+  const { rerender } = render(
+    <MessageActions entry={entryFor({})} disabled={false} onSelectSibling={vi.fn()} />,
+  );
+  expect(screen.queryByRole('button', { name: 'Good answer' })).not.toBeInTheDocument();
+
+  rerender(
+    <MessageActions
+      entry={entryFor({ role: 'assistant' })}
+      disabled={false}
+      onSelectSibling={vi.fn()}
+      onSetFeedback={onSetFeedback}
+      onClearFeedback={onClearFeedback}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Bad answer' }));
+  expect(onSetFeedback).toHaveBeenCalledWith('down', undefined);
+
+  rerender(
+    <MessageActions
+      entry={entryFor({ role: 'assistant', feedback: { rating: 'down', comment: null } })}
+      disabled={false}
+      onSelectSibling={vi.fn()}
+      onSetFeedback={onSetFeedback}
+      onClearFeedback={onClearFeedback}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Bad answer' }));
+  expect(onClearFeedback).toHaveBeenCalledTimes(1);
+});
+
+test('comment affordance appears once feedback exists and submits the note', async () => {
+  const onSetFeedback = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <MessageActions
+      entry={entryFor({ role: 'assistant', feedback: { rating: 'up', comment: null } })}
+      disabled={false}
+      onSelectSibling={vi.fn()}
+      onSetFeedback={onSetFeedback}
+      onClearFeedback={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Add a comment' }));
+  await user.type(screen.getByPlaceholderText('Add a comment (optional)'), 'great answer');
+  await user.keyboard('{Enter}');
+  expect(onSetFeedback).toHaveBeenCalledWith('up', 'great answer');
 });

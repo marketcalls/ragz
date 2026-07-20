@@ -16,7 +16,7 @@ import { EditMessageForm } from './edit-message-form';
 import { EffortSelector, type ReasoningEffort } from './effort-selector';
 import { MessageActions } from './message-actions';
 import { ModelSelector } from './model-selector';
-import { useChat, useCreateChat } from './queries';
+import { useChat, useClearMessageFeedback, useCreateChat, useSetMessageFeedback } from './queries';
 import type { SourceChipData } from './source-panel';
 import { StreamingMessage } from './streaming-message';
 import { treeContains } from './tree';
@@ -35,6 +35,8 @@ export function ChatPage() {
   const chatQuery = useChat(chatId);
   const createChat = useCreateChat();
   const stream = useChatStream(chatId);
+  const setFeedback = useSetMessageFeedback(chatId);
+  const clearFeedback = useClearMessageFeedback(chatId);
   const { path, select } = useTreeSelection(chatQuery.data?.messages);
   const [modelId, setModelId] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('off');
@@ -199,6 +201,10 @@ export function ChatPage() {
                     disabled={busy}
                     onSelectSibling={select}
                     onRegenerate={() => stream.regenerate(m.id)}
+                    onSetFeedback={(rating, comment) =>
+                      setFeedback.mutate({ messageId: m.id, rating, comment })
+                    }
+                    onClearFeedback={() => clearFeedback.mutate(m.id)}
                   />
                 }
               />

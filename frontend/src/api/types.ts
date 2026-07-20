@@ -11,6 +11,9 @@ export type ChatOut = components['schemas']['ChatOut'];
 export type ChatTreeOut = components['schemas']['ChatTreeOut'];
 export type MessageNode = components['schemas']['MessageNode'];
 export type CitationOut = components['schemas']['CitationOut'];
+// Thumbs up/down + optional comment on an assistant answer (CHAT-10). Present
+// on MessageNode.feedback for the caller's own rating.
+export type FeedbackOut = components['schemas']['FeedbackOut'];
 export type ModelOut = components['schemas']['ModelOut'];
 // GET /api/v1/models (non-admin, "any authenticated user") returns this
 // slimmer shape — id + display_name only, already filtered to enabled models

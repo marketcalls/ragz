@@ -12,6 +12,7 @@ const base = {
   completion_tokens: null,
   created_at: 't1',
   citations: [],
+  feedback: null,
   children: [],
   stopped: false,
   no_answer: false,

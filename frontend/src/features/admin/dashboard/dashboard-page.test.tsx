@@ -30,6 +30,7 @@ const summary: DashboardSummaryOut = {
   },
   worst_answers: [],
   eval_trend: [],
+  feedback_summary: { total_count: 0, down_count: 0, down_rate: null },
 };
 
 beforeEach(() => {

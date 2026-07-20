@@ -1,6 +1,9 @@
-import { ChevronLeft, ChevronRight, Copy, Pencil, RotateCcw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, MessageSquare, Pencil, RotateCcw, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { useState } from 'react';
 
+import type { FeedbackOut } from '@/api/types';
 import { toast } from '@/components/ui/toaster';
+import { cn } from '@/lib/cn';
 
 import { branchKeyOf, type PathEntry } from './tree';
 
@@ -35,14 +38,20 @@ export function MessageActions({
   onSelectSibling,
   onEdit,
   onRegenerate,
+  onSetFeedback,
+  onClearFeedback,
 }: {
   entry: PathEntry;
   disabled: boolean;
   onSelectSibling: (branchKey: string, id: string) => void;
   onEdit?: () => void;
   onRegenerate?: () => void;
+  onSetFeedback?: (rating: 'up' | 'down', comment?: string) => void;
+  onClearFeedback?: () => void;
 }) {
   const { message, siblings, position } = entry;
+  const feedback: FeedbackOut | null = message.feedback ?? null;
+  const [commentDraft, setCommentDraft] = useState<string | null>(null);
   const branchKey = branchKeyOf(message);
   const prevId = position > 0 ? siblings[position - 1] : undefined;
   const nextId = position < siblings.length - 1 ? siblings[position + 1] : undefined;
@@ -50,6 +59,20 @@ export function MessageActions({
   const copy = async (): Promise<void> => {
     await navigator.clipboard.writeText(message.content);
     toast('Copied to clipboard');
+  };
+
+  const toggleThumb = (rating: 'up' | 'down'): void => {
+    if (feedback?.rating === rating) {
+      onClearFeedback?.();
+    } else {
+      onSetFeedback?.(rating, feedback?.comment ?? undefined);
+    }
+  };
+
+  const submitComment = (e: React.FormEvent): void => {
+    e.preventDefault();
+    if (feedback) onSetFeedback?.(feedback.rating as 'up' | 'down', commentDraft?.trim() || undefined);
+    setCommentDraft(null);
   };
 
   return (
@@ -90,6 +113,37 @@ export function MessageActions({
         <ActionButton label="Regenerate response" disabled={disabled} onClick={onRegenerate}>
           <RotateCcw className="h-3.5 w-3.5" aria-hidden />
         </ActionButton>
+      ) : null}
+      {onSetFeedback ? (
+        <>
+          <ActionButton label="Good answer" disabled={disabled} onClick={() => toggleThumb('up')}>
+            <ThumbsUp className={cn('h-3.5 w-3.5', feedback?.rating === 'up' && 'fill-current')} aria-hidden />
+          </ActionButton>
+          <ActionButton label="Bad answer" disabled={disabled} onClick={() => toggleThumb('down')}>
+            <ThumbsDown className={cn('h-3.5 w-3.5', feedback?.rating === 'down' && 'fill-current')} aria-hidden />
+          </ActionButton>
+          {feedback ? (
+            commentDraft !== null ? (
+              <form onSubmit={submitComment}>
+                <input
+                  autoFocus
+                  value={commentDraft}
+                  onChange={(e) => setCommentDraft(e.target.value)}
+                  placeholder="Add a comment (optional)"
+                  className="ml-1 rounded-sm border border-line bg-bg px-1 text-[12px]"
+                />
+              </form>
+            ) : (
+              <ActionButton
+                label="Add a comment"
+                disabled={disabled}
+                onClick={() => setCommentDraft(feedback.comment ?? '')}
+              >
+                <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+              </ActionButton>
+            )
+          ) : null}
+        </>
       ) : null}
     </div>
   );
