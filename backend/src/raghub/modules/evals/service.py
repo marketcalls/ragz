@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.errors import NotFoundError
 from raghub.modules.audit.service import record_audit
 from raghub.modules.documents.models import Document
-from raghub.modules.evals.models import GoldenQuery
+from raghub.modules.evals.models import EvalRun, GoldenQuery
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
 from raghub.modules.tenancy.service import get_workspace_checked
@@ -59,6 +59,42 @@ async def list_golden_queries(
                 select(GoldenQuery)
                 .where(GoldenQuery.workspace_id == workspace_id)
                 .order_by(GoldenQuery.created_at)
+            )
+        ).scalars()
+    )
+
+
+async def list_golden_queries_for_run(
+    session: AsyncSession, workspace_id: UUID
+) -> list[GoldenQuery]:
+    """Ctx-free sibling of list_golden_queries, for worker/route-triggered
+    runner invocations (Task 11). Unguarded: the CALLER (the route that already
+    ran ConfigureDep, or the Celery task it enqueued) is the trust boundary —
+    mirrors Task 3's audit_message's ctx-free posture."""
+    return list(
+        (
+            await session.execute(
+                select(GoldenQuery)
+                .where(GoldenQuery.workspace_id == workspace_id)
+                .order_by(GoldenQuery.created_at)
+            )
+        ).scalars()
+    )
+
+
+async def list_eval_runs(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, limit: int = 50
+) -> list[EvalRun]:
+    """Org-scoped via the workspace join (mirrors list_golden_queries),
+    newest-first, capped at `limit`."""
+    await get_workspace_checked(session, ctx, workspace_id)
+    return list(
+        (
+            await session.execute(
+                select(EvalRun)
+                .where(EvalRun.workspace_id == workspace_id)
+                .order_by(EvalRun.created_at.desc())
+                .limit(limit)
             )
         ).scalars()
     )

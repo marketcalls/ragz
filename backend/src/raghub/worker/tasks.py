@@ -13,9 +13,13 @@ from celery import Task, chain
 from raghub.core.config import get_settings
 from raghub.core.db import build_engine, build_session_factory
 from raghub.modules.chat import service as chat_service
+from raghub.modules.chat.llm import LiteLLMStreamer
 from raghub.modules.documents import ingest
 from raghub.modules.documents.pipeline import IngestFailure
+from raghub.modules.evals.runner import run_eval
 from raghub.modules.models import catalog
+from raghub.modules.retrieval.service import retrieve
+from raghub.modules.tenancy.models import Workspace
 from raghub.worker.celery_app import celery_app
 
 _MAX_RETRIES = 3
@@ -135,6 +139,37 @@ def audit_message_task(message_id: str) -> None:
 
 def enqueue_audit_message(message_id: UUID) -> None:
     audit_message_task.si(str(message_id)).apply_async(queue="default")
+
+
+@celery_app.task(name="evals.run")
+def run_eval_task(workspace_id: str, triggered_by: str) -> None:
+    """Minimal trigger for Task 11 (the admin on-demand button); Task 12 adds
+    the nightly/settings-change triggers alongside this same task."""
+
+    async def _run() -> None:
+        settings = get_settings()
+        engine = build_engine(settings.database_url)
+        try:
+            factory = build_session_factory(engine)
+            async with factory() as session:
+                ws = await session.get(Workspace, UUID(workspace_id))
+                if ws is None:
+                    return
+                completer = LiteLLMStreamer(
+                    base_url=settings.litellm_url, master_key=settings.litellm_master_key
+                )
+                await run_eval(
+                    session, ws, triggered_by=triggered_by, retriever=retrieve,
+                    completer=completer,
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_run())
+
+
+def enqueue_eval_run(workspace_id: UUID, triggered_by: str) -> None:
+    run_eval_task.si(str(workspace_id), triggered_by).apply_async(queue="default")
 
 
 @celery_app.task(name="models.refresh_catalog")

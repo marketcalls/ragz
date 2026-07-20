@@ -78,3 +78,23 @@ async def test_golden_query_routes_require_configure_permission(
         json={"question": "q", "expected_document_ids": []}, headers=h_engineer,
     )
     assert r.status_code == 403
+
+
+async def test_trigger_and_list_eval_runs(evals_client, ws_id, h_admin, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        "raghub.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
+    )
+    r = await evals_client.post(f"/api/v1/workspaces/{ws_id}/evals/run", headers=h_admin)
+    assert r.status_code == 202 and enqueued == ["manual"]
+    r = await evals_client.get(f"/api/v1/workspaces/{ws_id}/evals/runs", headers=h_admin)
+    assert r.status_code == 200 and r.json() == []
+
+
+async def test_eval_run_routes_require_configure_permission(
+    evals_client, ws_id, h_engineer,
+) -> None:  # type: ignore[no-untyped-def]
+    r = await evals_client.post(f"/api/v1/workspaces/{ws_id}/evals/run", headers=h_engineer)
+    assert r.status_code == 403
+    r = await evals_client.get(f"/api/v1/workspaces/{ws_id}/evals/runs", headers=h_engineer)
+    assert r.status_code == 403

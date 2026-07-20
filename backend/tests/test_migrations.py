@@ -36,6 +36,7 @@ EXPECTED_TABLES = {
     "metadata_fields",
     "role_templates",
     "golden_queries",
+    "eval_runs",
     "alembic_version",
 }
 

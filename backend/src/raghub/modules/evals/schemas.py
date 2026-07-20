@@ -18,3 +18,16 @@ class GoldenQueryOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class EvalRunOut(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    triggered_by: str
+    query_count: int
+    hit_rate: float | None
+    citation_precision: float | None
+    avg_faithfulness: float | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
