@@ -273,7 +273,7 @@ async def test_catalog_listing_preserves_zero_cost_entries(
 
 
 async def test_supports_vision_round_trips_and_defaults_false(
-    client: httpx.AsyncClient, seeded_superadmin: User,
+    client: httpx.AsyncClient, seeded_superadmin: User, seeded_user: User,
 ) -> None:
     h = await auth(client, "root@platform.example")
     r = await client.post(
@@ -285,7 +285,9 @@ async def test_supports_vision_round_trips_and_defaults_false(
         headers=h,
     )
     assert r.status_code == 201
-    assert r.json()["supports_vision"] is True
+    created = r.json()
+    assert created["supports_vision"] is True
+    model_id = created["id"]
 
     r2 = await client.post(
         "/api/v1/admin/models",
@@ -296,3 +298,17 @@ async def test_supports_vision_round_trips_and_defaults_false(
         headers=h,
     )
     assert r2.json()["supports_vision"] is False
+
+    # PATCH round-trip.
+    r3 = await client.patch(
+        f"/api/v1/admin/models/{model_id}",
+        json={"supports_vision": False}, headers=h,
+    )
+    assert r3.status_code == 200
+    assert r3.json()["supports_vision"] is False
+
+    # ModelPublic (non-superadmin chat picker) exposes the field.
+    h_admin = await auth(client, "a@acme.com")
+    public = await client.get("/api/v1/models", headers=h_admin)
+    row = next(m for m in public.json() if m["id"] == model_id)
+    assert row["supports_vision"] is False
