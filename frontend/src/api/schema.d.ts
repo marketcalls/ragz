@@ -1700,6 +1700,8 @@ export interface components {
             model_id?: string | null;
             /** Reasoning Effort */
             reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
+            /** Attachment Ids */
+            attachment_ids?: string[] | null;
         };
         /**
          * MetadataFieldCreate
