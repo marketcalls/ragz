@@ -13,6 +13,7 @@ from raghub.modules.auth.passwords import hash_password
 from raghub.modules.chat import service
 from raghub.modules.chat.llm import LLMDelta, LLMUsage
 from raghub.modules.chat.models import Chat, Message
+from raghub.modules.quotas.models import UsageRecord
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Organization, Workspace
 
@@ -190,3 +191,63 @@ async def test_late_cancel_after_persist_does_not_duplicate_row(
     assert len(rows) == 1  # no duplicate row from persist_stopped_detached
     assert rows[0].stopped is False  # it's the normally-persisted row
     assert rows[0].content == "Hi"
+
+
+async def test_persist_stopped_detached_records_partial_usage(
+    session: AsyncSession, engine: AsyncEngine
+) -> None:
+    """Plan K carried fix: persist_stopped_detached's two new required kwargs
+    (prompt_tokens/completion_tokens) get written as a UsageRecord in the SAME
+    detached session/transaction as the stopped message, not a second scheme."""
+    ctx, chat, user_msg, _chat_ws = await _seed(session)
+    factory = build_session_factory(engine)
+    task = service.persist_stopped_detached(
+        factory, ctx, chat_id=chat.id, user_message_id=user_msg.id,
+        content="partial answer text", model_id=None,
+        prompt_tokens=42, completion_tokens=7,
+    )
+    await task
+    records = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == ctx.org_id, UsageRecord.feature == "chat"
+            )
+        )
+    ).scalars().all()
+    assert any(r.prompt_tokens == 42 and r.completion_tokens == 7 for r in records)
+
+
+async def test_abort_mid_stream_meters_estimated_partial_usage(
+    session: AsyncSession, engine: AsyncEngine
+) -> None:
+    """Companion to test_abort_mid_stream_persists_partial: the same abort
+    must now ALSO meter the estimated (assembled prompt + streamed partial)
+    token usage — previously this path recorded zero UsageRecords."""
+    ctx, chat, user_msg, chat_ws = await _seed(session)
+    factory = build_session_factory(engine)
+    streamer = SlowStreamer(["Hel", "lo ", "wor", "ld"])
+    agen = service.stream_reply(
+        session, ctx, chat=chat, workspace=chat_ws, user_message=user_msg,
+        model=_FakeModel(),  # type: ignore[arg-type]
+        streamer=streamer, retriever=_never_retrieve,  # type: ignore[arg-type]
+        chunk_reader=_NeverChunkReader(),  # type: ignore[arg-type]
+        settings=SETTINGS, session_factory=factory,
+    )
+    tokens = 0
+    async for event in agen:
+        if event.event == "token":
+            tokens += 1
+        if tokens == 2:
+            break
+    await agen.aclose()  # simulates Starlette closing the generator on disconnect
+
+    await asyncio.gather(*service._STOP_PERSISTS)
+    records = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == ctx.org_id, UsageRecord.feature == "chat"
+            )
+        )
+    ).scalars().all()
+    # previously: zero records on this path
+    assert any(r.prompt_tokens > 0 and r.completion_tokens > 0 for r in records)

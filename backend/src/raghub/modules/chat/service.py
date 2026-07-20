@@ -743,15 +743,22 @@ def persist_stopped_detached(
     user_message_id: UUID,
     content: str,
     model_id: UUID | None,
+    prompt_tokens: int,
+    completion_tokens: int,
 ) -> asyncio.Task[None]:
-    """Persist a partial answer after client abort (G2).
+    """Persist a partial answer AND meter its usage after client abort (G2 +
+    Plan K carried fix).
 
     Runs on a task + session that OUTLIVE the dying SSE request: by the time
     cancellation unwinds the generator, the request-scoped session may already
-    be closing, and awaiting on the cancelled task itself would be re-cancelled.
-    Tracked in _STOP_PERSISTS so tests (and a future shutdown hook) can await
-    completion; failures are logged, never raised — losing a partial answer is
-    acceptable, crashing teardown is not.
+    be closing, and awaiting on the cancelled task itself would be
+    re-cancelled — the same reason record_usage cannot be awaited directly in
+    stream_reply's own except clause (GeneratorExit forbids further awaits in
+    that frame). So both writes happen here, in the SAME session/task, rather
+    than a second bespoke detachment path. Tracked in _STOP_PERSISTS so tests
+    (and a future shutdown hook) can await completion; failures (persist OR
+    metering) are logged, never raised — losing a partial answer's usage
+    record is acceptable, crashing teardown is not.
     """
 
     async def _persist() -> None:
@@ -763,6 +770,11 @@ def persist_stopped_detached(
                 await add_message(
                     session, ctx, chat, role=ROLE_ASSISTANT, content=content,
                     parent=parent, model_id=model_id, stopped=True,
+                )
+                await quota_service.record_usage(
+                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model_id,
+                    feature="chat", prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
                 )
         except Exception:
             structlog.get_logger().error("stop_persist_failed", exc_info=True)
@@ -1219,9 +1231,19 @@ async def stream_reply(
         # buffer instead of duplicating the already-persisted row.
         partial = "".join(streamed_parts)
         if session_factory is not None and partial:
+            # `prompt` (the assembled message list) is guaranteed bound here:
+            # partial can only be non-empty once at least one LLMDelta has
+            # been appended to streamed_parts, which happens strictly after
+            # prompt = build_conversational_messages(...)/build_messages(...)
+            # in whichever branch was taken (verified against the current
+            # function body, including Task 9's _assemble_history calls,
+            # which both precede their branch's prompt assignment).
+            model_hint = model.litellm_model_name
             persist_stopped_detached(
                 session_factory, ctx, chat_id=chat.id,
                 user_message_id=user_message.id,
                 content=partial, model_id=model.id,
+                prompt_tokens=sum(count_tokens(m["content"], model_hint) for m in prompt),
+                completion_tokens=count_tokens(partial, model_hint),
             )
         raise
