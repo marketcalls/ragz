@@ -308,12 +308,15 @@ def run_all_workspaces_task() -> None:
 def cleanup_stale_attachments_task() -> None:
     """Task 7 (DOC-9): daily Beat sweep deleting ephemeral chat attachments
     past the 24h TTL -- DB row (chat_service.delete_attachment), MinIO blob
-    (storage.delete), and Qdrant points (delete_ephemeral_points, once per
-    affected chat_id since the ephemeral collection is filtered by chat_id,
-    not attachment_id). A blob-delete failure is logged and swallowed rather
-    than aborting the sweep -- an orphaned MinIO object is a cheap, recoverable
-    leak, not a reason to leave the DB row (and the Qdrant points still
-    referencing it) around for another day."""
+    (storage.delete), and Qdrant points (delete_ephemeral_points). Whole-branch
+    review fix: points are deleted per chat_id AND scoped to that chat's
+    SPECIFIC stale attachment ids (grouped below), not the whole chat -- a
+    chat can hold a mix of a >24h attachment (swept here) and a fresh (<24h)
+    retrieval-routed attachment, and the fresh one's vectors must survive
+    until its OWN 24h TTL. A blob-delete failure is logged and swallowed
+    rather than aborting the sweep -- an orphaned MinIO object is a cheap,
+    recoverable leak, not a reason to leave the DB row (and the Qdrant points
+    still referencing it) around for another day."""
 
     async def _run() -> None:
         settings = get_settings()
@@ -323,7 +326,9 @@ def cleanup_stale_attachments_task() -> None:
             async with factory() as session:
                 cutoff = naive_utc() - timedelta(hours=24)
                 stale = await chat_service.list_stale_attachments(session, cutoff)
-                chat_ids = {a.chat_id for a in stale}
+                stale_ids_by_chat: dict[UUID, list[UUID]] = {}
+                for a in stale:
+                    stale_ids_by_chat.setdefault(a.chat_id, []).append(a.id)
                 storage = build_storage(settings)
                 for attachment in stale:
                     try:
@@ -334,8 +339,8 @@ def cleanup_stale_attachments_task() -> None:
                             attachment_id=str(attachment.id), exc_info=True,
                         )
                     await chat_service.delete_attachment(session, attachment)
-                for chat_id in chat_ids:
-                    await delete_ephemeral_points(chat_id)
+                for chat_id, attachment_ids in stale_ids_by_chat.items():
+                    await delete_ephemeral_points(chat_id, attachment_ids)
         finally:
             await engine.dispose()
 

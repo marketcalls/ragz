@@ -336,16 +336,37 @@ async def search_ephemeral_attachments(
     return chunks
 
 
-async def delete_ephemeral_points(chat_id: UUID) -> None:
+async def delete_ephemeral_points(chat_id: UUID, attachment_ids: Sequence[UUID]) -> None:
+    """Deletes ephemeral Qdrant points for ONLY the given attachment(s) within
+    one chat (whole-branch review fix, DOC-9): the delete filter is chat_id
+    AND attachment_id-in-(...), never chat_id alone. Without the attachment_id
+    clause, a TTL sweep cleaning up a chat's stale (>24h) attachments would
+    also wipe a sibling attachment in the SAME chat that hasn't hit its own
+    24h TTL yet -- its DB row and MinIO blob would survive while its vectors
+    silently vanished early. attachment_ids is required, not optional:
+    cleanup_stale_attachments_task (worker/tasks.py) is this function's only
+    caller, so there's no other caller to stay backward-compatible with, and
+    no reason to keep an unscoped whole-chat-delete mode alive. An empty
+    sequence is a no-op -- a sweep run with no stale attachments in this chat
+    has nothing to delete."""
+    if not attachment_ids:
+        return
     await get_qdrant().delete(
         EPHEMERAL_COLLECTION,
         points_selector=models.FilterSelector(
             filter=models.Filter(
-                must=[models.FieldCondition(
-                    key="chat_id", match=models.MatchValue(value=str(chat_id))
-                )]
+                must=[
+                    models.FieldCondition(
+                        key="chat_id", match=models.MatchValue(value=str(chat_id))
+                    ),
+                    models.FieldCondition(
+                        key="attachment_id",
+                        match=models.MatchAny(any=sorted(str(a) for a in attachment_ids)),
+                    ),
+                ]
             )
         ),
+        wait=True,
     )
 
 

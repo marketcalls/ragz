@@ -107,21 +107,26 @@ async def test_upsert_same_attachment_chunk_overwrites_not_duplicates(
 
 
 async def test_delete_ephemeral_points_scoped_to_chat_only(qdrant_collection: None) -> None:
-    """delete_ephemeral_points(chat_id) must remove ONLY that chat's points —
-    a sibling chat's attachment points (even in the same org) must survive.
-    Complements the isolation suite's search-side proof with a write-side one."""
+    """delete_ephemeral_points(chat_id, attachment_ids) must remove ONLY that
+    chat's given attachment(s) — a sibling chat's attachment points (even in
+    the same org) must survive. Complements the isolation suite's search-side
+    proof with a write-side one."""
     await ensure_ephemeral_collection()
     org_id, chat_to_delete, chat_to_keep = uuid4(), uuid4(), uuid4()
     embedder = get_dense_embedder()
-    for chat_id, text in [(chat_to_delete, "delete me"), (chat_to_keep, "keep me")]:
+    attachment_to_delete = uuid4()
+    for chat_id, attachment_id, text in [
+        (chat_to_delete, attachment_to_delete, "delete me"),
+        (chat_to_keep, uuid4(), "keep me"),
+    ]:
         chunk = Chunk(text=text, page=1, chunk_index=0)
         dense = (await embedder.embed([text]))[0]
         sparse = embed_sparse([text])[0]
         await upsert_ephemeral_chunks(
-            org_id=org_id, chat_id=chat_id, attachment_id=uuid4(),
+            org_id=org_id, chat_id=chat_id, attachment_id=attachment_id,
             chunks=[chunk], dense=[dense], sparse=[sparse],
         )
-    await delete_ephemeral_points(chat_to_delete)
+    await delete_ephemeral_points(chat_to_delete, [attachment_to_delete])
     query_dense = (await embedder.embed(["me"]))[0]
     query_sparse = embed_sparse(["me"])[0]
     hits_deleted = await search_ephemeral_attachments(
@@ -134,3 +139,36 @@ async def test_delete_ephemeral_points_scoped_to_chat_only(qdrant_collection: No
         query_sparse=query_sparse, top_k=5,
     )
     assert any("keep me" in h.text for h in hits_kept)
+
+
+async def test_delete_ephemeral_points_scoped_to_attachment_within_same_chat(
+    qdrant_collection: None,
+) -> None:
+    """The specific bug this whole-branch review fix addresses: TWO
+    attachments in the SAME chat, only one named in attachment_ids — the
+    other (sibling, unlisted) attachment's points must survive untouched."""
+    await ensure_ephemeral_collection()
+    org_id, chat_id = uuid4(), uuid4()
+    stale_attachment_id, fresh_attachment_id = uuid4(), uuid4()
+    embedder = get_dense_embedder()
+    for attachment_id, text in [
+        (stale_attachment_id, "the stale one"),
+        (fresh_attachment_id, "the fresh one"),
+    ]:
+        chunk = Chunk(text=text, page=1, chunk_index=0)
+        dense = (await embedder.embed([text]))[0]
+        sparse = embed_sparse([text])[0]
+        await upsert_ephemeral_chunks(
+            org_id=org_id, chat_id=chat_id, attachment_id=attachment_id,
+            chunks=[chunk], dense=[dense], sparse=[sparse],
+        )
+    await delete_ephemeral_points(chat_id, [stale_attachment_id])
+    query_dense = (await embedder.embed(["one"]))[0]
+    query_sparse = embed_sparse(["one"])[0]
+    hits = await search_ephemeral_attachments(
+        org_id=org_id, chat_id=chat_id, query_dense=query_dense,
+        query_sparse=query_sparse, top_k=5,
+    )
+    texts = {h.text for h in hits}
+    assert "the fresh one" in texts
+    assert "the stale one" not in texts
