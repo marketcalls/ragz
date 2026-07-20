@@ -299,6 +299,22 @@ async def test_dashboard_feedback_summary(
     assert body["feedback_summary"]["down_count"] == 1
     assert body["feedback_summary"]["down_rate"] == 0.5
 
+
+async def test_dashboard_feedback_summary_zero_when_no_feedback(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """Task 3 review fix: an org with zero feedback rows in the window gets
+    down_rate == None (not a crash, not 0.0 -- division by zero must be
+    avoided, not defaulted)."""
+    h = await auth(client, "a@acme.com")
+    r = await client.get("/api/v1/admin/usage/summary?days=30", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["feedback_summary"]["total_count"] == 0
+    assert body["feedback_summary"]["down_count"] == 0
+    assert body["feedback_summary"]["down_rate"] is None
+
+
 async def test_get_user_quota_returns_override_and_usage(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:

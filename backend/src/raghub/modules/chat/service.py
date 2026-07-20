@@ -859,16 +859,33 @@ async def list_feedback_queue(
     parent_ids = [m.parent_message_id for _, m, _ in rows if m.parent_message_id is not None]
     parents: dict[UUID, Message] = {}
     if parent_ids:
+        # Iron rule 1: re-filter on Chat.org_id at THIS query site too, even
+        # though parent_ids are already derived from org-filtered rows above
+        # and add_message's parent.chat_id != chat.id check independently
+        # guarantees a parent shares its child's chat. Don't rely on either
+        # invariant surviving a future refactor -- join through to Chat here.
         parents = {
             p.id: p
             for p in (
-                await session.execute(select(Message).where(Message.id.in_(parent_ids)))
+                await session.execute(
+                    select(Message)
+                    .join(Chat, Chat.id == Message.chat_id)
+                    .where(Message.id.in_(parent_ids), Chat.org_id == ctx.org_id)
+                )
             ).scalars()
         }
     citations_by_message: dict[UUID, list[Citation]] = defaultdict(list)
     if message_ids:
+        # Same rationale: message_ids come from the org-filtered main query,
+        # but this sub-query re-enforces org-scoping at its own query site
+        # rather than inheriting safety from the caller.
         for c in (
-            await session.execute(select(Citation).where(Citation.message_id.in_(message_ids)))
+            await session.execute(
+                select(Citation)
+                .join(Message, Message.id == Citation.message_id)
+                .join(Chat, Chat.id == Message.chat_id)
+                .where(Citation.message_id.in_(message_ids), Chat.org_id == ctx.org_id)
+            )
         ).scalars():
             citations_by_message[c.message_id].append(c)
 
