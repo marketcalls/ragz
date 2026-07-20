@@ -175,6 +175,20 @@ def enqueue_audit_message(message_id: UUID) -> None:
     audit_message_task.si(str(message_id)).apply_async(queue="default")
 
 
+async def _mark_attachment_failed_best_effort(attachment_id: str) -> None:
+    """Separate engine/session from the outer-failure path below -- the
+    attachment/session used by `_run` may itself be the thing that broke, so
+    this gets a fresh connection rather than reusing anything from `_run`."""
+    settings = get_settings()
+    engine = build_engine(settings.database_url)
+    try:
+        factory = build_session_factory(engine)
+        async with factory() as session:
+            await chat_service.mark_attachment_failed(session, UUID(attachment_id))
+    finally:
+        await engine.dispose()
+
+
 @celery_app.task(name="attachments.process")
 def process_attachment_task(attachment_id: str) -> None:
     """Best-effort text extraction for a chat attachment (Task 2, DOC-9).
@@ -207,7 +221,30 @@ def process_attachment_task(attachment_id: str) -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except Exception:
+        # Review fix (DOC-9 Task 2): mirror audit_message_task's outer guard
+        # exactly -- nothing may escape this task, or a transient DB error
+        # anywhere in `_run` (e.g. session.get, mark_attachment_processing's
+        # commit) leaves the attachment stuck in "queued"/"processing"
+        # forever with only a bare Celery task-failure record. Best-effort
+        # flip the status to "failed" too; if the DB itself is unreachable
+        # that write will also fail, which is an acceptable rare
+        # double-failure, not something to solve further here.
+        structlog.get_logger().warning(
+            "attachment_processing_outer_failed", attachment_id=attachment_id, exc_info=True
+        )
+        try:
+            asyncio.run(_mark_attachment_failed_best_effort(attachment_id))
+        except Exception:
+            # Best-effort write on top of a best-effort write: the DB itself
+            # is likely unreachable here. Rare double-failure, not solved
+            # further per the review finding -- just log and swallow.
+            structlog.get_logger().warning(
+                "attachment_processing_failed_status_write_failed",
+                attachment_id=attachment_id, exc_info=True,
+            )
 
 
 def enqueue_attachment_processing(attachment_id: UUID) -> None:
