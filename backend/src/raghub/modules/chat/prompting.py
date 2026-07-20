@@ -392,12 +392,15 @@ def build_general_knowledge_messages(
     budget: int,
     system_prompt_override: str | None = None,
     model_hint: str | None = None,
+    summary: str | None = None,
 ) -> list[dict[str, str]]:
     """RAG-miss fallback (design D3): answer with zero document context. The
-    workspace override still applies (persona survives the fallback)."""
+    workspace override still applies (persona survives the fallback).
+    `summary`: see build_messages' docstring (Task 9, spec §5) - same contract."""
     return _build_sourceless_messages(
         GENERAL_KNOWLEDGE_SYSTEM_PROMPT, history=history, user_query=user_query,
         budget=budget, system_prompt_override=system_prompt_override, model_hint=model_hint,
+        summary=summary,
     )
 
 

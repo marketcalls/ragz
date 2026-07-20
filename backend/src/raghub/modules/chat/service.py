@@ -1026,14 +1026,15 @@ async def stream_reply(
         if no_answer and workspace.fallback_policy == "general_knowledge":
             # Design §1: weak retrieval + permissive policy -> general-knowledge
             # answer. No <data>, no sources/citations frames, nothing to cite.
-            history = [
-                (m.role, m.content) for m in path_to_root(all_messages, user_message)
-            ]
+            history, summary_text = await _assemble_history(
+                session, ctx, chat, all_messages, user_message, completer,
+            )
             prompt = build_general_knowledge_messages(
                 history=history, user_query=user_message.content,
                 budget=settings.chat_context_token_budget,
                 system_prompt_override=workspace.system_prompt_override,
                 model_hint=model_hint,
+                summary=summary_text,
             )
             gk_usage: LLMUsage | None = None
             # aclosing: same deterministic-cleanup-on-abort reasoning as the

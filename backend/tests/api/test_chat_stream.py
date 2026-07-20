@@ -1089,3 +1089,50 @@ async def test_stream_reply_folds_summary_in_conversational_branch_too(
     assert r.status_code == 200
     await session.refresh(chat)
     assert chat.summary == "Folded summary from small talk turn."
+
+
+async def test_general_knowledge_fallback_threads_existing_summary(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    session: AsyncSession, seeded_user: User, seeded_superadmin: User,
+) -> None:
+    """Regression (Plan K Task 9 gap): the general-knowledge fallback branch
+    must consult the SAME rolling summary as build_messages/
+    build_conversational_messages (spec §5). A fact folded into chat.summary
+    from turns that fell out of the raw prompt must still reach the model
+    when retrieval misses and the workspace's default
+    fallback_policy=general_knowledge kicks in -- not just when
+    build_general_knowledge_messages is called directly with summary=... in
+    isolation."""
+    fake = FakeStreamer(deltas=["Your name is Priya."])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id, no_answer=True),
+        llm_streamer=fake, chunk_reader=FakeChunkReader(),
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h)
+        chat = await session.get(Chat, UUID(chat_id))
+        assert chat is not None
+        seeded = await _seed_linear_history(session, chat, _SHORT_HISTORY_TURNS)
+        # A pre-existing, valid rolling summary anchored at the newest seeded
+        # message -- exactly the shape _assemble_history hands back untouched
+        # when the path is still short (no completer needed for this test).
+        chat.summary = (
+            "The user's name is Priya and the project is called Project Nighthawk."
+        )
+        chat.summary_upto_message_id = seeded[-1].id
+        await session.commit()
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What's my name?"}, headers=h,
+        )
+    assert r.status_code == 200
+    done = next(d for n, d in parse_sse(r.text) if n == "done")
+    assert done["grounding"] == "general"  # confirms we actually hit the fallback branch
+    sent = fake.calls[-1]["messages"]
+    assert any("Priya" in m["content"] for m in sent)  # type: ignore[index]
