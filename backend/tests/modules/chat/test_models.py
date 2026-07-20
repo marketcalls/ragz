@@ -35,3 +35,27 @@ async def test_tree_rows_and_sibling_constraint(
     with pytest.raises(IntegrityError):
         await session.flush()
     await session.rollback()
+
+
+async def test_chat_summary_columns_default_none(session: AsyncSession, seeded_chat: Chat) -> None:
+    assert seeded_chat.summary is None
+    assert seeded_chat.summary_upto_message_id is None
+
+
+async def test_chat_summary_columns_persist_round_trip(
+    session: AsyncSession, seeded_chat: Chat
+) -> None:
+    root = Message(chat_id=seeded_chat.id, parent_message_id=None, sibling_index=0,
+                   role="user", content="q1")
+    session.add(root)
+    await session.flush()
+    seeded_chat.summary = "prior discussion about onboarding"
+    seeded_chat.summary_upto_message_id = root.id
+    await session.commit()
+
+    chat_id = seeded_chat.id
+    session.expunge(seeded_chat)
+    reloaded = await session.get(Chat, chat_id)
+    assert reloaded is not None
+    assert reloaded.summary == "prior discussion about onboarding"
+    assert reloaded.summary_upto_message_id == root.id

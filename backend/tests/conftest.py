@@ -17,6 +17,7 @@ from raghub.core.storage import ObjectStorage
 from raghub.modules.auth.models import User
 from raghub.modules.auth.passwords import hash_password
 from raghub.modules.chat.llm import LLMCompletion, LLMDelta, LLMUsage
+from raghub.modules.chat.models import Chat
 from raghub.modules.chat.web import WebResult
 from raghub.modules.documents.models import Document
 from raghub.modules.models.models import Model
@@ -197,6 +198,17 @@ async def seeded_superadmin(session: AsyncSession) -> User:
     session.add(user)
     await session.commit()
     return user
+
+
+@pytest.fixture
+async def seeded_chat(session: AsyncSession, seeded_user: User) -> Chat:
+    ws = Workspace(org_id=seeded_user.org_id, name="W")
+    session.add(ws)
+    await session.flush()
+    chat = Chat(org_id=seeded_user.org_id, workspace_id=ws.id, user_id=seeded_user.id)
+    session.add(chat)
+    await session.commit()
+    return chat
 
 
 @pytest.fixture

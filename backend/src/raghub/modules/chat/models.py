@@ -17,6 +17,20 @@ class Chat(UUIDPk, Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(default=DEFAULT_CHAT_TITLE)
     updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
+    # Plan K §5: rolling-summary memory. summary_upto_message_id is the
+    # newest message already folded IN (an ancestor of summary_upto is
+    # covered by the summary text; forking above it invalidates the summary
+    # — see prompting.py/service.py in Task 9).
+    summary: Mapped[str | None] = mapped_column(Text(), default=None)
+    # use_alter=True: messages.chat_id already FKs to chats, so this reverse
+    # FK creates a two-table cycle; without use_alter, SQLAlchemy's metadata
+    # create_all/drop_all (used by the test DB fixture) can't topologically
+    # sort CREATE/DROP TABLE and raises CircularDependencyError.
+    summary_upto_message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL", use_alter=True,
+                   name="fk_chats_summary_upto_message"),
+        default=None,
+    )
 
 
 class Message(UUIDPk, Base):
