@@ -118,6 +118,13 @@ async def start_reembed(
     no ReembedJob row itself -- run_reembed_workspace creates it once it
     knows the actual document count; this route only validates + enqueues."""
     ws = await service.get_workspace(session, ctx, workspace_id)
+    if body.new_embedding_model_id == ws.embedding_model_id:
+        # Guards against a double-submit/retry re-requesting the model the
+        # workspace already uses: run_reembed_workspace's old/new collection
+        # would be identical, and its post-upsert "delete from OLD
+        # collection" step would then delete every point it just wrote,
+        # silently wiping the workspace's vectors.
+        raise ConflictError("workspace is already using this embedding model")
     new_model = await models_service.get_model(session, body.new_embedding_model_id)
     if new_model.modality != "embedding":
         raise ConflictError("model is not an embedding model")

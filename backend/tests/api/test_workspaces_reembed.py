@@ -99,6 +99,34 @@ async def test_post_reembed_rejects_non_embedding_model(
     assert captured_reembed == []
 
 
+async def test_post_reembed_rejects_same_model(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    captured_reembed: list[tuple[UUID, UUID]],
+) -> None:
+    """Bug fix regression: requesting re-embed into the workspace's CURRENT
+    embedding model (e.g. a client double-submit/retry after a previous
+    reembed already flipped the model) must be rejected with 409 and must
+    NEVER reach enqueue_reembed_workspace -- old_collection == new_collection
+    would otherwise make run_reembed_workspace's post-upsert delete-from-OLD
+    step wipe every point it just wrote."""
+    h = await auth(client, seeded_user.email)
+    ws_id = await make_workspace(client, h)
+
+    ws_list = await client.get("/api/v1/workspaces", headers=h)
+    current_model_id = next(
+        w["embedding_model_id"] for w in ws_list.json() if w["id"] == ws_id
+    )
+
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/reembed",
+        json={"new_embedding_model_id": current_model_id},
+        headers=h,
+    )
+    assert r.status_code == 409
+    assert r.headers["content-type"] == "application/problem+json"
+    assert captured_reembed == []
+
+
 async def test_reembed_status_404_before_any_job(
     client: httpx.AsyncClient, seeded_user: User
 ) -> None:

@@ -148,6 +148,43 @@ async def test_reembed_isolation_only_touches_target_workspace(
     assert ws_b.embedding_model_id != embedding_model_fixture.id
 
 
+async def test_reembed_workspace_same_model_is_noop(
+    session: AsyncSession, ctx: TenantContext, qdrant_collection: None,
+) -> None:
+    """Bug fix regression: calling run_reembed_workspace directly with
+    new_embedding_model_id == workspace.embedding_model_id (e.g. the Celery
+    task invoked directly, bypassing start_reembed's 409 guard) must be a
+    no-op -- NOT delete the workspace's existing vectors. Without the guard,
+    old_collection == new_collection, so the post-upsert "delete from OLD
+    collection" step would wipe every point (including the ones this same
+    run just re-upserted) since it targets the very collection the points
+    now live in."""
+    doc = await _seed_indexed_document(session, ctx, "reembed-ws-same-model")
+    ws_id = doc.workspace_id
+    ws_before = await session.get(Workspace, ws_id)
+    assert ws_before is not None
+    current_model_id = ws_before.embedding_model_id
+
+    client = get_qdrant()
+    before_points, _ = await client.scroll(COLLECTION, limit=10)
+    assert any(p.payload["workspace_id"] == str(ws_id) for p in before_points)
+
+    await ingest.run_reembed_workspace(ws_id, current_model_id)
+
+    await session.refresh(ws_before)
+    assert ws_before.embedding_model_id == current_model_id  # unchanged
+
+    after_points, _ = await client.scroll(COLLECTION, limit=10)
+    assert any(p.payload["workspace_id"] == str(ws_id) for p in after_points)
+
+    # No ReembedJob row should have been created -- the guard returns before
+    # the job is ever built.
+    job = (
+        await session.execute(select(ReembedJob).where(ReembedJob.workspace_id == ws_id))
+    ).scalar_one_or_none()
+    assert job is None
+
+
 async def test_reembed_failure_leaves_workspace_on_old_model(
     session: AsyncSession, ctx: TenantContext, embedding_model_fixture: Model,
     qdrant_collection: None, monkeypatch: pytest.MonkeyPatch,

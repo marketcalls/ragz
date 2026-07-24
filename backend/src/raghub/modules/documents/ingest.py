@@ -467,6 +467,21 @@ async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID
             return
         old_model = await models_service.get_model(session, workspace.embedding_model_id)
         new_model = await models_service.get_model(session, new_embedding_model_id)
+        if old_model.id == new_model.id:
+            # Defensive no-op: start_reembed already rejects a same-model
+            # request with a 409 before this task is ever enqueued, so this
+            # should only trigger if the task is invoked directly (e.g. a
+            # replayed Celery message bypassing the route). Without this
+            # guard, old_collection == new_collection below, and the
+            # workspace-scoped delete from the "OLD" collection after the
+            # upsert loop would delete every point this same run just wrote
+            # -- silently wiping the workspace's vectors.
+            log.warning(
+                "reembed_noop_same_model",
+                workspace_id=str(workspace_id),
+                model_id=str(new_model.id),
+            )
+            return
         old_collection = old_model.collection_name
         new_collection = new_model.collection_name
         assert old_collection is not None and new_collection is not None
