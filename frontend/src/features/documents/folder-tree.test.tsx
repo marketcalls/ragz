@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import type { FolderOut } from '@/api/types';
@@ -50,6 +50,14 @@ function buildTree() {
     folder({ id: 'child', name: 'Child', parent_folder_id: 'root-a' }),
   ]);
 }
+
+test('renders only "All documents" when there are zero folders (the default/common case)', () => {
+  render(<FolderTree tree={[]} selectedId={null} onSelect={vi.fn()} />);
+
+  const nav = screen.getByRole('navigation', { name: 'Folders' });
+  expect(within(nav).getByRole('button', { name: 'All documents' })).toBeInTheDocument();
+  expect(within(nav).getAllByRole('button')).toHaveLength(1);
+});
 
 test('renders "All documents" plus every root folder (and its nested children)', () => {
   render(<FolderTree tree={buildTree()} selectedId={null} onSelect={vi.fn()} />);

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -31,11 +31,20 @@ const DOC = {
   meta: { doc_type: 'policy' },
 };
 
-function renderPage() {
+function renderPage({ folders = [] as unknown[] } = {}) {
   const fetchMock = vi.fn(async (req: Request) => {
     const url = req.url;
     if (url.includes('/metadata-fields')) {
       return new Response(JSON.stringify(FIELDS), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    // Must be checked before the generic `/workspaces` branch below --
+    // `/api/v1/workspaces/{id}/folders` also contains `/workspaces` and
+    // would otherwise be misrouted to the workspace-list stub.
+    if (url.includes('/folders')) {
+      return new Response(JSON.stringify(folders), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -83,4 +92,14 @@ test('a filter that narrows groups to zero hides the table instead of rendering 
   expect(screen.queryByText('policy.pdf')).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'Name' })).not.toBeInTheDocument();
   expect(screen.getByText('No documents match the current filters.')).toBeInTheDocument();
+});
+
+test('the folder sidebar renders sensibly for a workspace with zero folders (the default/common case)', async () => {
+  renderPage({ folders: [] });
+
+  expect(await screen.findByText('policy.pdf')).toBeInTheDocument();
+  const sidebar = within(screen.getByRole('navigation', { name: 'Folders' }));
+  // Only the "All documents" row should render -- no bogus/leftover folder rows.
+  expect(sidebar.getByRole('button', { name: 'All documents' })).toBeInTheDocument();
+  expect(sidebar.getAllByRole('button')).toHaveLength(1);
 });
