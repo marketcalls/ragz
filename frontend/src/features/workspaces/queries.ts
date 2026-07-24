@@ -102,7 +102,15 @@ export function useReembedStatus(workspaceId: string, enabled = true) {
   return useQuery({
     queryKey: ['reembed-status', workspaceId],
     enabled,
-    refetchInterval: (query) => (query.state.data?.finished_at ? false : 1500),
+    // Fix round 2: only keep polling while a job actually exists and hasn't
+    // finished yet. A workspace with no re-embed history ever resolves its
+    // queryFn to `null` (see below), so `query.state.data?.finished_at` was
+    // always `undefined` -- never strictly `false` or truthy -- and the old
+    // `data?.finished_at ? false : 1500` check polled forever for any
+    // workspace that had simply never run a re-embed job. Require a job to be
+    // present (`data != null`) before continuing to poll.
+    refetchInterval: (query) =>
+      query.state.data != null && query.state.data.finished_at == null ? 1500 : false,
     queryFn: async () => {
       const { data, error, response } = await api.GET(
         '/api/v1/workspaces/{workspace_id}/reembed-status',
