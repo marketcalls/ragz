@@ -1,10 +1,13 @@
 import pytest
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from raghub.core.db import build_session_factory
 from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.auth.models import User
 from raghub.modules.documents import folders as folders_service
+from raghub.modules.documents.models import Folder
 from raghub.modules.documents.service import create_from_upload
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
@@ -187,3 +190,85 @@ async def test_delete_empty_folder(session: AsyncSession, ctx: TenantContext) ->
     document_ids = await folders_service.delete_folder(session, ctx, folder.id)
     assert document_ids == []
     assert await folders_service.list_folders(session, ctx, ws.id) == []
+
+
+async def test_ensure_path_creates_full_chain(session: AsyncSession, ctx: TenantContext) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    deepest = await folders_service.ensure_path(session, ctx, ws.id, "Legal/Contracts/2024")
+    assert deepest.name == "2024"
+    folders = await folders_service.list_folders(session, ctx, ws.id)
+    assert len(folders) == 3
+    by_name = {f.name: f for f in folders}
+    assert by_name["Contracts"].parent_folder_id == by_name["Legal"].id
+    assert by_name["2024"].parent_folder_id == by_name["Contracts"].id
+
+
+async def test_ensure_path_is_idempotent(session: AsyncSession, ctx: TenantContext) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    first = await folders_service.ensure_path(session, ctx, ws.id, "Legal/Contracts")
+    second = await folders_service.ensure_path(session, ctx, ws.id, "Legal/Contracts")
+    assert first.id == second.id
+    folders = await folders_service.list_folders(session, ctx, ws.id)
+    assert len(folders) == 2  # not 4 -- no duplicates from the second call
+
+
+async def test_ensure_path_reuses_existing_prefix(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    await folders_service.ensure_path(session, ctx, ws.id, "Legal/Contracts")
+    await folders_service.ensure_path(session, ctx, ws.id, "Legal/Invoices")
+    folders = await folders_service.list_folders(session, ctx, ws.id)
+    assert len(folders) == 3  # Legal shared, Contracts + Invoices both under it
+    legal = next(f for f in folders if f.name == "Legal")
+    assert sum(1 for f in folders if f.parent_folder_id == legal.id) == 2
+
+
+async def test_ensure_path_rejects_empty_path(session: AsyncSession, ctx: TenantContext) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    with pytest.raises(ConflictError):
+        await folders_service.ensure_path(session, ctx, ws.id, "///")
+
+
+async def test_ensure_path_concurrent_race_converges_on_one_folder(
+    session: AsyncSession, engine: AsyncEngine, ctx: TenantContext
+) -> None:
+    """Deterministically reproduces the "select misses, insert conflicts"
+    race two concurrent uploaders would hit on the same brand-new segment --
+    without relying on real thread/asyncio timing, which can't be trusted to
+    interleave two coroutines at the exact right point on every run.
+
+    `session`'s next transaction is pinned to REPEATABLE READ and anchored
+    (via the throwaway SELECT below) BEFORE a second, independent session
+    commits a "Legal" folder. `session` therefore still sees no "Legal" row
+    when ensure_path runs its existing-check, tries to INSERT one of its
+    own, and collides with the row the other session already committed --
+    exactly the concurrent-double-submit scenario the except IntegrityError
+    branch exists for. Without that branch (e.g. if it just re-raised),
+    this test would fail with an uncaught IntegrityError instead of
+    asserting a converged, non-duplicated result."""
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    # Captured up front: ensure_path's own except-branch rollback() (below)
+    # expires every ORM object on `session`, this `ws` included, so accessing
+    # `ws.id` again afterward would hit the same expired-attribute/
+    # MissingGreenlet trap the production fix in folders.py had to route
+    # around with its own `ws_id` local.
+    ws_id = ws.id
+
+    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+    await session.execute(select(Folder.id).where(Folder.workspace_id == ws_id))
+
+    factory = build_session_factory(engine)
+    async with factory() as other_session:
+        await folders_service.create_folder(
+            other_session, ctx, ws_id, name="Legal", parent_folder_id=None
+        )
+
+    # `session`'s repeatable-read snapshot predates the commit above, so its
+    # own existing-check misses and its INSERT collides with the now-committed
+    # row -- forcing the except IntegrityError -> rollback -> re-read branch.
+    deepest = await folders_service.ensure_path(session, ctx, ws_id, "Legal/Contracts")
+    assert deepest.name == "Contracts"
+    folders = await folders_service.list_folders(session, ctx, ws_id)
+    assert len(folders) == 2  # one "Legal" (reused, not duplicated), one "Contracts"
+    assert sum(1 for f in folders if f.name == "Legal") == 1

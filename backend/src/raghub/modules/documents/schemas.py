@@ -62,6 +62,10 @@ class FolderPatch(BaseModel):
     parent_folder_id: UUID | None = None
 
 
+class EnsurePathRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=2000)
+
+
 class FolderOut(BaseModel):
     id: UUID
     workspace_id: UUID

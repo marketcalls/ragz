@@ -16,6 +16,7 @@ from raghub.modules.documents.schemas import (
     ApprovedPatch,
     DocumentOut,
     DocumentPatch,
+    EnsurePathRequest,
     FolderCreate,
     FolderOut,
     FolderPatch,
@@ -155,6 +156,16 @@ async def create_folder(
     folder = await folders_service.create_folder(
         session, ctx, workspace_id, name=body.name, parent_folder_id=body.parent_folder_id
     )
+    return FolderOut.model_validate(folder)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/folders/ensure-path", status_code=200, response_model=FolderOut
+)
+async def ensure_folder_path(
+    workspace_id: UUID, body: EnsurePathRequest, session: SessionDep, ctx: UploadDep
+) -> FolderOut:
+    folder = await folders_service.ensure_path(session, ctx, workspace_id, body.path)
     return FolderOut.model_validate(folder)
 
 

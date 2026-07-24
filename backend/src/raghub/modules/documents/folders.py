@@ -7,6 +7,7 @@ same inversion as documents/service.py's promote_lineage/set_approved."""
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
@@ -34,6 +35,68 @@ async def create_folder(
     await session.flush()
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="folder.created", target_type="folder", target_id=str(folder.id))
+    await session.commit()
+    return folder
+
+
+async def ensure_path(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, path: str
+) -> Folder:
+    """Idempotent bulk path creation for whole-folder-tree drag-and-drop: given
+    "Legal/Contracts/2024", get-or-creates each segment under the previous
+    one (starting from root) and returns the deepest folder. A concurrent
+    double-submit racing to create the same segment hits the unique
+    index/constraint on INSERT; caught and re-read rather than propagating,
+    since two clients uploading the same tree concurrently must converge on
+    ONE set of folders, not error."""
+    ws = await get_workspace_checked(session, ctx, workspace_id)
+    # Captured as a plain value (not re-accessed via ws.id below): `rollback()`
+    # in the except branch expires every ORM object attached to the session,
+    # `ws` included, and an expired attribute access outside an explicit
+    # `await session.*()` call triggers an implicit sync lazy-load that
+    # crashes with MissingGreenlet under the async driver. Every reference to
+    # the workspace id after this point must use this plain UUID, never
+    # `ws.id` again.
+    ws_id = ws.id
+    segments = [s for s in path.split("/") if s.strip()]
+    if not segments:
+        raise ConflictError("path must contain at least one non-empty segment")
+    parent_id: UUID | None = None
+    folder: Folder | None = None
+    for segment in segments:
+        existing = (
+            await session.execute(
+                select(Folder).where(
+                    Folder.workspace_id == ws_id, Folder.parent_folder_id == parent_id,
+                    Folder.name == segment,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            folder = existing
+        else:
+            folder = Folder(
+                org_id=ctx.org_id, workspace_id=ws_id, parent_folder_id=parent_id,
+                name=segment, created_by=ctx.user_id,
+            )
+            session.add(folder)
+            try:
+                await session.flush()
+            except IntegrityError:
+                await session.rollback()
+                folder = (
+                    await session.execute(
+                        select(Folder).where(
+                            Folder.workspace_id == ws_id, Folder.parent_folder_id == parent_id,
+                            Folder.name == segment,
+                        )
+                    )
+                ).scalar_one()  # a concurrent writer must have created it; re-read is safe
+        parent_id = folder.id
+    assert folder is not None  # segments is non-empty (checked above), so the loop ran >=1 time
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="folder.path_ensured", target_type="folder",
+                       target_id=str(folder.id))
     await session.commit()
     return folder
 
