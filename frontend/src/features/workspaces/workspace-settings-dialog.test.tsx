@@ -34,6 +34,15 @@ function stubFetch(responseBody: WorkspaceOut) {
           headers: { 'content-type': 'application/json' },
         });
       }
+      // EmbeddingModelSection (DOC-10 mount point) fetches the admin model
+      // list on mount — stub it to an empty list so it doesn't interfere
+      // with these settings-form assertions.
+      if (req.url.includes('/admin/models')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       return new Response(JSON.stringify(responseBody), {
         status: 200,
         headers: { 'content-type': 'application/json' },

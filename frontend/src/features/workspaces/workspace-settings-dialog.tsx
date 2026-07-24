@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/toaster';
 
+import { EmbeddingModelSection } from './embedding-model-section';
 import { EvalsSection } from './evals-section';
 import { MetadataFieldsSection } from './metadata-fields-section';
 import { usePatchWorkspace } from './queries';
@@ -106,6 +107,12 @@ export function WorkspaceSettingsDialog({
         </div>
         {tab === 'settings' ? (
           <>
+            <div className="mb-4 border-b border-line pb-4">
+              <EmbeddingModelSection
+                workspaceId={workspace.id}
+                currentModelId={workspace.embedding_model_id}
+              />
+            </div>
             <form onSubmit={submit} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
