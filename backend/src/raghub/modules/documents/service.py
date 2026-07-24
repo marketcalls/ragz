@@ -12,6 +12,7 @@ from raghub.modules.documents.models import Document
 from raghub.modules.retrieval import service as retrieval_service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Group
+from raghub.modules.tenancy.reembed_models import ReembedJob
 from raghub.modules.tenancy.service import get_workspace_checked
 
 
@@ -25,6 +26,20 @@ async def create_from_upload(
     data: bytes,
 ) -> Document:
     ws = await get_workspace_checked(session, ctx, workspace_id)
+    reembed_in_progress = (
+        await session.execute(
+            select(ReembedJob.id).where(
+                ReembedJob.workspace_id == ws.id,
+                ReembedJob.started_at.is_not(None),
+                ReembedJob.finished_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if reembed_in_progress is not None:
+        raise ConflictError(
+            "a re-embed job is in progress for this workspace; try again once it completes"
+        )
     content_hash = hashlib.sha256(data).hexdigest()
     dup = (
         await session.execute(
