@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.auth.models import User
 from raghub.modules.documents import folders as folders_service
+from raghub.modules.documents.service import create_from_upload
 from raghub.modules.tenancy import service as tenancy_service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Organization
@@ -145,3 +146,44 @@ async def test_get_folder_checked_rejects_cross_workspace_parent(
         await folders_service.create_folder(
             session, ctx, ws_a.id, name="Y", parent_folder_id=folder_in_b.id
         )
+
+
+async def test_delete_folder_cascades_to_subfolders_and_documents(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    parent = await folders_service.create_folder(
+        session, ctx, ws.id, name="Legal", parent_folder_id=None
+    )
+    child = await folders_service.create_folder(
+        session, ctx, ws.id, name="Contracts", parent_folder_id=parent.id
+    )
+    doc_in_parent = await create_from_upload(
+        session, ctx, ws.id, filename="a.pdf", mime="application/pdf", data=b"a",
+        folder_id=parent.id,
+    )
+    doc_in_child = await create_from_upload(
+        session, ctx, ws.id, filename="b.pdf", mime="application/pdf", data=b"b",
+        folder_id=child.id,
+    )
+    document_ids = await folders_service.delete_folder(session, ctx, parent.id)
+    assert len(document_ids) == 2
+    assert set(document_ids) == {doc_in_parent.id, doc_in_child.id}
+
+    await session.refresh(doc_in_parent)
+    await session.refresh(doc_in_child)
+    assert doc_in_parent.status == "deleting"
+    assert doc_in_child.status == "deleting"
+
+    remaining_folders = await folders_service.list_folders(session, ctx, ws.id)
+    assert remaining_folders == []
+
+
+async def test_delete_empty_folder(session: AsyncSession, ctx: TenantContext) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    folder = await folders_service.create_folder(
+        session, ctx, ws.id, name="Empty", parent_folder_id=None
+    )
+    document_ids = await folders_service.delete_folder(session, ctx, folder.id)
+    assert document_ids == []
+    assert await folders_service.list_folders(session, ctx, ws.id) == []

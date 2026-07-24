@@ -1,6 +1,8 @@
 """Folder tree service: create/list/rename/move (this task). Cascade delete
 lives in Task 3's delete_folder, added to this same file, since it shares
-the subtree-walk helper below."""
+the subtree-walk helper below. delete_folder never imports worker.tasks --
+it returns the document ids the caller (the route) must enqueue_delete on,
+same inversion as documents/service.py's promote_lineage/set_approved."""
 
 from uuid import UUID
 
@@ -9,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from raghub.modules.audit.service import record_audit
-from raghub.modules.documents.models import Folder
+from raghub.modules.documents.models import Document, Folder
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.service import get_workspace_checked
 
@@ -112,3 +114,70 @@ async def rename_or_move_folder(
                        action="folder.updated", target_type="folder", target_id=str(folder.id))
     await session.commit()
     return folder
+
+
+async def _collect_subtree_folder_ids(session: AsyncSession, folder_id: UUID) -> list[UUID]:
+    """Breadth-first walk collecting folder_id and every descendant folder id,
+    all depths. Postgres-only reads, no external I/O -- safe to run inline in
+    a request handler."""
+    ids = [folder_id]
+    frontier = [folder_id]
+    for _ in range(_MAX_TREE_DEPTH):
+        if not frontier:
+            break
+        rows = list(
+            (
+                await session.execute(
+                    select(Folder.id).where(Folder.parent_folder_id.in_(frontier))
+                )
+            ).scalars()
+        )
+        if not rows:
+            break
+        ids.extend(rows)
+        frontier = rows
+    return ids
+
+
+async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UUID) -> list[UUID]:
+    """App-level cascade (never a raw DB cascade on Document -- see the
+    Folder docstring): every document anywhere in this folder's subtree goes
+    through the EXACT SAME delete path DELETE /documents/{id} already uses
+    (flip status='deleting', enqueue_delete -- Qdrant points, MinIO blob,
+    Postgres row, audit entry, all async via Celery). Only once every
+    document's status has flipped are the Folder rows themselves removed:
+    Document.folder_id is ondelete=SET NULL, so a document still
+    mid-async-deletion never blocks the folder row's removal -- it just loses
+    its (soon irrelevant) folder reference. Folder->Folder cascade
+    (ondelete=CASCADE) removes every subfolder row in one DB statement once
+    the top folder is deleted, since folders carry no external state of their
+    own.
+
+    This function deliberately never calls enqueue_delete itself (mirrors
+    documents/service.py's promote_lineage/set_approved inversion, Plan K
+    Task 11): modules/ must never import worker/, so rather than importing
+    worker.tasks here (even just at call time), this function returns the
+    list of document ids that need enqueue_delete called on them. The ONE
+    route call site (api/routes/documents.py, which already imports
+    worker.tasks freely for the single-document delete route) performs the
+    actual enqueue in a loop."""
+    folder = await get_folder_checked(session, ctx, folder_id)
+    folder_ids = await _collect_subtree_folder_ids(session, folder.id)
+    docs = list(
+        (
+            await session.execute(
+                select(Document).where(Document.folder_id.in_(folder_ids))
+            )
+        ).scalars()
+    )
+    for doc in docs:
+        doc.status = "deleting"
+    await session.commit()
+    document_ids = [doc.id for doc in docs]
+    await session.delete(folder)  # subtree cascades via Folder.parent_folder_id's DB FK
+    await record_audit(
+        session, org_id=ctx.org_id, actor_id=ctx.user_id, action="folder.deleted",
+        target_type="folder", target_id=str(folder.id),
+    )
+    await session.commit()
+    return document_ids

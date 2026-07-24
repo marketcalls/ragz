@@ -177,7 +177,19 @@ async def patch_folder(
     return FolderOut.model_validate(folder)
 
 
-# (DELETE /folders/{folder_id} is added in Task 3, once delete_folder exists.)
+@router.delete("/folders/{folder_id}", status_code=202)
+async def delete_folder(
+    folder_id: UUID, session: SessionDep, ctx: DeleteDep
+) -> dict[str, int]:
+    # Task 3: folders_service.delete_folder never enqueues itself (modules/
+    # must never import worker/, Plan K Task 11's inversion) -- it returns
+    # the document ids whose status it already flipped to "deleting"; this
+    # route is the entrypoint layer allowed to import worker.tasks, so it
+    # performs the actual enqueue_delete call for each one.
+    document_ids = await folders_service.delete_folder(session, ctx, folder_id)
+    for document_id in document_ids:
+        enqueue_delete(document_id, ctx.user_id)
+    return {"documents_deleted": len(document_ids)}
 
 
 # DOC-6: metadata schema (fields) + values. Task 13 moves field CRUD to a
