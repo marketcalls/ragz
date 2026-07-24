@@ -119,7 +119,8 @@ async def create_field(
     )
     session.add(field)
     await session.flush()
-    await retrieval_service.ensure_metadata_index(name, field_type)
+    collection_name = await retrieval_service.resolve_collection_name(session, ws.id)
+    await retrieval_service.ensure_metadata_index(name, field_type, collection_name=collection_name)
     await record_audit(
         session, org_id=ctx.org_id, actor_id=ctx.user_id,
         action="metadata_field.created", target_type="metadata_field", target_id=str(field.id),
@@ -191,7 +192,10 @@ async def set_document_metadata(
         action="document.metadata_changed", target_type="document", target_id=str(doc.id),
     )
     await session.commit()
-    await retrieval_service.update_document_metadata(ctx.org_id, doc.id, doc.meta)
+    collection_name = await retrieval_service.resolve_collection_name(session, doc.workspace_id)
+    await retrieval_service.update_document_metadata(
+        ctx.org_id, doc.id, doc.meta, collection_name=collection_name
+    )
     return doc
 
 

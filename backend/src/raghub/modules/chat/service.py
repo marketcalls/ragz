@@ -68,7 +68,11 @@ from raghub.modules.chat.web import TAVILY_SECRET_NAME, WebResult, WebSearcher
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service as documents_service
 from raghub.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch
-from raghub.modules.models.models import Model  # type only; resolution stays in models service
+from raghub.modules.models import service as models_service
+from raghub.modules.models.models import (
+    LOCAL_EMBEDDING_MODEL_ID,
+    Model,  # type only; resolution stays in models service
+)
 from raghub.modules.models.utility import get_utility_model
 from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
@@ -253,7 +257,14 @@ async def route_attachment(
     chunks = chunk_blocks(
         [PageBlock(page=1, text=text, kind="text")]
     )
-    dense_embedder = get_dense_embedder()
+    # DOC-10: the ephemeral attachments store has no per-workspace embedding
+    # choice (ensure_ephemeral_collection's own docstring) -- always the
+    # seeded local model, never the calling workspace's embedding_model_id.
+    ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
+    dense_embedder = get_dense_embedder(
+        ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
+        litellm_model_name=ephemeral_model.litellm_model_name,
+    )
     dense, sparse = await embed_batch([c.text for c in chunks], dense_embedder)
     await ensure_ephemeral_collection()
     await upsert_ephemeral_chunks(
@@ -520,11 +531,11 @@ class ChunkReader(Protocol):
     tests. Mirrors the Retriever/LLMStreamer injection pattern."""
 
     async def list_document_chunks(
-        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID
+        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID, *, collection_name: str
     ) -> list[RetrievedChunk]: ...
 
     async def get_chunks_by_refs(
-        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str], *, collection_name: str
     ) -> list[RetrievedChunk]: ...
 
 
@@ -1261,12 +1272,18 @@ async def stream_reply(
 
         all_messages = await list_messages(session, chat.id)
 
+        embedding_model = await models_service.get_model(session, workspace.embedding_model_id)
+        collection_name = embedding_model.collection_name
+        assert collection_name is not None
+
         pinned_chunks: list[RetrievedChunk] = []
         for doc in await documents_service.list_pinned_documents(
             session, ctx, chat.workspace_id
         ):
             pinned_chunks.extend(
-                await chunk_reader.list_document_chunks(ctx, chat.workspace_id, doc.id)
+                await chunk_reader.list_document_chunks(
+                    ctx, chat.workspace_id, doc.id, collection_name=collection_name
+                )
             )
         pinned_chunks = cap_chunks_by_tokens(
             pinned_chunks, sources_budget // 2, model_hint
@@ -1343,7 +1360,7 @@ async def stream_reply(
                 session, ctx, workspace=workspace, question=user_message.content,
                 model=model, completer=completer, retriever=retriever,
                 chunk_reader=chunk_reader, web_searcher=web_searcher if use_web else None,
-                metadata_field_names=field_names,
+                metadata_field_names=field_names, collection_name=collection_name,
             ):
                 if isinstance(gather_item, AgentStep):
                     yield agent_step_event(
@@ -1372,7 +1389,7 @@ async def stream_reply(
             prev_refs = await _previous_citation_refs(session, all_messages, user_message)
             if prev_refs:
                 backfilled = await chunk_reader.get_chunks_by_refs(
-                    ctx, chat.workspace_id, prev_refs
+                    ctx, chat.workspace_id, prev_refs, collection_name=collection_name
                 )
         backfilled_keys = {(str(c.document_id), c.page, c.chunk_index) for c in backfilled}
 
@@ -1399,7 +1416,14 @@ async def stream_reply(
         )
         if retrieval_attachments:
             attachment_filenames = {a.id: a.filename for a in retrieval_attachments}
-            dense_vec = (await get_dense_embedder().embed([user_message.content]))[0]
+            # DOC-10: same fixed local model as route_attachment's write side --
+            # ephemeral attachments have no per-workspace embedding choice.
+            ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
+            ephemeral_embedder = get_dense_embedder(
+                ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
+                litellm_model_name=ephemeral_model.litellm_model_name,
+            )
+            dense_vec = (await ephemeral_embedder.embed([user_message.content]))[0]
             sparse_vec = (await asyncio.to_thread(embed_sparse, [user_message.content]))[0]
             attachment_chunks = await search_ephemeral_attachments(
                 org_id=ctx.org_id, chat_id=chat.id,

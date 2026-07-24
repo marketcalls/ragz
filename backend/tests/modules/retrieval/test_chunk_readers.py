@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.errors import WorkspaceAccessDenied
-from raghub.modules.retrieval.client import get_qdrant
+from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.service import get_chunks_by_refs, list_document_chunks
 from tests.modules.retrieval.test_retrieve import seed_workspace, upsert_texts
 
@@ -14,10 +14,10 @@ async def test_list_document_chunks_ordered_and_scored_as_pinned(
 ) -> None:
     ctx, ws = await seed_workspace(session, "chunksOrg")
     doc_id = UUID(await upsert_texts(ctx, ws, ["page one text", "page two text"]))
-    chunks = await list_document_chunks(ctx, ws.id, doc_id)
+    chunks = await list_document_chunks(ctx, ws.id, doc_id, collection_name=COLLECTION)
     assert [(c.page, c.chunk_index) for c in chunks] == [(1, 0), (2, 1)]
     assert all(c.score == 1.0 for c in chunks)
-    assert await list_document_chunks(ctx, ws.id, uuid4()) == []
+    assert await list_document_chunks(ctx, ws.id, uuid4(), collection_name=COLLECTION) == []
 
 
 async def test_get_chunks_by_refs_resolves_in_ref_order(
@@ -26,7 +26,7 @@ async def test_get_chunks_by_refs_resolves_in_ref_order(
     ctx, ws = await seed_workspace(session, "refsOrg")
     doc_id = await upsert_texts(ctx, ws, ["first chunk", "second chunk"])
     refs = [f"{doc_id}:2:1", f"{doc_id}:1:0"]
-    chunks = await get_chunks_by_refs(ctx, ws.id, refs)
+    chunks = await get_chunks_by_refs(ctx, ws.id, refs, collection_name=COLLECTION)
     assert [c.text for c in chunks] == ["second chunk", "first chunk"]
     assert all(c.score == 0.0 for c in chunks)  # backfilled, not a similarity hit
 
@@ -40,7 +40,7 @@ async def test_get_chunks_by_refs_drops_malformed_unknown_and_duplicates(
         "not-a-ref", "a:b:c", f"{uuid4()}:1:0",            # malformed / unknown
         f"{doc_id}:1:0", f"{doc_id}:1:0", f"{doc_id}:9:9",  # dup + missing index
     ]
-    chunks = await get_chunks_by_refs(ctx, ws.id, refs)
+    chunks = await get_chunks_by_refs(ctx, ws.id, refs, collection_name=COLLECTION)
     assert [c.text for c in chunks] == ["only chunk"]
 
 
@@ -52,7 +52,7 @@ async def test_list_document_chunks_denies_non_member_user(
     as retrieve()'s gate."""
     ctx, ws = await seed_workspace(session, "chunksNonMemberOrg", member=False)
     with pytest.raises(WorkspaceAccessDenied):
-        await list_document_chunks(ctx, ws.id, uuid4())
+        await list_document_chunks(ctx, ws.id, uuid4(), collection_name=COLLECTION)
 
 
 async def test_list_document_chunks_allows_admin_without_membership(
@@ -61,7 +61,7 @@ async def test_list_document_chunks_allows_admin_without_membership(
     """Admin/superadmin pass the in-reader guard; org fencing still applies
     via the tenant filter itself."""
     ctx, ws = await seed_workspace(session, "chunksAdminOrg", role="admin", member=False)
-    assert await list_document_chunks(ctx, ws.id, uuid4()) == []
+    assert await list_document_chunks(ctx, ws.id, uuid4(), collection_name=COLLECTION) == []
 
 
 async def test_get_chunks_by_refs_denies_non_member_user(
@@ -70,14 +70,16 @@ async def test_get_chunks_by_refs_denies_non_member_user(
     """Review round 1: same in-reader membership guard on the refs reader."""
     ctx, ws = await seed_workspace(session, "refsNonMemberOrg", member=False)
     with pytest.raises(WorkspaceAccessDenied):
-        await get_chunks_by_refs(ctx, ws.id, [f"{uuid4()}:1:0"])
+        await get_chunks_by_refs(ctx, ws.id, [f"{uuid4()}:1:0"], collection_name=COLLECTION)
 
 
 async def test_get_chunks_by_refs_allows_admin_without_membership(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
     ctx, ws = await seed_workspace(session, "refsAdminOrg", role="admin", member=False)
-    assert await get_chunks_by_refs(ctx, ws.id, [f"{uuid4()}:1:0"]) == []
+    assert (
+        await get_chunks_by_refs(ctx, ws.id, [f"{uuid4()}:1:0"], collection_name=COLLECTION) == []
+    )
 
 
 async def test_get_chunks_by_refs_paginates_across_scroll_pages(
@@ -94,7 +96,7 @@ async def test_get_chunks_by_refs_paginates_across_scroll_pages(
     texts = [f"chunk number {i}" for i in range(5)]
     doc_id = await upsert_texts(ctx, ws, texts)
     refs = [f"{doc_id}:5:4"]  # page=i+1, chunk_index=i -> last text, last page
-    chunks = await get_chunks_by_refs(ctx, ws.id, refs)
+    chunks = await get_chunks_by_refs(ctx, ws.id, refs, collection_name=COLLECTION)
     assert [c.text for c in chunks] == ["chunk number 4"]
 
 
@@ -121,6 +123,6 @@ async def test_get_chunks_by_refs_stops_scrolling_once_all_refs_found(
         return await orig_scroll(*args, **kwargs)
 
     monkeypatch.setattr(client, "scroll", counting_scroll)
-    chunks = await get_chunks_by_refs(ctx, ws.id, refs)
+    chunks = await get_chunks_by_refs(ctx, ws.id, refs, collection_name=COLLECTION)
     assert [c.text for c in chunks] == ["chunk number 0"]
     assert len(calls) == 1  # stopped after page 1; did not scroll pages 2-3

@@ -171,7 +171,7 @@ async def test_delete_document_points(session: AsyncSession, qdrant_collection: 
     ctx, ws = await seed_workspace(session, "orgf")
     doc_id = await upsert_texts(ctx, ws, ["target text to delete"])
     from uuid import UUID
-    await delete_document_points(ctx.org_id, UUID(doc_id))
+    await delete_document_points(ctx.org_id, UUID(doc_id), collection_name=COLLECTION)
     result = await retrieve(session, ctx, ws.id, "target text to delete")
     assert result.chunks == []
 
@@ -212,7 +212,7 @@ async def test_delete_restricted_document_points(
     await get_qdrant().upsert(COLLECTION, points=points, wait=True)
 
     # Delete the document via delete_document_points (maintenance path)
-    await delete_document_points(ctx.org_id, UUID(document_id))
+    await delete_document_points(ctx.org_id, UUID(document_id), collection_name=COLLECTION)
 
     # Unfiltered scroll must show zero points for that document
     all_points, _ = await get_qdrant().scroll(COLLECTION, limit=100)
@@ -235,7 +235,7 @@ async def test_delete_points_tolerates_missing_collection(stack_env: None) -> No
     client = get_qdrant()
     if await client.collection_exists(COLLECTION):
         await client.delete_collection(COLLECTION)
-    await delete_document_points(uuid4(), uuid4())  # must not raise
+    await delete_document_points(uuid4(), uuid4(), collection_name=COLLECTION)  # must not raise
 
 
 def test_dedupe_hq_keeps_max_score_per_chunk_ref() -> None:

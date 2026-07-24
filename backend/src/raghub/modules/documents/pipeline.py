@@ -13,7 +13,7 @@ from uuid import UUID, uuid5
 
 from qdrant_client import models
 
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
+from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import DenseEmbedder, embed_sparse
 
 # Deterministic point ids: retried upserts overwrite instead of duplicating.
@@ -260,6 +260,7 @@ async def upsert_points(
     sparse: list[models.SparseVector],
     version: int,
     meta: dict[str, str] | None,
+    collection_name: str,
     is_current: bool = False,
     summaries: list[str | None] | None = None,
 ) -> None:
@@ -301,7 +302,7 @@ async def upsert_points(
         )
         for c, d, s, summary in zip(chunks, dense, sparse, summaries, strict=True)
     ]
-    await get_qdrant().upsert(COLLECTION, points=points, wait=True)
+    await get_qdrant().upsert(collection_name, points=points, wait=True)
 
 
 # Distinct from _CHUNK_NAMESPACE (Plan K §4): hq points must never collide
@@ -325,6 +326,7 @@ async def upsert_hq_points(
     hq_texts: list[list[str]],
     hq_dense: list[list[list[float]]],
     hq_sparse: list[list[models.SparseVector]],
+    collection_name: str,
 ) -> None:
     """Hypothetical-question points (spec §4): one per generated question, up
     to 3 per chunk. Payload is a FULL COPY of the parent chunk's payload
@@ -365,4 +367,4 @@ async def upsert_hq_points(
             )
         del questions  # question text feeds embedding upstream of this function, not payload
     if points:
-        await get_qdrant().upsert(COLLECTION, points=points, wait=True)
+        await get_qdrant().upsert(collection_name, points=points, wait=True)

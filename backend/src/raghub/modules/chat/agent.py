@@ -190,11 +190,11 @@ class ChunkReaderSeam(Protocol):
     import-cycle reason as RetrieverSeam above."""
 
     async def list_document_chunks(
-        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID
+        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID, *, collection_name: str
     ) -> list[RetrievedChunk]: ...
 
     async def get_chunks_by_refs(
-        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str], *, collection_name: str
     ) -> list[RetrievedChunk]: ...
 
 
@@ -215,6 +215,7 @@ async def execute_tool(
     retriever: RetrieverSeam,
     chunk_reader: ChunkReaderSeam,
     web_searcher: WebSearcher | None,
+    collection_name: str,
 ) -> ToolOutcome:
     """THE tool-execution seam (design §2): all four read-only tools, one
     funnel. Failures come back as ToolOutcome.error — the loop degrades to
@@ -234,7 +235,7 @@ async def execute_tool(
             return ToolOutcome(chunks=result.chunks, grounded=not result.no_answer)
         if action.action == "get_document":
             chunks = await chunk_reader.list_document_chunks(
-                ctx, workspace.id, UUID(action.document_id)
+                ctx, workspace.id, UUID(action.document_id), collection_name=collection_name
             )
             return ToolOutcome(chunks=chunks, grounded=bool(chunks))
         if action.action == "web_search":
@@ -349,6 +350,7 @@ async def run_agent_gather(
     chunk_reader: ChunkReaderSeam,
     web_searcher: WebSearcher | None,
     metadata_field_names: Sequence[str],
+    collection_name: str,
 ) -> AsyncIterator[AgentStep | AgentGathered]:
     """The gather phase of the hand-rolled loop (design §2): yields an
     AgentStep before each tool execution (mapped to the agent_step SSE frame
@@ -378,6 +380,7 @@ async def run_agent_gather(
         outcome = await execute_tool(
             session, ctx, action, workspace=workspace, retriever=retriever,
             chunk_reader=chunk_reader, web_searcher=web_searcher,
+            collection_name=collection_name,
         )
         if outcome.error is not None:
             # Failure posture (design §2): degrade to single-shot RAG on the

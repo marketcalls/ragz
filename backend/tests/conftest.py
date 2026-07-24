@@ -300,10 +300,14 @@ class FakeChunkReader:
         self.chunks_by_ref: dict[str, RetrievedChunk] = {}
         self.ref_calls: list[list[str]] = []
 
-    async def list_document_chunks(self, ctx, workspace_id, document_id):  # type: ignore[no-untyped-def]
+    async def list_document_chunks(  # type: ignore[no-untyped-def]
+        self, ctx, workspace_id, document_id, *, collection_name
+    ):
         return list(self.document_chunks.get(document_id, []))
 
-    async def get_chunks_by_refs(self, ctx, workspace_id, refs):  # type: ignore[no-untyped-def]
+    async def get_chunks_by_refs(  # type: ignore[no-untyped-def]
+        self, ctx, workspace_id, refs, *, collection_name
+    ):
         self.ref_calls.append(list(refs))
         return [self.chunks_by_ref[r] for r in refs if r in self.chunks_by_ref]
 

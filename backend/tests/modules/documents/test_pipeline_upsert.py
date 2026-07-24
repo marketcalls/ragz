@@ -11,9 +11,20 @@ from raghub.modules.documents.pipeline import (
     upsert_hq_points,
     upsert_points,
 )
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from tests.modules.retrieval.test_retrieve import seed_workspace
+
+
+def _test_dense_embedder():
+    """DOC-10: get_dense_embedder is model-parameterized now; RAGHUB_EMBEDDING_BACKEND=hash
+    (set by the stack_env fixture) ignores these args and always returns the
+    deterministic hash embedder, so the exact values only need to match the
+    seeded LOCAL_EMBEDDING_MODEL_ID row for readability, not correctness."""
+    return get_dense_embedder(
+        LOCAL_EMBEDDING_MODEL_ID, provider_kind="tei", litellm_model_name="local-embeddings"
+    )
 
 
 async def test_upsert_points_summary_defaults_none(
@@ -22,13 +33,13 @@ async def test_upsert_points_summary_defaults_none(
     ctx, ws = await seed_workspace(session, "upsertSummaryDefaultOrg")
     doc_id = uuid4()
     chunk = Chunk(text="body", page=1, chunk_index=0)
-    dense = await get_dense_embedder().embed([chunk.text])
+    dense = await _test_dense_embedder().embed([chunk.text])
     sparse = await asyncio.to_thread(embed_sparse, [chunk.text])
     await upsert_points(
         org_id=ctx.org_id, workspace_id=ws.id, document_id=doc_id,
         mime="text/plain", created_at=datetime.now(), acl_group_ids=[],
         chunks=[chunk], dense=dense, sparse=sparse,
-        version=1, meta=None,
+        version=1, meta=None, collection_name=COLLECTION,
     )
     point_id = str(uuid5(_CHUNK_NAMESPACE, f"{doc_id}:0"))
     point = (await get_qdrant().retrieve(COLLECTION, ids=[point_id]))[0]
@@ -42,13 +53,13 @@ async def test_upsert_points_summary_set_when_provided(
     ctx, ws = await seed_workspace(session, "upsertSummarySetOrg")
     doc_id = uuid4()
     chunk = Chunk(text="body", page=1, chunk_index=0)
-    dense = await get_dense_embedder().embed([chunk.text])
+    dense = await _test_dense_embedder().embed([chunk.text])
     sparse = await asyncio.to_thread(embed_sparse, [chunk.text])
     await upsert_points(
         org_id=ctx.org_id, workspace_id=ws.id, document_id=doc_id,
         mime="text/plain", created_at=datetime.now(), acl_group_ids=[],
         chunks=[chunk], dense=dense, sparse=sparse,
-        version=1, meta=None, summaries=["a short summary"],
+        version=1, meta=None, summaries=["a short summary"], collection_name=COLLECTION,
     )
     point_id = str(uuid5(_CHUNK_NAMESPACE, f"{doc_id}:0"))
     point = (await get_qdrant().retrieve(COLLECTION, ids=[point_id]))[0]
@@ -63,7 +74,7 @@ async def test_upsert_hq_points_mirror_parent_payload_with_kind_hq(
     doc_id = uuid4()
     chunk = Chunk(text="wear PPE in zone 2", page=3, chunk_index=7, section="Safety > PPE")
     question = "What PPE is required in zone 2?"
-    dense = await get_dense_embedder().embed([question])
+    dense = await _test_dense_embedder().embed([question])
     sparse = await asyncio.to_thread(embed_sparse, [question])
     await upsert_hq_points(
         org_id=ctx.org_id, workspace_id=ws.id, document_id=doc_id,
@@ -71,7 +82,7 @@ async def test_upsert_hq_points_mirror_parent_payload_with_kind_hq(
         version=2, meta={"doc_type": "policy"}, is_current=True,
         parent_chunks=[chunk], parent_summaries=["PPE required in zone 2"],
         hq_texts=[[question]],
-        hq_dense=[dense], hq_sparse=[sparse],
+        hq_dense=[dense], hq_sparse=[sparse], collection_name=COLLECTION,
     )
     hq_id = str(uuid5(_HQ_NAMESPACE, f"{doc_id}:7:hq:0"))
     point = (await get_qdrant().retrieve(COLLECTION, ids=[hq_id]))[0]
@@ -100,7 +111,7 @@ async def test_upsert_hq_points_payload_matches_upsert_points_payload_exactly(
     ctx, ws = await seed_workspace(session, "hqParityOrg")
     doc_id = uuid4()
     chunk = Chunk(text="body text", page=2, chunk_index=1, section="A > B")
-    dense = await get_dense_embedder().embed([chunk.text])
+    dense = await _test_dense_embedder().embed([chunk.text])
     sparse = await asyncio.to_thread(embed_sparse, [chunk.text])
     created_at = datetime.now()
 
@@ -109,13 +120,14 @@ async def test_upsert_hq_points_payload_matches_upsert_points_payload_exactly(
         mime="text/plain", created_at=created_at, acl_group_ids=["g1", "g2"],
         chunks=[chunk], dense=dense, sparse=sparse,
         version=3, meta={"k": "v"}, is_current=True, summaries=["sum"],
+        collection_name=COLLECTION,
     )
     parent_id = str(uuid5(_CHUNK_NAMESPACE, f"{doc_id}:1"))
     parent_payload = (await get_qdrant().retrieve(COLLECTION, ids=[parent_id]))[0].payload
     assert parent_payload is not None
 
     question = "What is body text?"
-    q_dense = await get_dense_embedder().embed([question])
+    q_dense = await _test_dense_embedder().embed([question])
     q_sparse = await asyncio.to_thread(embed_sparse, [question])
     await upsert_hq_points(
         org_id=ctx.org_id, workspace_id=ws.id, document_id=doc_id,
@@ -123,6 +135,7 @@ async def test_upsert_hq_points_payload_matches_upsert_points_payload_exactly(
         version=3, meta={"k": "v"}, is_current=True,
         parent_chunks=[chunk], parent_summaries=["sum"],
         hq_texts=[[question]], hq_dense=[q_dense], hq_sparse=[q_sparse],
+        collection_name=COLLECTION,
     )
     hq_id = str(uuid5(_HQ_NAMESPACE, f"{doc_id}:1:hq:0"))
     hq_payload = (await get_qdrant().retrieve(COLLECTION, ids=[hq_id]))[0].payload

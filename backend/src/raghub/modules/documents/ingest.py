@@ -39,6 +39,7 @@ from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import (
     delete_document_points,
     ensure_collection,
+    resolve_collection_name,
     update_document_acl,
     update_document_metadata,
 )
@@ -162,18 +163,30 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         upsert_job = await _start_stage(session, document_id, "upsert")
         raw = await _storage().get(doc.storage_key + ".chunks.json")
         chunks = [Chunk(**c) for c in json.loads(raw)]
-        await ensure_collection()  # workspaces are bge-m3-locked in Phase 1
-        dense_embedder = get_dense_embedder()
+
+        # DOC-10: loaded here (was loaded further down, after ensure_collection)
+        # so the workspace's ACTUAL embedding model drives both collection
+        # setup and the embedder -- was ensure_collection() with no args at
+        # all, silently always the seeded default regardless of ws.embedding_model_id.
+        workspace = await session.get(Workspace, doc.workspace_id)
+        assert workspace is not None  # doc.workspace_id is a non-nullable FK
+        embedding_model = await models_service.get_model(session, workspace.embedding_model_id)
+        collection_name = embedding_model.collection_name
+        assert collection_name is not None
+        await ensure_collection(collection_name, embedding_model.dimension)  # type: ignore[arg-type]
+        dense_embedder = get_dense_embedder(
+            embedding_model.id, provider_kind=embedding_model.provider_kind,
+            litellm_model_name=embedding_model.litellm_model_name,
+        )
 
         # Plan K §4: enrichment is gated by the workspace toggle AND a
         # designated utility model — resolved once, up front, so a mid-loop
         # ACL/metadata race (handled below via `still_exists`) can't also
         # flip enrichment eligibility partway through a run.
-        workspace = await session.get(Workspace, doc.workspace_id)
         settings = get_settings()
         utility_model = (
             await models_service.resolve_utility_model(session)
-            if workspace is not None and workspace.enrichment_enabled
+            if workspace.enrichment_enabled
             else None
         )
         completer: LLMCompleter | None = None
@@ -222,6 +235,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                             version=doc.version, meta=doc.meta, is_current=False,
                             parent_chunks=batch, parent_summaries=summaries,
                             hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
+                            collection_name=collection_name,
                         )
                     any_batch_enriched = True
                 except Exception:
@@ -239,7 +253,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                 mime=doc.mime, created_at=doc.created_at,
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
-                meta=doc.meta, summaries=summaries,
+                meta=doc.meta, summaries=summaries, collection_name=collection_name,
             )
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)
@@ -263,7 +277,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
             )
         ).scalar_one_or_none()
         if still_exists is None:
-            await delete_document_points(org_id, document_id)
+            await delete_document_points(org_id, document_id, collection_name=collection_name)
             return None
 
         # An ACL admin PUT racing mid-ingest may have stamped only the points
@@ -273,11 +287,15 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         # (freshly repopulated above) so every point for this document
         # reflects the latest PG state before the document is marked indexed
         # and becomes retrievable.
-        await update_document_acl(org_id, document_id, still_exists.acl_group_ids)
+        await update_document_acl(
+            org_id, document_id, still_exists.acl_group_ids, collection_name=collection_name
+        )
         # Same race, same cure for metadata: a Tags PUT mid-ingest restamps
         # only already-upserted points; later batches carry the stale meta
         # loaded at task start. Re-stamp from the fresh row (final review).
-        await update_document_metadata(org_id, document_id, still_exists.meta or {})
+        await update_document_metadata(
+            org_id, document_id, still_exists.meta or {}, collection_name=collection_name
+        )
 
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.
@@ -350,13 +368,19 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
         utility_model = await models_service.resolve_utility_model(session)
         if utility_model is None:
             return
+        embedding_model = await models_service.get_model(session, workspace.embedding_model_id)
+        collection_name = embedding_model.collection_name
+        assert collection_name is not None
 
         raw = await _storage().get(doc.storage_key + ".chunks.json")
         chunks = [Chunk(**c) for c in json.loads(raw)]
         completer: LLMCompleter = LiteLLMStreamer(
             base_url=get_settings().litellm_url, master_key=get_settings().litellm_master_key,
         )
-        dense_embedder = get_dense_embedder()
+        dense_embedder = get_dense_embedder(
+            embedding_model.id, provider_kind=embedding_model.provider_kind,
+            litellm_model_name=embedding_model.litellm_model_name,
+        )
         total_prompt_tokens = total_completion_tokens = 0
 
         for i in range(0, len(chunks), _BATCH_SIZE):
@@ -379,6 +403,7 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
                 meta=doc.meta, is_current=doc.is_current, summaries=summaries,
+                collection_name=collection_name,
             )
             hq_by_chunk = [e.hypothetical_questions for e in enrichments]
             if any(hq_by_chunk):
@@ -399,6 +424,7 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                     version=doc.version, meta=doc.meta, is_current=doc.is_current,
                     parent_chunks=batch, parent_summaries=summaries,
                     hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
+                    collection_name=collection_name,
                 )
             total_prompt_tokens += sum(len(c.text) for c in batch) // 4
             total_completion_tokens += sum(len(s or "") for s in summaries) // 4
@@ -431,7 +457,8 @@ async def run_delete(document_id: UUID, actor_id: UUID | None) -> UUID | None:
             return None
         org_id = doc.org_id  # captured before the row is gone
         lineage_id = doc.lineage_id
-        await delete_document_points(doc.org_id, document_id)
+        collection_name = await resolve_collection_name(session, doc.workspace_id)
+        await delete_document_points(doc.org_id, document_id, collection_name=collection_name)
         storage = _storage()
         for key in (doc.storage_key, doc.storage_key + ".blocks.json",
                     doc.storage_key + ".chunks.json"):

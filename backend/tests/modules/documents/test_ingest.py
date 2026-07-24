@@ -62,7 +62,7 @@ async def test_full_runner_sequence_indexes_document(
     # Plan H: freshly-upserted points are is_current=False (invisible) until
     # promotion (Task 6). Real promotion doesn't exist yet, so this test
     # stands in for it via the sanctioned update_document_current path.
-    await update_document_current(ctx.org_id, doc.id, is_current=True)
+    await update_document_current(ctx.org_id, doc.id, is_current=True, collection_name=COLLECTION)
     result = await retrieve(session, ctx, ws.id, "invoice 0231")
     assert result.chunks and result.chunks[0].document_id == doc.id
 
@@ -97,7 +97,7 @@ async def test_delete_propagates_everywhere(
     await run_chunk(doc.id)
     await run_embed_upsert(doc.id)
     # Plan H: promote first so the delete-propagation check below is non-vacuous.
-    await update_document_current(ctx.org_id, doc.id, is_current=True)
+    await update_document_current(ctx.org_id, doc.id, is_current=True, collection_name=COLLECTION)
 
     await run_delete(doc.id, ctx.user_id)
     assert (await session.execute(

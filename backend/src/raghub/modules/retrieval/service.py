@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.config import get_settings
 from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
 from raghub.modules.documents.pipeline import Chunk
-from raghub.modules.retrieval.client import COLLECTION, EPHEMERAL_COLLECTION, get_qdrant
+from raghub.modules.retrieval.client import EPHEMERAL_COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.rerank import RerankUnavailable, get_reranker
 from raghub.modules.tenancy.context import TenantContext
@@ -120,6 +120,12 @@ def _tenant_filter(
       * metadata_clauses: per-clause eq (MatchValue) or date_range
         (DatetimeRange) FieldConditions, all top-level must-conditions (no
         nesting needed — every clause narrows, none widen).
+
+    DOC-10: every caller above also takes an explicit collection_name
+    parameter (not shown in this table — it's orthogonal to filter posture)
+    so ACL/promotion/deletion/citation-backfill target the SAME collection
+    retrieve() itself would use for that workspace, not always the seeded
+    default's chunks_bge_m3.
     """
     must: list[models.Condition] = [
         models.FieldCondition(key="tenant_id", match=models.MatchValue(value=str(org_id)))
@@ -523,7 +529,7 @@ _SCROLL_PAGE_CAP = 40  # defensive cap on pages scrolled per document in get_chu
 
 
 async def list_document_chunks(
-    ctx: TenantContext, workspace_id: UUID, document_id: UUID
+    ctx: TenantContext, workspace_id: UUID, document_id: UUID, *, collection_name: str
 ) -> list[RetrievedChunk]:
     """All chunks of one document in (page, chunk_index) order — the pinned-
     document read path (gap G3). Runs under the SAME tenant filter as
@@ -536,7 +542,7 @@ async def list_document_chunks(
     if ctx.role == "user" and workspace_id not in ctx.workspace_ids:
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     client = get_qdrant()
-    if not await client.collection_exists(COLLECTION):
+    if not await client.collection_exists(collection_name):
         return []
     flt = _tenant_filter(
         org_id=ctx.org_id, workspace_id=workspace_id, document_id=document_id,
@@ -546,7 +552,7 @@ async def list_document_chunks(
     offset: models.ExtendedPointId | None = None
     while True:
         points, offset = await client.scroll(
-            COLLECTION, scroll_filter=flt, limit=_SCROLL_PAGE,
+            collection_name, scroll_filter=flt, limit=_SCROLL_PAGE,
             offset=offset, with_payload=True,
         )
         for p in points:
@@ -579,7 +585,7 @@ def _parse_chunk_ref(ref: str) -> tuple[UUID, int, int] | None:
 
 
 async def get_chunks_by_refs(
-    ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+    ctx: TenantContext, workspace_id: UUID, refs: Sequence[str], *, collection_name: str
 ) -> list[RetrievedChunk]:
     """Resolve persisted citation chunk_refs ("{document_id}:{page}:{chunk_index}")
     back to chunk payloads — the citation-backfill read path (fillSourceWindow,
@@ -594,7 +600,7 @@ async def get_chunks_by_refs(
     if ctx.role == "user" and workspace_id not in ctx.workspace_ids:
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     client = get_qdrant()
-    if not await client.collection_exists(COLLECTION):
+    if not await client.collection_exists(collection_name):
         return []
     parsed: list[tuple[UUID, int, int]] = []
     seen_keys: set[tuple[UUID, int, int]] = set()
@@ -615,7 +621,7 @@ async def get_chunks_by_refs(
         offset: models.ExtendedPointId | None = None
         for _ in range(_SCROLL_PAGE_CAP):
             points, offset = await client.scroll(
-                COLLECTION, scroll_filter=flt, limit=_SCROLL_PAGE,
+                collection_name, scroll_filter=flt, limit=_SCROLL_PAGE,
                 offset=offset, with_payload=True,
             )
             for p in points:
@@ -643,25 +649,27 @@ class RetrievalChunkReader:
     Thin bound wrapper so tests can inject a fake with the same shape."""
 
     async def list_document_chunks(
-        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID
+        self, ctx: TenantContext, workspace_id: UUID, document_id: UUID, *, collection_name: str
     ) -> list[RetrievedChunk]:
-        return await list_document_chunks(ctx, workspace_id, document_id)
+        return await list_document_chunks(
+            ctx, workspace_id, document_id, collection_name=collection_name
+        )
 
     async def get_chunks_by_refs(
-        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str]
+        self, ctx: TenantContext, workspace_id: UUID, refs: Sequence[str], *, collection_name: str
     ) -> list[RetrievedChunk]:
-        return await get_chunks_by_refs(ctx, workspace_id, refs)
+        return await get_chunks_by_refs(ctx, workspace_id, refs, collection_name=collection_name)
 
 
-async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
+async def delete_document_points(org_id: UUID, document_id: UUID, *, collection_name: str) -> None:
     """Deletion propagation entry point — lives here so filter knowledge never
     leaves this module. org_id scoping is defense in depth beyond the spec's
     document_id filter. A missing collection means nothing was ever indexed —
     deleting a never-indexed document must succeed (found by real-stack smoke)."""
-    if not await get_qdrant().collection_exists(COLLECTION):
+    if not await get_qdrant().collection_exists(collection_name):
         return
     await get_qdrant().delete(
-        COLLECTION,
+        collection_name,
         points_selector=models.FilterSelector(
             # maintenance path: must remove ALL of the document's points
             filter=_tenant_filter(
@@ -674,7 +682,7 @@ async def delete_document_points(org_id: UUID, document_id: UUID) -> None:
 
 
 async def update_document_acl(
-    org_id: UUID, document_id: UUID, acl_group_ids: list[UUID] | None
+    org_id: UUID, document_id: UUID, acl_group_ids: list[UUID] | None, *, collection_name: str
 ) -> None:
     """ACL re-index for already-indexed points (RBAC-5): rewrites the acl_groups
     payload in place via set_payload — no re-embed. Lives here so payload/filter
@@ -688,10 +696,10 @@ async def update_document_acl(
     groups" would collide with this exact encoding, which is why `[]` is
     rejected at the AclUpdate schema layer before it ever reaches this
     function or Document.acl_group_ids."""
-    if not await get_qdrant().collection_exists(COLLECTION):
+    if not await get_qdrant().collection_exists(collection_name):
         return
     await get_qdrant().set_payload(
-        COLLECTION,
+        collection_name,
         payload={"acl_groups": sorted(str(g) for g in (acl_group_ids or []))},
         points=models.FilterSelector(
             # maintenance path: must restamp ALL of the document's points
@@ -704,14 +712,16 @@ async def update_document_acl(
     )
 
 
-async def update_document_current(org_id: UUID, document_id: UUID, *, is_current: bool) -> None:
+async def update_document_current(
+    org_id: UUID, document_id: UUID, *, is_current: bool, collection_name: str
+) -> None:
     """Promotion/demotion visibility flip — set_payload under the tenant filter
     (mirrors update_document_acl). No-op when the collection doesn't exist."""
     client = get_qdrant()
-    if not await client.collection_exists(COLLECTION):
+    if not await client.collection_exists(collection_name):
         return
     await client.set_payload(
-        COLLECTION,
+        collection_name,
         payload={"is_current": is_current},
         points=models.FilterSelector(
             filter=_tenant_filter(
@@ -723,7 +733,9 @@ async def update_document_current(org_id: UUID, document_id: UUID, *, is_current
     )
 
 
-async def update_document_metadata(org_id: UUID, document_id: UUID, meta: dict[str, str]) -> None:
+async def update_document_metadata(
+    org_id: UUID, document_id: UUID, meta: dict[str, str], *, collection_name: str
+) -> None:
     """Metadata-value payload mirror for already-indexed points (DOC-6):
     rewrites the nested `meta` payload key in place via set_payload — no
     re-embed. Lives here so payload/filter knowledge never leaves this module
@@ -731,10 +743,10 @@ async def update_document_metadata(org_id: UUID, document_id: UUID, meta: dict[s
     shape. A missing collection means nothing indexed yet; the ingestion
     pipeline stamps `meta` at upsert (pipeline.upsert_points)."""
     client = get_qdrant()
-    if not await client.collection_exists(COLLECTION):
+    if not await client.collection_exists(collection_name):
         return
     await client.set_payload(
-        COLLECTION,
+        collection_name,
         payload={"meta": meta},
         points=models.FilterSelector(
             # maintenance path: must restamp ALL of the document's points
@@ -747,12 +759,12 @@ async def update_document_metadata(org_id: UUID, document_id: UUID, meta: dict[s
     )
 
 
-async def ensure_metadata_index(field_name: str, field_type: str) -> None:
+async def ensure_metadata_index(field_name: str, field_type: str, *, collection_name: str) -> None:
     """Payload index for a workspace metadata field (DOC-6). Index creation is
     payload-schema work, not filtering — it lives here so no other module
     touches Qdrant, but it constructs no filters (iron rule 1 untouched)."""
     client = get_qdrant()
-    if not await client.collection_exists(COLLECTION):
+    if not await client.collection_exists(collection_name):
         return
     schema = (
         models.PayloadSchemaType.DATETIME
@@ -760,5 +772,5 @@ async def ensure_metadata_index(field_name: str, field_type: str) -> None:
         else models.PayloadSchemaType.KEYWORD
     )
     await client.create_payload_index(
-        COLLECTION, field_name=f"meta.{field_name}", field_schema=schema
+        collection_name, field_name=f"meta.{field_name}", field_schema=schema
     )
