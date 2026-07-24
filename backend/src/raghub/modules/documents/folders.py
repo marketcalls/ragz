@@ -179,10 +179,23 @@ async def rename_or_move_folder(
     return folder
 
 
-async def _collect_subtree_folder_ids(session: AsyncSession, folder_id: UUID) -> list[UUID]:
+async def _collect_subtree_folder_ids(
+    session: AsyncSession, folder_id: UUID, *, workspace_id: UUID
+) -> list[UUID]:
     """Breadth-first walk collecting folder_id and every descendant folder id,
     all depths. Postgres-only reads, no external I/O -- safe to run inline in
-    a request handler."""
+    a request handler.
+
+    `workspace_id` (the ALREADY-VALIDATED root folder's own workspace_id, per
+    get_folder_checked) is asserted on every hop of the walk, not just relied
+    on structurally: today a validated folder's subtree is workspace-homogeneous
+    BY CONSTRUCTION (every folder-write path -- create_folder, ensure_path,
+    rename_or_move_folder -- pins a folder's parent to the same workspace), so
+    this predicate is a no-op for every legitimate call. It exists as
+    defense-in-depth (iron rule 1: queries re-assert the tenant/workspace
+    boundary themselves, never rely solely on invariants holding elsewhere)
+    for the single most destructive operation this module has -- a cascade
+    delete walking an entire subtree."""
     ids = [folder_id]
     frontier = [folder_id]
     for _ in range(_MAX_TREE_DEPTH):
@@ -191,7 +204,10 @@ async def _collect_subtree_folder_ids(session: AsyncSession, folder_id: UUID) ->
         rows = list(
             (
                 await session.execute(
-                    select(Folder.id).where(Folder.parent_folder_id.in_(frontier))
+                    select(Folder.id).where(
+                        Folder.parent_folder_id.in_(frontier),
+                        Folder.workspace_id == workspace_id,
+                    )
                 )
             ).scalars()
         )
@@ -216,10 +232,14 @@ async def count_subtree(
     excludes folder_id itself, matching the frontend's existing
     countSubtree-minus-1 client-side convention."""
     folder = await get_folder_checked(session, ctx, folder_id)
-    folder_ids = await _collect_subtree_folder_ids(session, folder.id)
+    workspace_id = folder.workspace_id  # captured once; see _collect_subtree_folder_ids docstring
+    folder_ids = await _collect_subtree_folder_ids(session, folder.id, workspace_id=workspace_id)
     document_count = (
         await session.execute(
-            select(func.count()).select_from(Document).where(Document.folder_id.in_(folder_ids))
+            select(func.count()).select_from(Document).where(
+                Document.folder_id.in_(folder_ids),
+                Document.workspace_id == workspace_id,  # defense-in-depth, see above
+            )
         )
     ).scalar_one()
     return document_count, len(folder_ids) - 1
@@ -248,11 +268,15 @@ async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UU
     worker.tasks freely for the single-document delete route) performs the
     actual enqueue in a loop."""
     folder = await get_folder_checked(session, ctx, folder_id)
-    folder_ids = await _collect_subtree_folder_ids(session, folder.id)
+    workspace_id = folder.workspace_id  # captured once; see _collect_subtree_folder_ids docstring
+    folder_ids = await _collect_subtree_folder_ids(session, folder.id, workspace_id=workspace_id)
     docs = list(
         (
             await session.execute(
-                select(Document).where(Document.folder_id.in_(folder_ids))
+                select(Document).where(
+                    Document.folder_id.in_(folder_ids),
+                    Document.workspace_id == workspace_id,  # defense-in-depth, see above
+                )
             )
         ).scalars()
     )
