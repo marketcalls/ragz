@@ -188,11 +188,19 @@ export function ModelFormDialog({
     model?.default_reasoning_effort ?? 'off',
   );
   const [supportsVision, setSupportsVision] = useState(model?.supports_vision ?? false);
+  const [modality, setModality] = useState<'chat' | 'embedding'>('chat');
+  const [dimension, setDimension] = useState('1536');
 
   const isCustom = catalogProvider === CUSTOM;
   // null until a provider is chosen in add mode — downstream fields stay hidden.
+  // The 'tei' branch never actually runs: the seeded row's Edit button is
+  // hidden (models-page.tsx's Built-in guard), but ModelOut's provider_kind
+  // includes 'tei' so the narrowing must be explicit for ProviderKind (this
+  // form's CREATE-path union) to still exclude it.
   const kind: ProviderKind | null = isEdit
-    ? model.provider_kind
+    ? model.provider_kind === 'tei'
+      ? null
+      : model.provider_kind
     : isCustom
       ? manualKind
       : catalogProvider
@@ -244,6 +252,8 @@ export function ModelFormDialog({
       setSupportsReasoning(model?.supports_reasoning ?? false);
       setDefaultEffort(model?.default_reasoning_effort ?? 'off');
       setSupportsVision(model?.supports_vision ?? false);
+      setModality('chat');
+      setDimension('1536');
       create.reset();
       patch.reset();
     }
@@ -322,6 +332,9 @@ export function ModelFormDialog({
       supports_reasoning: supportsReasoning,
       default_reasoning_effort: defaultEffort,
       supports_vision: supportsVision,
+      ...(modality === 'embedding'
+        ? { modality: 'embedding' as const, dimension: Number(dimension) }
+        : {}),
     };
     create.mutate(body, handleSettled);
   };
@@ -355,6 +368,17 @@ export function ModelFormDialog({
                   onSelect={pickProvider}
                   placeholder="Search providers…"
                 />
+              </div>
+              <div>
+                <Label htmlFor="model-modality">Type</Label>
+                <NativeSelect
+                  id="model-modality"
+                  value={modality}
+                  onChange={(e) => setModality(e.target.value as 'chat' | 'embedding')}
+                >
+                  <option value="chat">Chat model</option>
+                  <option value="embedding">Embedding model</option>
+                </NativeSelect>
               </div>
               {isCustom ? (
                 <>
@@ -406,6 +430,19 @@ export function ModelFormDialog({
               />
             </div>
           ) : null}
+          {!isEdit && modality === 'embedding' && (isCustom || modelId !== '') ? (
+            <div>
+              <Label htmlFor="model-dimension">Vector dimension</Label>
+              <Input
+                id="model-dimension"
+                type="number"
+                min={1}
+                required
+                value={dimension}
+                onChange={(e) => setDimension(e.target.value)}
+              />
+            </div>
+          ) : null}
           {kind !== null && NEEDS_BASE_URL.includes(kind) ? (
             <div>
               <Label htmlFor="model-base-url">Base URL</Label>
@@ -436,7 +473,7 @@ export function ModelFormDialog({
               />
             </div>
           ) : null}
-          {kind !== null ? (
+          {kind !== null && modality === 'chat' ? (
             <label className="flex items-center gap-2 text-[13px] text-secondary">
               <input
                 type="checkbox"
@@ -447,7 +484,7 @@ export function ModelFormDialog({
               Unreliable at native tool calling — agent uses the JSON planner
             </label>
           ) : null}
-          {kind !== null ? (
+          {kind !== null && modality === 'chat' ? (
             <>
               <label className="flex items-center gap-2 text-[13px] text-secondary">
                 <input

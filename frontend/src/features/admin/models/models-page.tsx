@@ -31,6 +31,7 @@ export function ModelsPage() {
   const [formTarget, setFormTarget] = useState<'create' | ModelOut | null>(null);
   const [formKey, setFormKey] = useState(0);
   const [removing, setRemoving] = useState<ModelOut | null>(null);
+  const [tab, setTab] = useState<'chat' | 'embedding'>('chat');
 
   const catalogByName = useMemo(
     () => new Map((catalog.data?.entries ?? []).map((e): [string, CatalogEntryOut] => [e.name, e])),
@@ -58,6 +59,20 @@ export function ModelsPage() {
       />
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-4xl">
+          <div className="mb-3 flex gap-1">
+            {(['chat', 'embedding'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={`rounded-md px-2 py-1 text-xs capitalize ${
+                  tab === t ? 'bg-subtle text-ink' : 'text-secondary'
+                }`}
+              >
+                {t} models
+              </button>
+            ))}
+          </div>
           {models.isPending ? <Spinner label="Loading models…" /> : null}
           {models.isError ? (
             <QueryError error={models.error} onRetry={() => models.refetch()} />
@@ -77,7 +92,9 @@ export function ModelsPage() {
                 </TR>
               </THead>
               <TBody>
-                {models.data.map((model) => {
+                {models.data
+                  .filter((model) => model.modality === tab)
+                  .map((model) => {
                   const catalogEntry = catalogByName.get(model.litellm_model_name);
                   return (
                     <TR key={model.id}>
@@ -138,22 +155,28 @@ export function ModelsPage() {
                         />
                       </TD>
                       <TD className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Edit ${model.display_name}`}
-                          onClick={() => openEdit(model)}
-                        >
-                          <Pencil className="h-4 w-4" aria-hidden />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Remove ${model.display_name}`}
-                          onClick={() => setRemoving(model)}
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden />
-                        </Button>
+                        {model.provider_kind === 'tei' ? (
+                          <span className="text-[11px] text-muted">Built-in</span>
+                        ) : (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Edit ${model.display_name}`}
+                              onClick={() => openEdit(model)}
+                            >
+                              <Pencil className="h-4 w-4" aria-hidden />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Remove ${model.display_name}`}
+                              onClick={() => setRemoving(model)}
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </>
+                        )}
                       </TD>
                     </TR>
                   );

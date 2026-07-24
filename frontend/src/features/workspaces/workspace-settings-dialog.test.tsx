@@ -9,7 +9,7 @@ import { WorkspaceSettingsDialog } from './workspace-settings-dialog';
 const ws: WorkspaceOut = {
   id: 'w1',
   name: 'Finance',
-  embedding_model: 'bge-m3',
+  embedding_model_id: 'model-embed-1',
   min_score: 0.35,
   default_model_id: null,
   top_k: 8,
