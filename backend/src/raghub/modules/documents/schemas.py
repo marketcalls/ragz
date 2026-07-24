@@ -76,6 +76,15 @@ class FolderOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FolderDeletePreview(BaseModel):
+    """GET /folders/{id}/delete-preview response -- a read-only look at how
+    many documents and subfolders delete_folder(id) would cascade over,
+    computed before the (irreversible) delete runs."""
+
+    document_count: int
+    subfolder_count: int
+
+
 class MetadataFieldCreate(BaseModel):
     """POST /workspaces/{id}/metadata-fields body (DOC-6)."""
 

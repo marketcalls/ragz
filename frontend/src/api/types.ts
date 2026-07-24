@@ -70,6 +70,10 @@ export type UserQuotaOut = components['schemas']['UserQuotaOut'];
 // /api/v1/folders/{folder_id} (Plan H, folder management Tasks 1-2):
 // workspace-scoped folder tree node. parent_folder_id is null for roots.
 export type FolderOut = components['schemas']['FolderOut'];
+// GET /api/v1/folders/{folder_id}/delete-preview: read-only document/subfolder
+// counts for a folder's subtree, fetched to back the delete confirmation
+// dialog before the actual (irreversible) DELETE call.
+export type FolderDeletePreview = components['schemas']['FolderDeletePreview'];
 
 export type DocumentStatus = DocumentOut['status'];
 

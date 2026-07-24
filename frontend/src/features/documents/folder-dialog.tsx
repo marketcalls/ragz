@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 
-import type { FolderOut } from '@/api/types';
+import type { FolderDeletePreview, FolderOut } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,12 @@ import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/toaster';
 
 import type { FolderNode } from './folder-queries';
-import { useCreateFolder, useDeleteFolder, usePatchFolder } from './folder-queries';
+import {
+  useCreateFolder,
+  useDeleteFolder,
+  useFolderDeletePreview,
+  usePatchFolder,
+} from './folder-queries';
 
 export function FolderCreateDialog({
   workspaceId,
@@ -132,6 +137,30 @@ function countSubtree(folderId: string, all: FolderOut[]): number {
   return count;
 }
 
+/** Builds the delete-confirmation text. Before the backend preview resolves
+ * (or if it fails), falls back to the client-side subfolder-only estimate
+ * with no document count -- a reasonable interim state rather than blocking
+ * the dialog from opening. Once `preview` has loaded, both counts come from
+ * the backend (the authoritative source for BOTH, not a mix of client/server
+ * numbers), since delete_folder's actual cascade is what these must match. */
+function buildDeleteDescription(
+  folderName: string,
+  clientSubfolderCount: number,
+  preview: FolderDeletePreview | undefined,
+): string {
+  if (!preview) {
+    const clause =
+      clientSubfolderCount > 0
+        ? ` and ${clientSubfolderCount} subfolder${clientSubfolderCount === 1 ? '' : 's'}`
+        : '';
+    return `"${folderName}"${clause} will be permanently deleted, along with every document inside. This cannot be undone.`;
+  }
+  const { document_count, subfolder_count } = preview;
+  const subfolderClause =
+    subfolder_count > 0 ? ` and ${subfolder_count} subfolder${subfolder_count === 1 ? '' : 's'}` : '';
+  return `"${folderName}"${subfolderClause} will be permanently deleted, along with ${document_count} document${document_count === 1 ? '' : 's'} inside. This cannot be undone.`;
+}
+
 export function FolderDeleteDialog({
   workspaceId,
   folder,
@@ -144,6 +173,7 @@ export function FolderDeleteDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const del = useDeleteFolder(workspaceId);
+  const preview = useFolderDeletePreview(folder?.id ?? null);
   const subfolderCount = folder ? countSubtree(folder.id, allFolders) - 1 : 0;
 
   return (
@@ -151,9 +181,7 @@ export function FolderDeleteDialog({
       <DialogContent
         title="Delete folder"
         description={
-          folder
-            ? `"${folder.name}"${subfolderCount > 0 ? ` and ${subfolderCount} subfolder${subfolderCount === 1 ? '' : 's'}` : ''} will be permanently deleted, along with every document inside. This cannot be undone.`
-            : undefined
+          folder ? buildDeleteDescription(folder.name, subfolderCount, preview.data) : undefined
         }
       >
         <DialogFooter>

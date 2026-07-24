@@ -182,6 +182,67 @@ async def test_delete_folder_cascades_to_subfolders_and_documents(
     assert remaining_folders == []
 
 
+async def test_count_subtree_matches_delete_folder_document_count(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    """count_subtree is a preview: it must report the exact same counts a
+    subsequent delete_folder call would act on, across a multi-level subtree
+    (parent -> child -> grandchild, documents scattered at each level, plus
+    an unrelated sibling folder that must NOT be counted)."""
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    parent = await folders_service.create_folder(
+        session, ctx, ws.id, name="Legal", parent_folder_id=None
+    )
+    child = await folders_service.create_folder(
+        session, ctx, ws.id, name="Contracts", parent_folder_id=parent.id
+    )
+    grandchild = await folders_service.create_folder(
+        session, ctx, ws.id, name="2024", parent_folder_id=child.id
+    )
+    await folders_service.create_folder(
+        session, ctx, ws.id, name="Unrelated", parent_folder_id=None
+    )
+    await create_from_upload(
+        session, ctx, ws.id, filename="a.pdf", mime="application/pdf", data=b"a",
+        folder_id=parent.id,
+    )
+    await create_from_upload(
+        session, ctx, ws.id, filename="b.pdf", mime="application/pdf", data=b"b",
+        folder_id=child.id,
+    )
+    await create_from_upload(
+        session, ctx, ws.id, filename="c.pdf", mime="application/pdf", data=b"c",
+        folder_id=grandchild.id,
+    )
+    await create_from_upload(
+        session, ctx, ws.id, filename="unrelated.pdf", mime="application/pdf", data=b"u",
+        folder_id=None,
+    )
+
+    document_count, subfolder_count = await folders_service.count_subtree(
+        session, ctx, parent.id
+    )
+    assert document_count == 3
+    assert subfolder_count == 2  # child + grandchild, not parent itself
+
+    document_ids = await folders_service.delete_folder(session, ctx, parent.id)
+    assert len(document_ids) == document_count
+
+
+async def test_count_subtree_leaf_folder_with_no_documents(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    folder = await folders_service.create_folder(
+        session, ctx, ws.id, name="Empty", parent_folder_id=None
+    )
+    document_count, subfolder_count = await folders_service.count_subtree(
+        session, ctx, folder.id
+    )
+    assert document_count == 0
+    assert subfolder_count == 0
+
+
 async def test_delete_empty_folder(session: AsyncSession, ctx: TenantContext) -> None:
     ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
     folder = await folders_service.create_folder(

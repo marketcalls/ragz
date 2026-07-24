@@ -6,7 +6,7 @@ same inversion as documents/service.py's promote_lineage/set_approved."""
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -200,6 +200,29 @@ async def _collect_subtree_folder_ids(session: AsyncSession, folder_id: UUID) ->
         ids.extend(rows)
         frontier = rows
     return ids
+
+
+async def count_subtree(
+    session: AsyncSession, ctx: TenantContext, folder_id: UUID
+) -> tuple[int, int]:
+    """Read-only preview for the delete confirmation dialog: how many
+    documents and subfolders a delete_folder(folder_id) call would cascade
+    over, computed BEFORE that (irreversible) delete actually runs --
+    delete_folder itself only returns the document count, and only AFTER
+    deletion already happened, so it can't back this UI. Reuses the exact
+    same _collect_subtree_folder_ids walk delete_folder uses, so the preview
+    and the real delete can never disagree on which folders are "the
+    subtree." Returns (document_count, subfolder_count); subfolder_count
+    excludes folder_id itself, matching the frontend's existing
+    countSubtree-minus-1 client-side convention."""
+    folder = await get_folder_checked(session, ctx, folder_id)
+    folder_ids = await _collect_subtree_folder_ids(session, folder.id)
+    document_count = (
+        await session.execute(
+            select(func.count()).select_from(Document).where(Document.folder_id.in_(folder_ids))
+        )
+    ).scalar_one()
+    return document_count, len(folder_ids) - 1
 
 
 async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UUID) -> list[UUID]:

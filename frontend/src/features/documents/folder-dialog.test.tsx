@@ -164,7 +164,29 @@ const flatFolders: FolderOut[] = [
   folder({ id: 'unrelated', name: 'Unrelated' }),
 ];
 
-test('delete confirmation names the real subfolder count (3: two children + one grandchild) from the flat list', () => {
+// Routes fetch by URL substring -- the delete-preview GET and the folder
+// DELETE hit different endpoints, and several tests below need both handled
+// by the same stubbed `fetch` within a single render.
+function routedFetch(
+  routes: Array<{ urlIncludes: string; response: () => Response }>,
+): ReturnType<typeof vi.fn> {
+  return vi.fn(async (req: Request) => {
+    const route = routes.find((r) => req.url.includes(r.urlIncludes));
+    if (!route) throw new Error(`unhandled request in test: ${req.method} ${req.url}`);
+    return route.response();
+  });
+}
+
+test('before the delete preview loads, the interim text uses the client-side subfolder-only estimate', () => {
+  // No fetch stub at all -- the preview request never resolves within this
+  // synchronous assertion, so the dialog must show SOMETHING sensible
+  // (the pre-existing client-side count, no document mention) rather than
+  // blocking on the network call.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>(() => {})),
+  );
+
   renderWithClient(
     <FolderDeleteDialog
       workspaceId="w1"
@@ -181,7 +203,44 @@ test('delete confirmation names the real subfolder count (3: two children + one 
   ).toBeInTheDocument();
 });
 
-test('delete confirmation uses singular "subfolder" for exactly one descendant', () => {
+test('delete confirmation names the real subfolder AND document counts once the backend preview loads', async () => {
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
+      {
+        urlIncludes: '/delete-preview',
+        response: () => jsonResponse({ document_count: 5, subfolder_count: 3 }),
+      },
+    ]),
+  );
+
+  renderWithClient(
+    <FolderDeleteDialog
+      workspaceId="w1"
+      folder={node({ id: 'root', name: 'Root' })}
+      allFolders={flatFolders}
+      onOpenChange={vi.fn()}
+    />,
+  );
+
+  expect(
+    await screen.findByText(
+      '"Root" and 3 subfolders will be permanently deleted, along with 5 documents inside. This cannot be undone.',
+    ),
+  ).toBeInTheDocument();
+});
+
+test('delete confirmation uses singular "subfolder"/"document" for exactly one of each', async () => {
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
+      {
+        urlIncludes: '/delete-preview',
+        response: () => jsonResponse({ document_count: 1, subfolder_count: 1 }),
+      },
+    ]),
+  );
+
   renderWithClient(
     <FolderDeleteDialog
       workspaceId="w1"
@@ -192,13 +251,23 @@ test('delete confirmation uses singular "subfolder" for exactly one descendant',
   );
 
   expect(
-    screen.getByText(
-      '"Child A" and 1 subfolder will be permanently deleted, along with every document inside. This cannot be undone.',
+    await screen.findByText(
+      '"Child A" and 1 subfolder will be permanently deleted, along with 1 document inside. This cannot be undone.',
     ),
   ).toBeInTheDocument();
 });
 
-test('delete confirmation omits the subfolder clause for a leaf folder', () => {
+test('delete confirmation omits the subfolder clause for a leaf folder but still states its (zero) document count', async () => {
+  vi.stubGlobal(
+    'fetch',
+    routedFetch([
+      {
+        urlIncludes: '/delete-preview',
+        response: () => jsonResponse({ document_count: 0, subfolder_count: 0 }),
+      },
+    ]),
+  );
+
   renderWithClient(
     <FolderDeleteDialog
       workspaceId="w1"
@@ -209,14 +278,20 @@ test('delete confirmation omits the subfolder clause for a leaf folder', () => {
   );
 
   expect(
-    screen.getByText(
-      '"Grandchild" will be permanently deleted, along with every document inside. This cannot be undone.',
+    await screen.findByText(
+      '"Grandchild" will be permanently deleted, along with 0 documents inside. This cannot be undone.',
     ),
   ).toBeInTheDocument();
 });
 
 test('clicking Delete fires the delete mutation and reports the deleted document count', async () => {
-  const fetchMock = vi.fn(async (_req: Request) => jsonResponse({ documents_deleted: 5 }, 202));
+  const fetchMock = routedFetch([
+    {
+      urlIncludes: '/delete-preview',
+      response: () => jsonResponse({ document_count: 5, subfolder_count: 3 }),
+    },
+    { urlIncludes: '/api/v1/folders/root', response: () => jsonResponse({ documents_deleted: 5 }, 202) },
+  ]);
   vi.stubGlobal('fetch', fetchMock);
   const onOpenChange = vi.fn();
   const user = userEvent.setup();
@@ -230,16 +305,22 @@ test('clicking Delete fires the delete mutation and reports the deleted document
     />,
   );
 
+  // Wait for the preview to settle first so the click below unambiguously
+  // targets the folder-delete request in the assertion further down.
+  await screen.findByText(
+    '"Root" and 3 subfolders will be permanently deleted, along with 5 documents inside. This cannot be undone.',
+  );
+
   await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-  const req = fetchMock.mock.calls[0]![0] as Request;
-  expect(req.method).toBe('DELETE');
-  expect(req.url).toContain('/api/v1/folders/root');
   await vi.waitFor(() =>
     expect(toast).toHaveBeenCalledWith('Folder deleted — 5 document(s) removed'),
   );
   await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  const deleteCall = fetchMock.mock.calls.find(
+    (c) => (c[0] as Request).method === 'DELETE',
+  )?.[0] as Request;
+  expect(deleteCall.url).toContain('/api/v1/folders/root');
 });
 
 test('delete dialog renders closed (no Delete button) when folder is null', () => {

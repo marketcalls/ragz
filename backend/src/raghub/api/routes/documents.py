@@ -18,6 +18,7 @@ from raghub.modules.documents.schemas import (
     DocumentPatch,
     EnsurePathRequest,
     FolderCreate,
+    FolderDeletePreview,
     FolderOut,
     FolderPatch,
     MetadataFieldCreate,
@@ -186,6 +187,19 @@ async def patch_folder(
         fields_set=body.model_fields_set,
     )
     return FolderOut.model_validate(folder)
+
+
+@router.get("/folders/{folder_id}/delete-preview", response_model=FolderDeletePreview)
+async def preview_folder_delete(
+    folder_id: UUID, session: SessionDep, ctx: DeleteDep
+) -> FolderDeletePreview:
+    # Gated behind the same "documents.delete" permission as the actual
+    # delete route below (DeleteDep), since this preview only exists to back
+    # that delete's confirmation dialog.
+    document_count, subfolder_count = await folders_service.count_subtree(
+        session, ctx, folder_id
+    )
+    return FolderDeletePreview(document_count=document_count, subfolder_count=subfolder_count)
 
 
 @router.delete("/folders/{folder_id}", status_code=202)

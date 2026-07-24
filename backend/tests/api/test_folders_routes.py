@@ -89,6 +89,49 @@ async def test_move_folder_into_own_descendant_returns_409_problem_json(
     assert r.headers["content-type"] == "application/problem+json"
 
 
+async def test_delete_preview_reports_document_and_subfolder_counts_before_deleting(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession, stack_env: None,
+) -> None:
+    h_admin = await auth(client, seeded_user.email)
+    r = await client.post("/api/v1/workspaces", json={"name": "Finance"}, headers=h_admin)
+    assert r.status_code == 201
+    ws_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/folders",
+        json={"name": "Legal", "parent_folder_id": None},
+        headers=h_admin,
+    )
+    parent_id = r.json()["id"]
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/folders",
+        json={"name": "Contracts", "parent_folder_id": parent_id},
+        headers=h_admin,
+    )
+    child_id = r.json()["id"]
+
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents", headers=h_admin,
+        files={"file": ("a.txt", b"in parent", "text/plain")},
+        data={"folder_id": parent_id},
+    )
+    assert r.status_code == 201
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents", headers=h_admin,
+        files={"file": ("b.txt", b"in child", "text/plain")},
+        data={"folder_id": child_id},
+    )
+    assert r.status_code == 201
+
+    r = await client.get(f"/api/v1/folders/{parent_id}/delete-preview", headers=h_admin)
+    assert r.status_code == 200
+    assert r.json() == {"document_count": 2, "subfolder_count": 1}
+
+    # The preview must not have deleted anything -- both folders still list.
+    r = await client.get(f"/api/v1/workspaces/{ws_id}/folders", headers=h_admin)
+    assert {f["name"] for f in r.json()} == {"Legal", "Contracts"}
+
+
 async def test_delete_folder_cascades_and_enqueues_each_document(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
     stack_env: None, captured_enqueues: dict,  # type: ignore[type-arg]

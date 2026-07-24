@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
-import type { FolderOut } from '@/api/types';
+import type { FolderDeletePreview, FolderOut } from '@/api/types';
 
 export function useFolders(workspaceId: string | null) {
   return useQuery({
@@ -73,6 +73,25 @@ export function useDeleteFolder(workspaceId: string | null) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['folders', workspaceId] });
       void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] });
+    },
+  });
+}
+
+/** Backs the delete confirmation dialog: fetches the real document/subfolder
+ * counts for a folder's subtree BEFORE the (irreversible) DELETE call, since
+ * delete_folder only returns the document count AFTER deletion already
+ * happened. `enabled: folderId !== null` means this only fires while a
+ * delete confirmation is actually open -- not on every folder-tree render. */
+export function useFolderDeletePreview(folderId: string | null) {
+  return useQuery({
+    queryKey: ['folder-delete-preview', folderId],
+    enabled: folderId !== null,
+    queryFn: async (): Promise<FolderDeletePreview> => {
+      const { data, error } = await api.GET('/api/v1/folders/{folder_id}/delete-preview', {
+        params: { path: { folder_id: folderId as string } },
+      });
+      if (error) throw new Error('failed to load folder delete preview');
+      return data;
     },
   });
 }

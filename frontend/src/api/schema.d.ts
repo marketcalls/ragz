@@ -469,6 +469,23 @@ export interface paths {
         patch: operations["patch_folder_api_v1_folders__folder_id__patch"];
         trace?: never;
     };
+    "/api/v1/folders/{folder_id}/delete-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Folder Delete */
+        get: operations["preview_folder_delete_api_v1_folders__folder_id__delete_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{workspace_id}/metadata-fields": {
         parameters: {
             query?: never;
@@ -1651,6 +1668,18 @@ export interface components {
             name: string;
             /** Parent Folder Id */
             parent_folder_id?: string | null;
+        };
+        /**
+         * FolderDeletePreview
+         * @description GET /folders/{id}/delete-preview response -- a read-only look at how
+         *     many documents and subfolders delete_folder(id) would cascade over,
+         *     computed before the (irreversible) delete runs.
+         */
+        FolderDeletePreview: {
+            /** Document Count */
+            document_count: number;
+            /** Subfolder Count */
+            subfolder_count: number;
         };
         /** FolderOut */
         FolderOut: {
@@ -3425,6 +3454,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FolderOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_folder_delete_api_v1_folders__folder_id__delete_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderDeletePreview"];
                 };
             };
             /** @description Validation Error */
