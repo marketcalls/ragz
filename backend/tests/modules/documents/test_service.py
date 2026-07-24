@@ -197,7 +197,7 @@ async def test_has_indexed_documents(session: AsyncSession, stack_env: None) -> 
 
 
 async def test_same_filename_in_different_folders_is_independent_lineage(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
     folder_a = await folders_service.create_folder(
@@ -220,7 +220,7 @@ async def test_same_filename_in_different_folders_is_independent_lineage(
 
 
 async def test_same_filename_same_folder_still_versions(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
     folder = await folders_service.create_folder(
@@ -240,7 +240,7 @@ async def test_same_filename_same_folder_still_versions(
 
 
 async def test_move_document_preserves_lineage(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
     folder = await folders_service.create_folder(
