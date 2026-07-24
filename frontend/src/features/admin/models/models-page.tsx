@@ -83,6 +83,7 @@ export function ModelsPage() {
                 <TR>
                   <TH>Name</TH>
                   <TH>Provider</TH>
+                  <TH>Type</TH>
                   <TH>Model id</TH>
                   <TH>Key</TH>
                   <TH>Gateway</TH>
@@ -100,6 +101,7 @@ export function ModelsPage() {
                     <TR key={model.id}>
                       <TD className="font-medium">{model.display_name}</TD>
                       <TD className="text-secondary">{model.provider_kind}</TD>
+                      <TD className="capitalize text-secondary">{model.modality}</TD>
                       <TD className="font-mono text-[12px] text-secondary">
                         <div>{model.litellm_model_name}</div>
                         {catalogEntry ? (

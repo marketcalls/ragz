@@ -155,3 +155,14 @@ test('shows an error message and retry button when the query fails', async () =>
   await userEvent.click(screen.getByRole('button', { name: /retry/i }));
   expect(refetch).toHaveBeenCalledTimes(1);
 });
+
+test('the Type column displays the modality of each model', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  // On chat tab, verify chat models show 'chat' modality
+  expect(screen.getAllByText('chat', { selector: 'td' }).length).toBeGreaterThan(0);
+  // Switch to embedding tab
+  await user.click(screen.getByRole('button', { name: 'embedding models' }));
+  // On embedding tab, verify embedding models show 'embedding' modality
+  expect(screen.getByText('embedding', { selector: 'td' })).toBeInTheDocument();
+});
