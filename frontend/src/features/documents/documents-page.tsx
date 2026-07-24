@@ -52,6 +52,12 @@ export function DocumentsPage() {
   const [creatingUnder, setCreatingUnder] = useState<string | null>(null);
   const [creatingOpen, setCreatingOpen] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<FolderNode | null>(null);
+  // `renameKey` forces a fresh mount of FolderRenameDialog on every open,
+  // mirroring RolesPage/ModelsPage's formKey pattern: FolderRenameDialog is
+  // rendered unconditionally below (no key otherwise), so without this its
+  // `useState(folder?.name ?? '')` initializer would only run once, on first
+  // mount, and never resync to whichever folder is selected next.
+  const [renameKey, setRenameKey] = useState(0);
   const [deletingFolder, setDeletingFolder] = useState<FolderNode | null>(null);
 
   const groups = documents.data
@@ -59,6 +65,11 @@ export function DocumentsPage() {
         matchesMetadataFilter(current.meta, fields, metadataFilter),
       )
     : [];
+
+  const openRename = (folder: FolderNode): void => {
+    setRenamingFolder(folder);
+    setRenameKey((k) => k + 1);
+  };
 
   const onFiles = (files: File[]): void => {
     if (!workspaceId) return;
@@ -103,6 +114,7 @@ export function DocumentsPage() {
         onOpenChange={setCreatingOpen}
       />
       <FolderRenameDialog
+        key={renameKey}
         workspaceId={workspaceId}
         folder={renamingFolder}
         onOpenChange={(open) => !open && setRenamingFolder(null)}
@@ -123,7 +135,7 @@ export function DocumentsPage() {
               setCreatingUnder(parentId);
               setCreatingOpen(true);
             }}
-            onRename={setRenamingFolder}
+            onRename={openRename}
             onDelete={setDeletingFolder}
           />
         </div>
