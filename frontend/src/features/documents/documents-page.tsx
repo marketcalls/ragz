@@ -15,17 +15,18 @@ import { WorkspaceSettingsDialog } from '@/features/workspaces/workspace-setting
 import { useClaims } from '@/lib/use-claims';
 
 import { DocumentRow } from './document-row';
+import type { DroppedFile } from './dropzone';
 import { Dropzone } from './dropzone';
 import { FolderCreateDialog, FolderDeleteDialog, FolderRenameDialog } from './folder-dialog';
-import { buildFolderTree, useFolders } from './folder-queries';
+import { buildFolderTree, useEnsureFolderPath, useFolders } from './folder-queries';
 import type { FolderNode } from './folder-queries';
 import { FolderTree } from './folder-tree';
 import { matchesMetadataFilter, MetadataFilterBar } from './metadata-filter-bar';
 import { useDeleteDocument, useDocuments, useMetadataFields, usePinDocument } from './queries';
-import { uploadDocuments } from './upload';
+import { uploadDocuments, type UploadItem } from './upload';
 import { groupByLineage } from './versions';
 
-interface UploadItem {
+interface UploadProgress {
   key: string;
   names: string;
   pct: number;
@@ -42,7 +43,8 @@ export function DocumentsPage() {
   const metadataFields = useMetadataFields(workspaceId);
   const fields = metadataFields.data ?? [];
   const [metadataFilter, setMetadataFilter] = useState<Record<string, string>>({});
-  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [uploads, setUploads] = useState<UploadProgress[]>([]);
+  const ensureFolderPath = useEnsureFolderPath(workspaceId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const claims = useClaims();
   const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
@@ -76,13 +78,51 @@ export function DocumentsPage() {
     const key = crypto.randomUUID();
     const names = files.map((f) => f.name).join(', ');
     setUploads((prev) => [...prev, { key, names, pct: 0 }]);
-    uploadDocuments(workspaceId, files, (pct) =>
-      setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, pct } : u))),
+    uploadDocuments(
+      workspaceId,
+      files.map((file) => ({ file, folderId: selectedFolderId })),
+      (pct) => setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, pct } : u))),
     )
       .then((failures) => {
         for (const failure of failures) toast.error(`${failure.file.name}: ${failure.message}`);
         void documents.refetch();
       })
+      .catch((err: Error) => toast.error(err.message))
+      .finally(() => setUploads((prev) => prev.filter((u) => u.key !== key)));
+  };
+
+  const onFolderFiles = (dropped: DroppedFile[]): void => {
+    if (!workspaceId) return;
+    const key = crypto.randomUUID();
+    const names = dropped.map((d) => d.relativePath).join(', ');
+    setUploads((prev) => [...prev, { key, names, pct: 0 }]);
+
+    const run = async (): Promise<void> => {
+      // Resolve each file's directory path (everything before the final
+      // filename segment) to a folder_id, caching by path so a tree with
+      // many files in the same directory only calls ensure-path ONCE per
+      // unique directory, not once per file.
+      const pathToFolderId = new Map<string, string | null>();
+      pathToFolderId.set('', null); // root
+      const items: UploadItem[] = [];
+      for (const { file, relativePath } of dropped) {
+        const segments = relativePath.split('/');
+        const dirPath = segments.slice(0, -1).join('/');
+        if (!pathToFolderId.has(dirPath)) {
+          const folder = await ensureFolderPath.mutateAsync(dirPath);
+          pathToFolderId.set(dirPath, folder.id);
+        }
+        items.push({ file, folderId: pathToFolderId.get(dirPath) ?? null });
+      }
+      const failures = await uploadDocuments(workspaceId, items, (pct) =>
+        setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, pct } : u))),
+      );
+      for (const failure of failures) toast.error(`${failure.file.name}: ${failure.message}`);
+      void documents.refetch();
+      void folders.refetch();
+    };
+
+    run()
       .catch((err: Error) => toast.error(err.message))
       .finally(() => setUploads((prev) => prev.filter((u) => u.key !== key)));
   };
@@ -141,7 +181,7 @@ export function DocumentsPage() {
         </div>
         <div className="flex-1 overflow-y-auto p-4">
           <div className="mx-auto max-w-4xl space-y-4">
-            <Dropzone onFiles={onFiles} disabled={!workspaceId} />
+            <Dropzone onFiles={onFiles} onFolderFiles={onFolderFiles} disabled={!workspaceId} />
             {uploads.map((u) => (
               <div key={u.key} className="rounded-md border border-line bg-raised px-3 py-2">
                 <div className="mb-1 flex justify-between text-[12px]">

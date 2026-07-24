@@ -1,5 +1,6 @@
 import { setAccessToken } from '@/lib/auth-store';
 
+import { walkDroppedItems } from './dropzone';
 import { uploadDocuments } from './upload';
 
 class FakeXhr {
@@ -37,9 +38,10 @@ afterEach(() => {
 test('sends one multipart "file" POST per file, sequentially, with bearer token and aggregate progress', async () => {
   setAccessToken('tok');
   const onProgress = vi.fn();
+  const files = [new File(['x'], 'a.pdf'), new File(['yy'], 'b.pdf')];
   const promise = uploadDocuments(
     'w1',
-    [new File(['x'], 'a.pdf'), new File(['yy'], 'b.pdf')],
+    files.map((file) => ({ file, folderId: null })),
     onProgress,
   );
 
@@ -65,10 +67,37 @@ test('sends one multipart "file" POST per file, sequentially, with bearer token 
   expect(onProgress).toHaveBeenLastCalledWith(100);
 });
 
-test('a per-file failure (409 dedup / 413 oversize) is collected but the batch continues', async () => {
+test('a non-null folderId is sent as a "folder_id" form field', async () => {
+  const files = [new File(['x'], 'a.pdf')];
   const promise = uploadDocuments(
     'w1',
-    [new File(['x'], 'dup.pdf'), new File(['y'], 'ok.pdf')],
+    files.map((file) => ({ file, folderId: 'folder-1' })),
+    vi.fn(),
+  );
+  const xhr = FakeXhr.instances[0]!;
+  expect(xhr.body?.getAll('folder_id')).toEqual(['folder-1']);
+  xhr.onload?.();
+  await promise;
+});
+
+test('a null folderId (root) sends no "folder_id" form field at all', async () => {
+  const files = [new File(['x'], 'a.pdf')];
+  const promise = uploadDocuments(
+    'w1',
+    files.map((file) => ({ file, folderId: null })),
+    vi.fn(),
+  );
+  const xhr = FakeXhr.instances[0]!;
+  expect(xhr.body?.getAll('folder_id')).toEqual([]);
+  xhr.onload?.();
+  await promise;
+});
+
+test('a per-file failure (409 dedup / 413 oversize) is collected but the batch continues', async () => {
+  const files = [new File(['x'], 'dup.pdf'), new File(['y'], 'ok.pdf')];
+  const promise = uploadDocuments(
+    'w1',
+    files.map((file) => ({ file, folderId: null })),
     vi.fn(),
   );
 
@@ -89,7 +118,12 @@ test('a per-file failure (409 dedup / 413 oversize) is collected but the batch c
 });
 
 test('non-string detail (422 validation error array) falls back to a generic message', async () => {
-  const promise = uploadDocuments('w1', [new File(['x'], 'a.pdf')], vi.fn());
+  const files = [new File(['x'], 'a.pdf')];
+  const promise = uploadDocuments(
+    'w1',
+    files.map((file) => ({ file, folderId: null })),
+    vi.fn(),
+  );
   const xhr = FakeXhr.instances[0]!;
   xhr.status = 422;
   xhr.responseText = JSON.stringify({
@@ -112,7 +146,12 @@ test('401 → refresh → single retry, then succeeds', async () => {
       }),
     ),
   );
-  const promise = uploadDocuments('w1', [new File(['x'], 'a.pdf')], vi.fn());
+  const files = [new File(['x'], 'a.pdf')];
+  const promise = uploadDocuments(
+    'w1',
+    files.map((file) => ({ file, folderId: null })),
+    vi.fn(),
+  );
   const first = FakeXhr.instances[0]!;
   first.status = 401;
   first.onload?.();
@@ -122,4 +161,69 @@ test('401 → refresh → single retry, then succeeds', async () => {
   second.onload?.();
   const failures = await promise;
   expect(failures).toEqual([]);
+});
+
+// --- walkDroppedItems / walkEntry (dropzone.tsx) ---
+//
+// Mocks the File and Directory Entries API shape returned by
+// DataTransferItem.webkitGetAsEntry(): FileSystemFileEntry/FileSystemDirectoryEntry
+// with a createReader() whose readEntries() callback-style API is exercised
+// across MULTIPLE batches (a non-empty batch followed by an empty one) to
+// prove readDirectoryEntries' repeated-call-until-empty loop is what actually
+// collects every child, not just the first batch.
+
+class FakeFileEntry {
+  readonly isFile = true;
+  readonly isDirectory = false;
+  constructor(readonly name: string) {}
+  file(successCallback: (file: File) => void): void {
+    successCallback(new File(['x'], this.name));
+  }
+}
+
+class FakeDirectoryEntry {
+  readonly isFile = false;
+  readonly isDirectory = true;
+  constructor(
+    readonly name: string,
+    // Each inner array is one readEntries() batch; the reader is exhausted
+    // (and readDirectoryEntries stops) only once a batch comes back empty.
+    private readonly batches: (FakeFileEntry | FakeDirectoryEntry)[][],
+  ) {}
+  createReader(): FileSystemDirectoryReader {
+    let call = 0;
+    return {
+      readEntries: (successCallback: (entries: FileSystemEntry[]) => void) => {
+        const batch = this.batches[call] ?? [];
+        call += 1;
+        successCallback(batch as unknown as FileSystemEntry[]);
+      },
+    } as unknown as FileSystemDirectoryReader;
+  }
+}
+
+test('walkDroppedItems recurses through multi-level nested directories and builds the full relative path', async () => {
+  // Legal/
+  //   index.pdf
+  //   Contracts/
+  //     2024/
+  //       report.pdf
+  const reportFile = new FakeFileEntry('report.pdf');
+  // Two calls: one non-empty batch, then the empty batch that terminates the read.
+  const dir2024 = new FakeDirectoryEntry('2024', [[reportFile], []]);
+  const contractsDir = new FakeDirectoryEntry('Contracts', [[dir2024], []]);
+  const indexFile = new FakeFileEntry('index.pdf');
+  // Three calls: two non-empty batches (proving batching isn't a single readEntries call), then empty.
+  const legalDir = new FakeDirectoryEntry('Legal', [[indexFile], [contractsDir], []]);
+
+  const items = [
+    { webkitGetAsEntry: () => legalDir as unknown as FileSystemEntry },
+  ] as unknown as DataTransferItemList;
+
+  const dropped = await walkDroppedItems(items);
+  const byPath = new Map(dropped.map((d) => [d.relativePath, d.file]));
+
+  expect([...byPath.keys()].sort()).toEqual(['Legal/Contracts/2024/report.pdf', 'Legal/index.pdf']);
+  expect(byPath.get('Legal/index.pdf')!.name).toBe('index.pdf');
+  expect(byPath.get('Legal/Contracts/2024/report.pdf')!.name).toBe('report.pdf');
 });
