@@ -35,7 +35,7 @@ from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
-from raghub.core.errors import WorkspaceAccessDenied
+from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
 from raghub.modules.documents.pipeline import Chunk
 from raghub.modules.retrieval.client import COLLECTION, EPHEMERAL_COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
@@ -189,19 +189,17 @@ def _ctx_acl(ctx: TenantContext) -> frozenset[UUID] | None:
 _HEALED: set[str] = set()  # collections whose Plan H heal indexes have run this process
 
 
-async def ensure_collection(embedding_model: str = "bge-m3") -> str:
-    """Idempotent collection setup. Any model other than bge-m3 is rejected —
-    the Phase 1 embedding-model lock (workspaces default to bge-m3)."""
-    if embedding_model != "bge-m3":
-        raise ValueError(f"unsupported embedding model: {embedding_model}")
+async def ensure_collection(collection_name: str, dimension: int) -> None:
+    """Idempotent collection setup for ONE embedding model's collection (DOC-10:
+    was a single hardcoded COLLECTION + a bge-m3-only validation gate). Every
+    caller now states which collection and what vector size explicitly --
+    same "no defaults" convention as _tenant_filter."""
     client = get_qdrant()
-    if not await client.collection_exists(COLLECTION):
+    if not await client.collection_exists(collection_name):
         await client.create_collection(
-            COLLECTION,
+            collection_name,
             vectors_config={
-                "dense": models.VectorParams(
-                    size=get_settings().embedding_dim, distance=models.Distance.COSINE
-                )
+                "dense": models.VectorParams(size=dimension, distance=models.Distance.COSINE)
             },
             sparse_vectors_config={
                 "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)
@@ -209,10 +207,10 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
         )
         for field in ("tenant_id", "workspace_id", "document_id", "acl_groups"):
             await client.create_payload_index(
-                COLLECTION, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
+                collection_name, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
             )
         await client.create_payload_index(
-            COLLECTION, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
+            collection_name, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
         )
     else:
         # Heal collections created before Phase 2/H: acl_groups and is_current
@@ -220,16 +218,33 @@ async def ensure_collection(embedding_model: str = "bge-m3") -> str:
         # in Qdrant). Gated to once per process (Plan K carried finding) —
         # every subsequent retrieve() call hit this branch and re-issued both
         # calls needlessly.
-        if COLLECTION not in _HEALED:
+        if collection_name not in _HEALED:
             await client.create_payload_index(
-                COLLECTION, field_name="acl_groups",
+                collection_name, field_name="acl_groups",
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
             await client.create_payload_index(
-                COLLECTION, field_name="is_current", field_schema=models.PayloadSchemaType.BOOL
+                collection_name, field_name="is_current",
+                field_schema=models.PayloadSchemaType.BOOL,
             )
-            _HEALED.add(COLLECTION)
-    return COLLECTION
+            _HEALED.add(collection_name)
+
+
+async def resolve_collection_name(session: AsyncSession, workspace_id: UUID) -> str:
+    """The one place that turns "which workspace" into "which Qdrant collection"
+    (DOC-10). Every document-lifecycle Qdrant call in this module and in
+    documents/pipeline.py takes collection_name as an explicit parameter
+    instead of doing this lookup itself -- callers that already have the
+    Workspace/Model loaded (chat/service.py, documents/ingest.py) read
+    model.collection_name directly instead of calling this a second time."""
+    from raghub.modules.models import service as models_service
+    from raghub.modules.tenancy.models import Workspace
+
+    ws = await session.get(Workspace, workspace_id)
+    if ws is None:
+        raise NotFoundError("workspace not found")
+    model = await models_service.get_model(session, ws.embedding_model_id)
+    return model.collection_name  # type: ignore[return-value]  # always set for modality="embedding"
 
 
 async def ensure_ephemeral_collection() -> str:
@@ -434,11 +449,26 @@ async def retrieve(
     6. Plan H: current_only=True — only the current version of each document
        (or legacy pre-H points) is ever retrievable; metadata_clauses narrow
        further per Task 10's route wiring.
+
+    DOC-10: resolves the workspace's OWN embedding model and collection
+    instead of the module's COLLECTION constant -- a workspace that switched
+    off the seeded default now genuinely queries its own collection
+    (previously ensure_collection's return value was silently discarded and
+    both query_points calls below hit the hardcoded constant regardless).
     """
+    from raghub.modules.models import service as models_service
+
     ws = await get_workspace_checked(session, ctx, workspace_id)
     k = top_k if top_k is not None else ws.top_k
-    await ensure_collection(ws.embedding_model)
-    dense_vec = (await get_dense_embedder().embed([query]))[0]
+    embedding_model = await models_service.get_model(session, ws.embedding_model_id)
+    collection_name = embedding_model.collection_name
+    assert collection_name is not None  # embedding-modality models always set this
+    await ensure_collection(collection_name, embedding_model.dimension)  # type: ignore[arg-type]
+    dense_embedder = get_dense_embedder(
+        embedding_model.id, provider_kind=embedding_model.provider_kind,
+        litellm_model_name=embedding_model.litellm_model_name,
+    )
+    dense_vec = (await dense_embedder.embed([query]))[0]
     sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
     flt = _tenant_filter(
         org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx),
@@ -448,7 +478,7 @@ async def retrieve(
     fetch_k = _RERANK_PREFETCH if ws.rerank_enabled else k
     prefetch_limit = max(fetch_k, k * 4)
     fused = await client.query_points(
-        COLLECTION,
+        collection_name,
         prefetch=[
             models.Prefetch(query=dense_vec, using="dense", filter=flt, limit=prefetch_limit),
             models.Prefetch(query=sparse_vec, using="sparse", filter=flt, limit=prefetch_limit),
@@ -481,7 +511,7 @@ async def retrieve(
 
     chunks = candidates[:k]
     top_dense = await client.query_points(
-        COLLECTION, query=dense_vec, using="dense", query_filter=flt,
+        collection_name, query=dense_vec, using="dense", query_filter=flt,
         limit=1, with_payload=False,
     )
     best_cosine = float(top_dense.points[0].score) if top_dense.points else 0.0

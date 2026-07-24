@@ -117,7 +117,7 @@ async def qdrant_collection(stack_env: None) -> None:
     client = get_qdrant()
     if await client.collection_exists(COLLECTION):
         await client.delete_collection(COLLECTION)
-    await ensure_collection()
+    await ensure_collection(COLLECTION, get_settings().embedding_dim)
 
 
 @pytest.fixture
