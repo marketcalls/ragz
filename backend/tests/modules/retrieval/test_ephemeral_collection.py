@@ -3,6 +3,7 @@ from uuid import uuid4
 from qdrant_client import models
 
 from raghub.modules.documents.pipeline import Chunk
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from raghub.modules.retrieval.client import EPHEMERAL_COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.service import (
@@ -12,6 +13,17 @@ from raghub.modules.retrieval.service import (
     search_ephemeral_attachments,
     upsert_ephemeral_chunks,
 )
+
+
+def _test_dense_embedder():
+    """DOC-10: get_dense_embedder is model-parameterized now; RAGHUB_EMBEDDING_BACKEND=hash
+    (stack_env) ignores these args and always returns the deterministic hash
+    embedder -- the ephemeral store has no per-workspace model choice anyway
+    (ensure_ephemeral_collection's own docstring), so LOCAL_EMBEDDING_MODEL_ID
+    is the right stand-in identity here regardless."""
+    return get_dense_embedder(
+        LOCAL_EMBEDDING_MODEL_ID, provider_kind="tei", litellm_model_name="local-embeddings"
+    )
 
 
 def test_attachment_filter_pins_tenant_and_chat_conditions() -> None:
@@ -51,7 +63,7 @@ async def test_ensure_ephemeral_collection_idempotent(qdrant_collection: None) -
 async def test_upsert_and_search_round_trip(qdrant_collection: None) -> None:
     await ensure_ephemeral_collection()
     org_id, chat_id, attachment_id = uuid4(), uuid4(), uuid4()
-    embedder = get_dense_embedder()
+    embedder = _test_dense_embedder()
     text = "the quarterly report shows a 12% increase"
     chunk = Chunk(text=text, page=1, chunk_index=0)
     dense = (await embedder.embed([text]))[0]
@@ -81,7 +93,7 @@ async def test_upsert_same_attachment_chunk_overwrites_not_duplicates(
     upsert of the same attachment+chunk_index overwrites in place."""
     await ensure_ephemeral_collection()
     org_id, chat_id, attachment_id = uuid4(), uuid4(), uuid4()
-    embedder = get_dense_embedder()
+    embedder = _test_dense_embedder()
     chunk = Chunk(text="version one", page=1, chunk_index=0)
     dense = (await embedder.embed(["version one"]))[0]
     sparse = embed_sparse(["version one"])[0]
@@ -113,7 +125,7 @@ async def test_delete_ephemeral_points_scoped_to_chat_only(qdrant_collection: No
     proof with a write-side one."""
     await ensure_ephemeral_collection()
     org_id, chat_to_delete, chat_to_keep = uuid4(), uuid4(), uuid4()
-    embedder = get_dense_embedder()
+    embedder = _test_dense_embedder()
     attachment_to_delete = uuid4()
     for chat_id, attachment_id, text in [
         (chat_to_delete, attachment_to_delete, "delete me"),
@@ -150,7 +162,7 @@ async def test_delete_ephemeral_points_scoped_to_attachment_within_same_chat(
     await ensure_ephemeral_collection()
     org_id, chat_id = uuid4(), uuid4()
     stale_attachment_id, fresh_attachment_id = uuid4(), uuid4()
-    embedder = get_dense_embedder()
+    embedder = _test_dense_embedder()
     for attachment_id, text in [
         (stale_attachment_id, "the stale one"),
         (fresh_attachment_id, "the fresh one"),

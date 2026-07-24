@@ -1,12 +1,16 @@
 import json
 import math
+from uuid import uuid4
 
 import httpx
+import pytest
 
 from raghub.modules.retrieval.embeddings import (
     HashDenseEmbedder,
+    LiteLLMEmbedder,
     TeiDenseEmbedder,
     embed_sparse,
+    get_dense_embedder,
 )
 
 
@@ -52,3 +56,59 @@ def test_sparse_bm25_hits_shared_terms() -> None:
     [doc, query] = embed_sparse(["invoice 0231 total due", "invoice 0231"])
     assert set(query.indices) & set(doc.indices)  # shared term indices
     assert all(v > 0 for v in doc.values)
+
+
+async def test_litellm_embedder_posts_and_parses_embeddings() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["json"] = request.read()
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"index": 1, "embedding": [0.2, 0.3]},
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    embedder = LiteLLMEmbedder(
+        base_url="http://litellm.test", master_key="sk-master",
+        model="text-embedding-3-small", transport=transport,
+    )
+    result = await embedder.embed(["hello", "world"])
+    assert result == [[0.1, 0.2], [0.2, 0.3]]  # re-ordered by index, not response order
+    assert str(captured["url"]).endswith("/v1/embeddings")
+
+
+async def test_litellm_embedder_non_200_raises_upstream_error() -> None:
+    from raghub.core.errors import UpstreamError
+
+    transport = httpx.MockTransport(lambda r: httpx.Response(500, text="boom"))
+    embedder = LiteLLMEmbedder(
+        base_url="http://litellm.test", master_key="sk-master",
+        model="text-embedding-3-small", transport=transport,
+    )
+    with pytest.raises(UpstreamError):
+        await embedder.embed(["hello"])
+
+
+def test_get_dense_embedder_routes_tei_vs_litellm() -> None:
+    tei_id = uuid4()
+    other_id = uuid4()
+    tei = get_dense_embedder(tei_id, provider_kind="tei", litellm_model_name="local-embeddings")
+    other = get_dense_embedder(
+        other_id, provider_kind="openai", litellm_model_name="text-embedding-3-small"
+    )
+    assert isinstance(tei, TeiDenseEmbedder)
+    assert isinstance(other, LiteLLMEmbedder)
+
+
+def test_get_dense_embedder_caches_by_model_id() -> None:
+    model_id = uuid4()
+    a = get_dense_embedder(model_id, provider_kind="tei", litellm_model_name="local-embeddings")
+    b = get_dense_embedder(model_id, provider_kind="tei", litellm_model_name="local-embeddings")
+    assert a is b

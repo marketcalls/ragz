@@ -33,8 +33,10 @@ async def list_models(session: AsyncSession) -> list[Model]:
     return list((await session.execute(select(Model).order_by(Model.created_at))).scalars())
 
 
-async def list_enabled_models(session: AsyncSession) -> list[Model]:
+async def list_enabled_models(session: AsyncSession, modality: str | None = None) -> list[Model]:
     stmt = select(Model).where(Model.enabled == true()).order_by(Model.created_at)
+    if modality is not None:
+        stmt = stmt.where(Model.modality == modality)
     return list((await session.execute(stmt)).scalars())
 
 
@@ -82,6 +84,9 @@ async def to_model_out(session: AsyncSession, models: list[Model]) -> list[Model
             default_reasoning_effort=m.default_reasoning_effort,  # type: ignore[arg-type]
             supports_vision=m.supports_vision,
             is_utility=m.is_utility,
+            modality=m.modality,  # type: ignore[arg-type]
+            dimension=m.dimension,
+            collection_name=m.collection_name,
         )
         for m in models
     ]
@@ -102,15 +107,20 @@ async def create_model(
     supports_reasoning: bool = False,
     default_reasoning_effort: str = "off",
     supports_vision: bool = False,
+    modality: str = "chat",
+    dimension: int | None = None,
 ) -> Model:
     model = Model(
         litellm_model_name=litellm_model_name, display_name=display_name,
         provider_kind=provider_kind, base_url=base_url, mock_response=mock_response,
         tools_unreliable=tools_unreliable, supports_reasoning=supports_reasoning,
         default_reasoning_effort=default_reasoning_effort, supports_vision=supports_vision,
+        modality=modality, dimension=dimension,
     )
     session.add(model)
-    await session.flush()
+    await session.flush()  # assigns model.id -- collection_name needs it
+    if modality == "embedding":
+        model.collection_name = f"chunks_{model.id.hex}"
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.created",
                        target_type="model", target_id=str(model.id))
     if api_key is not None:
@@ -182,6 +192,18 @@ async def delete_model(
     session: AsyncSession, ctx: TenantContext, model_id: UUID, *, settings: Settings
 ) -> None:
     model = await get_model(session, model_id)
+    if model.provider_kind == "tei":
+        raise ConflictError("the built-in local embedding model cannot be deleted")
+    if model.modality == "embedding":
+        # Local import: tenancy.service already imports this module at
+        # module scope (set_default_model), so importing tenancy.service
+        # here at module scope would be a real circular import -- same
+        # sanctioned shape as tenancy.service's own local import of
+        # worker.tasks (see that module's update_retrieval_settings).
+        from raghub.modules.tenancy.service import workspace_uses_embedding_model
+
+        if await workspace_uses_embedding_model(session, model_id):
+            raise ConflictError("embedding model is in use by at least one workspace")
     await session.delete(model)
     await record_audit(session, org_id=None, actor_id=ctx.user_id, action="model.deleted",
                        target_type="model", target_id=str(model_id))

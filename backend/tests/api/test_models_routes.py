@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.auth.models import User
 from raghub.modules.models.catalog import ModelCatalogEntry
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -36,13 +37,19 @@ async def test_superadmin_crud_and_key_never_returned(
                            json={"enabled": False}, headers=h)
     assert r.status_code == 200 and r.json()["enabled"] is False
 
+    # tests/conftest.py's `engine` fixture seeds one globally-present model
+    # row (LOCAL_EMBEDDING_MODEL_ID, mirroring migration d1e8f4a2b6c3), which
+    # is always present in the admin listing alongside whatever a test creates.
     listing = await client.get("/api/v1/admin/models", headers=h)
     assert "sk-live-abc" not in listing.text
-    assert [m["id"] for m in listing.json()] == [model_id]
-    assert listing.json()[0]["sync_status"] == "synced"  # background replay succeeded
+    assert [m["id"] for m in listing.json()] == [str(LOCAL_EMBEDDING_MODEL_ID), model_id]
+    created_row = next(m for m in listing.json() if m["id"] == model_id)
+    assert created_row["sync_status"] == "synced"  # background replay succeeded
 
     assert (await client.delete(f"/api/v1/admin/models/{model_id}", headers=h)).status_code == 204
-    assert (await client.get("/api/v1/admin/models", headers=h)).json() == []
+    assert [m["id"] for m in (await client.get("/api/v1/admin/models", headers=h)).json()] == [
+        str(LOCAL_EMBEDDING_MODEL_ID)
+    ]
 
 
 async def test_admin_role_denied_but_can_list_public(

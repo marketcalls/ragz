@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
+from raghub.core.db import naive_utc
 from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from raghub.core.storage import build_storage
 from raghub.modules.audit.models import AuditEvent
@@ -12,6 +13,7 @@ from raghub.modules.documents.service import (
     get_document_checked,
     list_documents,
 )
+from raghub.modules.tenancy.reembed_models import ReembedJob
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
@@ -98,6 +100,59 @@ async def test_identical_content_still_conflicts(
     with pytest.raises(ConflictError):
         await create_from_upload(session, ctx, ws.id, filename="c.pdf",
                                  mime="application/pdf", data=b"same")
+
+
+async def test_upload_rejected_while_reembed_job_running(
+    session: AsyncSession, stack_env: None
+) -> None:
+    """Final-review fix (DOC-10): a re-embed job snapshots the workspace's
+    documents ONCE at job start and, on completion, does a workspace-WIDE
+    delete of the OLD collection. A document uploaded mid-job resolves the
+    OLD collection (the workspace's embedding_model_id hasn't flipped yet)
+    but was never in the snapshot, so it's never re-embedded into the NEW
+    collection -- the job's closing workspace-wide delete then wipes its
+    vectors with no error anywhere. Rejecting the upload outright while a
+    job is actively running (started_at set, finished_at NULL) closes that
+    hole, mirroring set_embedding_model's existing lock-after-first-index
+    409 posture."""
+    ctx, ws = await seed_workspace(session, "reembed-guard1")
+    job = ReembedJob(
+        workspace_id=ws.id,
+        old_embedding_model_id=ws.embedding_model_id,
+        new_embedding_model_id=ws.embedding_model_id,
+        documents_total=1,
+        started_at=naive_utc(),
+    )
+    session.add(job)
+    await session.commit()
+
+    with pytest.raises(ConflictError, match="re-embed job is in progress"):
+        await create_from_upload(session, ctx, ws.id, filename="a.txt",
+                                 mime="text/plain", data=b"during reembed")
+
+
+async def test_upload_succeeds_after_reembed_job_finishes(
+    session: AsyncSession, stack_env: None
+) -> None:
+    """Once finished_at is stamped the guard clears -- and the common case
+    (no ReembedJob row for the workspace at all) is exercised by every other
+    upload test in this file, since none of them create one."""
+    ctx, ws = await seed_workspace(session, "reembed-guard2")
+    job = ReembedJob(
+        workspace_id=ws.id,
+        old_embedding_model_id=ws.embedding_model_id,
+        new_embedding_model_id=ws.embedding_model_id,
+        documents_total=1,
+        documents_done=1,
+        started_at=naive_utc(),
+        finished_at=naive_utc(),
+    )
+    session.add(job)
+    await session.commit()
+
+    doc = await create_from_upload(session, ctx, ws.id, filename="a.txt",
+                                   mime="text/plain", data=b"after reembed")
+    assert doc.status == "queued"
 
 
 async def test_has_indexed_documents(session: AsyncSession, stack_env: None) -> None:

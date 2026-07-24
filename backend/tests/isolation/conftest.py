@@ -5,7 +5,7 @@ from raghub.modules.auth.models import User
 from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from raghub.modules.documents.models import Document
 from raghub.modules.documents.service import create_from_upload
-from raghub.modules.retrieval.service import update_document_current
+from raghub.modules.retrieval.service import resolve_collection_name, update_document_current
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
 from tests.modules.retrieval.test_retrieve import seed_workspace
@@ -26,7 +26,10 @@ async def ingest_text(
     await run_parse(doc.id)
     await run_chunk(doc.id)
     await run_embed_upsert(doc.id)
-    await update_document_current(ctx.org_id, doc.id, is_current=True)
+    collection_name = await resolve_collection_name(session, ws.id)
+    await update_document_current(
+        ctx.org_id, doc.id, is_current=True, collection_name=collection_name
+    )
     await session.refresh(doc)
     assert doc.status == "indexed"
     return doc

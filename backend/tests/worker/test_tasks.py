@@ -66,6 +66,8 @@ async def test_cleanup_stale_attachments_only_evicts_the_stale_attachments_vecto
     conventions, and this file's own asyncio.to_thread pattern for invoking
     a sync Celery task from an async test."""
     from raghub.modules.documents.pipeline import Chunk
+    from raghub.modules.models import service as models_service
+    from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
     from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
     from raghub.modules.retrieval.service import (
         ensure_ephemeral_collection,
@@ -108,7 +110,13 @@ async def test_cleanup_stale_attachments_only_evicts_the_stale_attachments_vecto
     await session.commit()
 
     await ensure_ephemeral_collection()
-    embedder = get_dense_embedder()
+    # DOC-10: the ephemeral store has no per-workspace embedding choice --
+    # always the seeded local model (mirrors chat/service.py's route_attachment).
+    ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
+    embedder = get_dense_embedder(
+        ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
+        litellm_model_name=ephemeral_model.litellm_model_name,
+    )
     for attachment, text in [
         (stale_attachment, "the quarterly report shows a decline"),
         (fresh_attachment, "the quarterly report shows growth"),

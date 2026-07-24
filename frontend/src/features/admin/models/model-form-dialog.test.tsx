@@ -28,6 +28,9 @@ const fixtureModel: ModelOut = {
   supports_reasoning: false,
   default_reasoning_effort: 'off',
   supports_vision: false,
+  modality: 'chat',
+  dimension: null,
+  collection_name: null,
 };
 
 // Entries as the API returns them: provider ASC, position DESC (newest first).
@@ -415,6 +418,61 @@ test('supports-vision checkbox sends the field on create', async () => {
   await user.click(screen.getByRole('button', { name: 'Add model' }));
   const body = (await mutationBodies(fetchMock))[0]!;
   expect(body.supports_vision).toBe(true);
+});
+
+test('selecting "Embedding model" hides chat-only fields and shows the dimension field', async () => {
+  const user = userEvent.setup();
+  renderDialog();
+  const providers = await openProviderList(user);
+  await user.click(providers.getByRole('option', { name: 'Custom / self-hosted' }));
+  // Default modality is 'chat' — chat-only fields are visible, dimension is not.
+  expect(screen.getByLabelText('Unreliable at native tool calling')).toBeInTheDocument();
+  expect(screen.getByLabelText('Supports reasoning')).toBeInTheDocument();
+  expect(screen.getByLabelText('Supports vision')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Vector dimension')).not.toBeInTheDocument();
+
+  await user.selectOptions(screen.getByLabelText('Type'), 'embedding');
+
+  expect(screen.getByLabelText('Vector dimension')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Unreliable at native tool calling')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Supports reasoning')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Supports vision')).not.toBeInTheDocument();
+});
+
+test('embedding create payload includes modality and dimension; chat create payload omits both', async () => {
+  const fetchMock = routedFetch(created());
+  const user = userEvent.setup();
+  renderDialog(fetchMock);
+  const providers = await openProviderList(user);
+  await user.click(providers.getByRole('option', { name: 'Custom / self-hosted' }));
+  await user.selectOptions(screen.getByLabelText('Type'), 'embedding');
+  await user.type(screen.getByLabelText('Model id'), 'tei-bge-m3');
+  await user.type(screen.getByLabelText('Display name'), 'BGE M3');
+  await user.clear(screen.getByLabelText('Vector dimension'));
+  await user.type(screen.getByLabelText('Vector dimension'), '1024');
+  await user.click(screen.getByRole('button', { name: 'Add model' }));
+  const body = (await mutationBodies(fetchMock))[0]!;
+  expect(body).toMatchObject({ modality: 'embedding', dimension: 1024 });
+});
+
+test('the chat create payload (default modality) never includes modality or dimension', async () => {
+  const fetchMock = routedFetch(created());
+  const user = userEvent.setup();
+  renderDialog(fetchMock);
+  const providers = await openProviderList(user);
+  await user.click(providers.getByRole('option', { name: 'Custom / self-hosted' }));
+  await user.type(screen.getByLabelText('Model id'), 'gpt-4o-mini');
+  await user.type(screen.getByLabelText('Display name'), 'GPT-4o mini');
+  await user.click(screen.getByRole('button', { name: 'Add model' }));
+  const body = (await mutationBodies(fetchMock))[0]!;
+  expect(body).not.toHaveProperty('modality');
+  expect(body).not.toHaveProperty('dimension');
+});
+
+test('edit mode never shows the modality toggle (immutable after create)', () => {
+  const fetchMock = routedFetch(created(200));
+  renderDialog(fetchMock, { model: fixtureModel });
+  expect(screen.queryByLabelText('Type')).not.toBeInTheDocument();
 });
 
 test('deriveProviderKind maps openai and ollama through, everything else to litellm', () => {

@@ -83,7 +83,13 @@ async def test_replay_deletes_then_deploys_enabled_only(
     assert new_payload["litellm_params"]["model"] == "openai/gpt-4o-mini"
     assert new_payload["litellm_params"]["api_key"] == "sk-live-777"  # decrypted only here
     statuses = {m.litellm_model_name: m.sync_status for m in await list_models(session)}
-    assert statuses == {"gpt-4o-mini": "synced", "llama3": "synced"}  # uniform outcome
+    # tests/conftest.py's `engine` fixture seeds one globally-present tei
+    # model ("local-embeddings") that's excluded from replay (see
+    # test_tei_model_excluded_from_litellm_sync) and so keeps its seeded
+    # sync_status="synced" untouched.
+    assert statuses == {
+        "gpt-4o-mini": "synced", "llama3": "synced", "local-embeddings": "synced",
+    }  # uniform outcome
 
 
 async def test_replay_is_idempotent(
@@ -150,7 +156,34 @@ async def test_sync_tolerates_empty_litellm_proxy_on_first_sync(
     )
     assert count == 1
     statuses = {m.litellm_model_name: m.sync_status for m in await list_models(session)}
-    assert statuses == {"gpt-4o-mini": "synced"}
+    # The globally-seeded tei model ("local-embeddings", see
+    # tests/conftest.py's `engine` fixture) is excluded from replay and keeps
+    # its seeded sync_status="synced".
+    assert statuses == {"gpt-4o-mini": "synced", "local-embeddings": "synced"}
+
+
+async def test_tei_model_excluded_from_litellm_sync(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """DOC-10: the local TEI embedding model is never routed through the
+    LiteLLM gateway -- it must never appear in a /model/new payload."""
+    ctx = super_ctx(seeded_user)
+    await create_model(
+        session, ctx, litellm_model_name="local-embeddings-2", display_name="Local 2",
+        provider_kind="tei", base_url=None, api_key=None, settings=settings,
+        modality="embedding", dimension=384,
+    )
+    await create_model(
+        session, ctx, litellm_model_name="gpt-4o-mini", display_name="GPT",
+        provider_kind="openai", base_url=None, api_key="sk-live-777", settings=settings,
+    )
+    rec = Recorder()
+    count = await sync_models_to_litellm(session, settings, transport=rec.transport)
+    assert count == 1  # the tei model is excluded, not just disabled
+    new_payloads = [
+        json.loads(content) for method, path, content in rec.calls if path == "/model/new"
+    ]
+    assert [p["model_name"] for p in new_payloads] == ["gpt-4o-mini"]
 
 
 def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:

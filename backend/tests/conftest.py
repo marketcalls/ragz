@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from testcontainers.minio import MinioContainer
@@ -20,7 +21,7 @@ from raghub.modules.chat.llm import LLMCompletion, LLMDelta, LLMUsage
 from raghub.modules.chat.models import Chat
 from raghub.modules.chat.web import WebResult
 from raghub.modules.documents.models import Document
-from raghub.modules.models.models import Model
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
 from raghub.modules.retrieval.client import get_qdrant
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.rerank import get_reranker
@@ -116,7 +117,7 @@ async def qdrant_collection(stack_env: None) -> None:
     client = get_qdrant()
     if await client.collection_exists(COLLECTION):
         await client.delete_collection(COLLECTION)
-    await ensure_collection()
+    await ensure_collection(COLLECTION, get_settings().embedding_dim)
 
 
 @pytest.fixture
@@ -124,6 +125,32 @@ async def engine(pg_url: str) -> AsyncIterator[AsyncEngine]:
     eng = build_engine(pg_url)
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Mirror migration d1e8f4a2b6c3's seed INSERT: the plain schema built
+        # via create_all() never runs real Alembic migrations, so the
+        # bootstrap "local embedding model" row (LOCAL_EMBEDDING_MODEL_ID)
+        # that Workspace.embedding_model_id's ORM-side default points at
+        # would otherwise never exist here, and every Workspace(...) insert
+        # would fail its FK constraint. Same row shape, same fixed id.
+        await conn.execute(
+            sa.text(
+                """
+                INSERT INTO models (
+                    id, created_at, litellm_model_name, display_name, provider_kind,
+                    enabled, sync_status, tools_unreliable, is_utility,
+                    supports_reasoning, default_reasoning_effort, supports_vision,
+                    modality, dimension, collection_name
+                ) VALUES (
+                    :id, now(), 'local-embeddings', 'Local Embeddings (bge-m3)', 'tei',
+                    true, 'synced', false, false,
+                    false, 'off', false,
+                    'embedding', :dimension, 'chunks_bge_m3'
+                )
+                """
+            ).bindparams(
+                sa.bindparam("id", value=LOCAL_EMBEDDING_MODEL_ID, type_=sa.Uuid()),
+                sa.bindparam("dimension", value=get_settings().embedding_dim, type_=sa.Integer()),
+            )
+        )
     yield eng
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -273,10 +300,14 @@ class FakeChunkReader:
         self.chunks_by_ref: dict[str, RetrievedChunk] = {}
         self.ref_calls: list[list[str]] = []
 
-    async def list_document_chunks(self, ctx, workspace_id, document_id):  # type: ignore[no-untyped-def]
+    async def list_document_chunks(  # type: ignore[no-untyped-def]
+        self, ctx, workspace_id, document_id, *, collection_name
+    ):
         return list(self.document_chunks.get(document_id, []))
 
-    async def get_chunks_by_refs(self, ctx, workspace_id, refs):  # type: ignore[no-untyped-def]
+    async def get_chunks_by_refs(  # type: ignore[no-untyped-def]
+        self, ctx, workspace_id, refs, *, collection_name
+    ):
         self.ref_calls.append(list(refs))
         return [self.chunks_by_ref[r] for r in refs if r in self.chunks_by_ref]
 

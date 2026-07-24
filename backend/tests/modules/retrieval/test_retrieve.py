@@ -5,8 +5,10 @@ import pytest
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from raghub.core.config import get_settings
 from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.auth.models import User
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from raghub.modules.retrieval import service as retrieval_service
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
@@ -19,6 +21,17 @@ from raghub.modules.retrieval.service import (
 )
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+
+# The dense embedder used by test-seeded points (upsert_texts and friends):
+# always resolves to HashDenseEmbedder under RAGHUB_EMBEDDING_BACKEND=hash
+# (stack_env), but get_dense_embedder's signature (DOC-10, Task 2) now
+# requires a model identity regardless of backend -- these args mirror the
+# LOCAL_EMBEDDING_MODEL_ID row the shared `engine` fixture seeds.
+_LOCAL_MODEL_KW = {
+    "model_id": LOCAL_EMBEDDING_MODEL_ID,
+    "provider_kind": "tei",
+    "litellm_model_name": "local-embeddings",
+}
 
 
 async def seed_workspace(
@@ -53,7 +66,7 @@ async def upsert_texts(
     so tests asserting page positions must pass sequential ids (see early-stop test).
     """
     document_id = str(uuid4())
-    dense = await get_dense_embedder().embed(texts)
+    dense = await get_dense_embedder(**_LOCAL_MODEL_KW).embed(texts)
     sparse = await asyncio.to_thread(embed_sparse, texts)
     points = [
         models.PointStruct(
@@ -100,6 +113,46 @@ async def test_empty_workspace_is_no_answer(
     assert result.no_answer and result.chunks == []
 
 
+async def test_retrieve_uses_workspace_specific_collection(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """The whole point of DOC-10: a workspace on a non-seeded embedding model
+    must be queried against ITS OWN collection, not the module's COLLECTION
+    constant -- this is the exact bug the research for this plan found
+    (retrieve() called ensure_collection(ws.embedding_model) but then
+    hardcoded COLLECTION in both client.query_points calls). Pre-fix, this
+    test fails outright: Workspace no longer even has an `embedding_model`
+    attribute (Task 5 replaced it with `embedding_model_id`), so the old
+    `await ensure_collection(ws.embedding_model)` line raises AttributeError
+    before either query_points call is reached."""
+    from raghub.modules.models import service as models_service
+
+    ctx, ws = await seed_workspace(session, "orgh")
+    # Seed the workspace's DEFAULT (bge-m3) collection with a matching chunk --
+    # if retrieve() ever fell back to querying COLLECTION regardless of the
+    # workspace's actual model, this text would be findable and the test below
+    # would wrongly pass.
+    await upsert_texts(ctx, ws, ["the flux capacitor requires 1.21 gigawatts"])
+
+    other_model = await models_service.create_model(
+        session, ctx,
+        litellm_model_name="other-embed", display_name="Other",
+        provider_kind="tei", base_url=None, api_key=None,
+        settings=get_settings(), modality="embedding", dimension=1024,
+    )
+    ws.embedding_model_id = other_model.id
+    await session.commit()
+
+    # other_model's collection is brand new and empty -- a workspace pointed
+    # at it must find NOTHING, even though a matching chunk exists in the
+    # seeded default collection.
+    result = await retrieve(session, ctx, ws.id, "flux capacitor gigawatts")
+    assert result.chunks == []
+    assert result.no_answer
+    assert await get_qdrant().collection_exists(other_model.collection_name)
+    assert other_model.collection_name != COLLECTION
+
+
 async def test_non_member_denied(session: AsyncSession, qdrant_collection: None) -> None:
     ctx, ws = await seed_workspace(session, "orgd", member=False)
     with pytest.raises(WorkspaceAccessDenied):
@@ -118,7 +171,7 @@ async def test_delete_document_points(session: AsyncSession, qdrant_collection: 
     ctx, ws = await seed_workspace(session, "orgf")
     doc_id = await upsert_texts(ctx, ws, ["target text to delete"])
     from uuid import UUID
-    await delete_document_points(ctx.org_id, UUID(doc_id))
+    await delete_document_points(ctx.org_id, UUID(doc_id), collection_name=COLLECTION)
     result = await retrieve(session, ctx, ws.id, "target text to delete")
     assert result.chunks == []
 
@@ -137,7 +190,7 @@ async def test_delete_restricted_document_points(
     # Seed a restricted document with ACL payload (acl_groups=[finance_group_id])
     document_id = str(uuid4())
     finance_id = uuid4()
-    dense = await get_dense_embedder().embed(["restricted finance data"])
+    dense = await get_dense_embedder(**_LOCAL_MODEL_KW).embed(["restricted finance data"])
     sparse = await asyncio.to_thread(embed_sparse, ["restricted finance data"])
     points = [
         models.PointStruct(
@@ -159,7 +212,7 @@ async def test_delete_restricted_document_points(
     await get_qdrant().upsert(COLLECTION, points=points, wait=True)
 
     # Delete the document via delete_document_points (maintenance path)
-    await delete_document_points(ctx.org_id, UUID(document_id))
+    await delete_document_points(ctx.org_id, UUID(document_id), collection_name=COLLECTION)
 
     # Unfiltered scroll must show zero points for that document
     all_points, _ = await get_qdrant().scroll(COLLECTION, limit=100)
@@ -182,7 +235,7 @@ async def test_delete_points_tolerates_missing_collection(stack_env: None) -> No
     client = get_qdrant()
     if await client.collection_exists(COLLECTION):
         await client.delete_collection(COLLECTION)
-    await delete_document_points(uuid4(), uuid4())  # must not raise
+    await delete_document_points(uuid4(), uuid4(), collection_name=COLLECTION)  # must not raise
 
 
 def test_dedupe_hq_keeps_max_score_per_chunk_ref() -> None:
@@ -213,9 +266,9 @@ async def test_ensure_collection_heal_branch_runs_once_per_process(
         return await original(*a, **kw)
 
     monkeypatch.setattr(client, "create_payload_index", counting)
-    await ensure_collection()
-    await ensure_collection()
-    await ensure_collection()
+    await ensure_collection(COLLECTION, get_settings().embedding_dim)
+    await ensure_collection(COLLECTION, get_settings().embedding_dim)
+    await ensure_collection(COLLECTION, get_settings().embedding_dim)
     assert len(calls) == 2  # exactly the first call's 2 heal indexes, never repeated
 
 

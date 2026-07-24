@@ -56,6 +56,7 @@ async def test_search_with_metadata_filter_excludes_non_matching_doc(
     from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
     from raghub.modules.documents.metadata import list_fields, set_document_metadata
     from raghub.modules.documents.service import create_from_upload
+    from raghub.modules.retrieval.client import COLLECTION
     from raghub.modules.retrieval.service import update_document_current
     from raghub.modules.tenancy.context import TenantContext
     from raghub.modules.tenancy.models import Workspace
@@ -76,7 +77,9 @@ async def test_search_with_metadata_filter_excludes_non_matching_doc(
         await run_parse(doc.id)
         await run_chunk(doc.id)
         await run_embed_upsert(doc.id)
-        await update_document_current(ctx.org_id, doc.id, is_current=True)
+        await update_document_current(
+            ctx.org_id, doc.id, is_current=True, collection_name=COLLECTION
+        )
         await session.refresh(doc)
         return doc
 

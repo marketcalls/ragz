@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.core.errors import WorkspaceAccessDenied
 from raghub.modules.documents.ingest import run_delete
 from raghub.modules.documents.pipeline import Chunk, upsert_hq_points
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from raghub.modules.retrieval.client import COLLECTION, get_qdrant
 from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from raghub.modules.retrieval.service import (
@@ -28,6 +29,15 @@ from tests.isolation.conftest import (
     seed_acl_workspace,
     seed_same_org_two_workspaces,
 )
+
+
+def _test_dense_embedder():
+    """DOC-10: get_dense_embedder is model-parameterized now; RAGHUB_EMBEDDING_BACKEND=hash
+    (set by the stack_env fixture) ignores these args and always returns the
+    deterministic hash embedder, matching the seeded LOCAL_EMBEDDING_MODEL_ID row."""
+    return get_dense_embedder(
+        LOCAL_EMBEDDING_MODEL_ID, provider_kind="tei", litellm_model_name="local-embeddings"
+    )
 
 
 async def test_org_a_never_sees_org_b_chunks(
@@ -241,7 +251,7 @@ async def test_canary_unfiltered_query_sees_both_orgs(
     meaningful. This is the only sanctioned unfiltered query in the repo, and it
     lives in tests: production code must never do this (iron rule 1)."""
     ctx_a, *_ = two_orgs["a"]
-    lure = (await get_dense_embedder().embed(["secret: the vault code is"]))[0]
+    lure = (await _test_dense_embedder().embed(["secret: the vault code is"]))[0]
     raw = await get_qdrant().query_points(COLLECTION, query=lure, using="dense",
                                           limit=10, with_payload=True)
     tenants = {str((p.payload or {})["tenant_id"]) for p in raw.points}
@@ -259,9 +269,9 @@ async def test_chunk_refs_cross_workspace_never_resolve(
     doc2 = await ingest_text(session, ctx2, ws2, "ws2.txt",
                              "workspace two secret: the launch code is 8834")
     refs = [f"{doc2.id}:1:0"]
-    assert await get_chunks_by_refs(ctx1, ws1.id, refs) == []
+    assert await get_chunks_by_refs(ctx1, ws1.id, refs, collection_name=COLLECTION) == []
     # Not a vacuous pass: the same refs DO resolve for the rightful workspace.
-    resolved = await get_chunks_by_refs(ctx2, ws2.id, refs)
+    resolved = await get_chunks_by_refs(ctx2, ws2.id, refs, collection_name=COLLECTION)
     assert [c.document_id for c in resolved] == [doc2.id]
     assert "8834" in resolved[0].text
 
@@ -272,7 +282,10 @@ async def test_chunk_refs_cross_org_never_resolve(
     ctx_a, ws_a, _ = two_orgs["a"]
     _, _, doc_b = two_orgs["b"]
     # Org A replays org B's chunk_ref against its own workspace: nothing.
-    assert await get_chunks_by_refs(ctx_a, ws_a.id, [f"{doc_b.id}:1:0"]) == []
+    assert (
+        await get_chunks_by_refs(ctx_a, ws_a.id, [f"{doc_b.id}:1:0"], collection_name=COLLECTION)
+        == []
+    )
 
 
 async def test_document_chunks_cross_workspace_never_resolve(
@@ -290,10 +303,10 @@ async def test_document_chunks_cross_workspace_never_resolve(
                              "workspace two secret: the launch code is 8834")
     # ws1's own member, querying ws1, asking about a document that actually
     # lives in ws2: the tenant filter blocks it -> [].
-    assert await list_document_chunks(ctx1, ws1.id, doc2.id) == []
+    assert await list_document_chunks(ctx1, ws1.id, doc2.id, collection_name=COLLECTION) == []
     # Not a vacuous pass: the same document DOES resolve for the rightful
     # workspace/member.
-    resolved = await list_document_chunks(ctx2, ws2.id, doc2.id)
+    resolved = await list_document_chunks(ctx2, ws2.id, doc2.id, collection_name=COLLECTION)
     assert resolved
     assert all(c.document_id == doc2.id for c in resolved)
     assert "8834" in resolved[0].text
@@ -301,7 +314,7 @@ async def test_document_chunks_cross_workspace_never_resolve(
     # so calling with workspace_id=ws2.id must raise before any filter runs
     # -- regardless of which document_id is passed.
     with pytest.raises(WorkspaceAccessDenied):
-        await list_document_chunks(ctx1, ws2.id, doc2.id)
+        await list_document_chunks(ctx1, ws2.id, doc2.id, collection_name=COLLECTION)
 
 
 async def test_hq_point_respects_tenant_and_acl_filters(
@@ -320,7 +333,7 @@ async def test_hq_point_respects_tenant_and_acl_filters(
     ctx_b, ws_b, _ = two_orgs["b"]
 
     question = "what is the hq secret launch code?"
-    q_dense = (await get_dense_embedder().embed([question]))[0]
+    q_dense = (await _test_dense_embedder().embed([question]))[0]
     q_sparse = (await asyncio.to_thread(embed_sparse, [question]))[0]
     await upsert_hq_points(
         org_id=ctx_a.org_id, workspace_id=ws_a.id, document_id=uuid4(),
@@ -328,7 +341,7 @@ async def test_hq_point_respects_tenant_and_acl_filters(
         version=1, meta=None, is_current=True,
         parent_chunks=[Chunk(text="hq secret: the launch code is 4471", page=1, chunk_index=0)],
         parent_summaries=[None], hq_texts=[[question]],
-        hq_dense=[[q_dense]], hq_sparse=[[q_sparse]],
+        hq_dense=[[q_dense]], hq_sparse=[[q_sparse]], collection_name=COLLECTION,
     )
     # Org B, replaying the EXACT question embedded into org A's hq point,
     # must never see it — the tenant clause has to exclude it entirely.
@@ -342,7 +355,7 @@ async def test_hq_point_respects_tenant_and_acl_filters(
     # exclude an hq point exactly like it excludes its parent chunk.
     ctx_in, ctx_out, _, acl_ws, finance = await seed_acl_workspace(session)
     acl_question = "what is the finance hq secret budget code?"
-    acl_dense = (await get_dense_embedder().embed([acl_question]))[0]
+    acl_dense = (await _test_dense_embedder().embed([acl_question]))[0]
     acl_sparse = (await asyncio.to_thread(embed_sparse, [acl_question]))[0]
     await upsert_hq_points(
         org_id=ctx_in.org_id, workspace_id=acl_ws.id, document_id=uuid4(),
@@ -352,7 +365,7 @@ async def test_hq_point_respects_tenant_and_acl_filters(
         parent_chunks=[Chunk(text="finance hq secret: the budget code is 8820",
                               page=1, chunk_index=0)],
         parent_summaries=[None], hq_texts=[[acl_question]],
-        hq_dense=[[acl_dense]], hq_sparse=[[acl_sparse]],
+        hq_dense=[[acl_dense]], hq_sparse=[[acl_sparse]], collection_name=COLLECTION,
     )
     result_outsider = await retrieve(session, ctx_out, acl_ws.id, acl_question, top_k=10)
     assert not any("8820" in c.text for c in result_outsider.chunks)

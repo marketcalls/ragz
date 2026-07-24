@@ -38,11 +38,14 @@ from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import (
     delete_document_points,
+    delete_workspace_points,
     ensure_collection,
+    resolve_collection_name,
     update_document_acl,
     update_document_metadata,
 )
 from raghub.modules.tenancy.models import Workspace
+from raghub.modules.tenancy.reembed_models import ReembedJob
 
 log = structlog.get_logger()
 
@@ -162,18 +165,30 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         upsert_job = await _start_stage(session, document_id, "upsert")
         raw = await _storage().get(doc.storage_key + ".chunks.json")
         chunks = [Chunk(**c) for c in json.loads(raw)]
-        await ensure_collection()  # workspaces are bge-m3-locked in Phase 1
-        dense_embedder = get_dense_embedder()
+
+        # DOC-10: loaded here (was loaded further down, after ensure_collection)
+        # so the workspace's ACTUAL embedding model drives both collection
+        # setup and the embedder -- was ensure_collection() with no args at
+        # all, silently always the seeded default regardless of ws.embedding_model_id.
+        workspace = await session.get(Workspace, doc.workspace_id)
+        assert workspace is not None  # doc.workspace_id is a non-nullable FK
+        embedding_model = await models_service.get_model(session, workspace.embedding_model_id)
+        collection_name = embedding_model.collection_name
+        assert collection_name is not None
+        await ensure_collection(collection_name, embedding_model.dimension)  # type: ignore[arg-type]
+        dense_embedder = get_dense_embedder(
+            embedding_model.id, provider_kind=embedding_model.provider_kind,
+            litellm_model_name=embedding_model.litellm_model_name,
+        )
 
         # Plan K §4: enrichment is gated by the workspace toggle AND a
         # designated utility model — resolved once, up front, so a mid-loop
         # ACL/metadata race (handled below via `still_exists`) can't also
         # flip enrichment eligibility partway through a run.
-        workspace = await session.get(Workspace, doc.workspace_id)
         settings = get_settings()
         utility_model = (
             await models_service.resolve_utility_model(session)
-            if workspace is not None and workspace.enrichment_enabled
+            if workspace.enrichment_enabled
             else None
         )
         completer: LLMCompleter | None = None
@@ -222,6 +237,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                             version=doc.version, meta=doc.meta, is_current=False,
                             parent_chunks=batch, parent_summaries=summaries,
                             hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
+                            collection_name=collection_name,
                         )
                     any_batch_enriched = True
                 except Exception:
@@ -239,7 +255,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                 mime=doc.mime, created_at=doc.created_at,
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
-                meta=doc.meta, summaries=summaries,
+                meta=doc.meta, summaries=summaries, collection_name=collection_name,
             )
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)
@@ -263,7 +279,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
             )
         ).scalar_one_or_none()
         if still_exists is None:
-            await delete_document_points(org_id, document_id)
+            await delete_document_points(org_id, document_id, collection_name=collection_name)
             return None
 
         # An ACL admin PUT racing mid-ingest may have stamped only the points
@@ -273,11 +289,15 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         # (freshly repopulated above) so every point for this document
         # reflects the latest PG state before the document is marked indexed
         # and becomes retrievable.
-        await update_document_acl(org_id, document_id, still_exists.acl_group_ids)
+        await update_document_acl(
+            org_id, document_id, still_exists.acl_group_ids, collection_name=collection_name
+        )
         # Same race, same cure for metadata: a Tags PUT mid-ingest restamps
         # only already-upserted points; later batches carry the stale meta
         # loaded at task start. Re-stamp from the fresh row (final review).
-        await update_document_metadata(org_id, document_id, still_exists.meta or {})
+        await update_document_metadata(
+            org_id, document_id, still_exists.meta or {}, collection_name=collection_name
+        )
 
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.
@@ -350,13 +370,19 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
         utility_model = await models_service.resolve_utility_model(session)
         if utility_model is None:
             return
+        embedding_model = await models_service.get_model(session, workspace.embedding_model_id)
+        collection_name = embedding_model.collection_name
+        assert collection_name is not None
 
         raw = await _storage().get(doc.storage_key + ".chunks.json")
         chunks = [Chunk(**c) for c in json.loads(raw)]
         completer: LLMCompleter = LiteLLMStreamer(
             base_url=get_settings().litellm_url, master_key=get_settings().litellm_master_key,
         )
-        dense_embedder = get_dense_embedder()
+        dense_embedder = get_dense_embedder(
+            embedding_model.id, provider_kind=embedding_model.provider_kind,
+            litellm_model_name=embedding_model.litellm_model_name,
+        )
         total_prompt_tokens = total_completion_tokens = 0
 
         for i in range(0, len(chunks), _BATCH_SIZE):
@@ -379,6 +405,7 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
                 meta=doc.meta, is_current=doc.is_current, summaries=summaries,
+                collection_name=collection_name,
             )
             hq_by_chunk = [e.hypothetical_questions for e in enrichments]
             if any(hq_by_chunk):
@@ -399,6 +426,7 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                     version=doc.version, meta=doc.meta, is_current=doc.is_current,
                     parent_chunks=batch, parent_summaries=summaries,
                     hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
+                    collection_name=collection_name,
                 )
             total_prompt_tokens += sum(len(c.text) for c in batch) // 4
             total_completion_tokens += sum(len(s or "") for s in summaries) // 4
@@ -416,6 +444,154 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
         await session.commit()
 
 
+async def run_reembed_workspace(
+    workspace_id: UUID, job_id: UUID, new_embedding_model_id: UUID
+) -> None:
+    """DOC-10: re-embed every current, indexed document in a workspace into a
+    NEW embedding model's collection, using each document's already-stored
+    chunks.json (never re-parses or re-chunks — same reuse
+    worker/tasks.py::reindex_task already relies on for single-document
+    re-embeds). On completion, deletes the workspace's vectors from the OLD
+    collection (workspace-scoped, via the existing _tenant_filter -- NOT a
+    whole-collection wipe, since other workspaces may still share it) and
+    flips workspace.embedding_model_id.
+
+    Fix round 2: job_id identifies the ReembedJob row that
+    api/routes/workspaces.py::start_reembed already created SYNCHRONOUSLY
+    (started_at set) in its own request transaction, BEFORE enqueueing the
+    Celery task that runs this function -- this runner updates that existing
+    row (documents_total/documents_done/error/finished_at) instead of
+    creating one of its own. That closes the window where
+    documents/service.py::create_from_upload's in-progress guard would see
+    no ReembedJob at all between the route returning 202 and Celery actually
+    picking up the task (see .superpowers/sdd/final-review-fix-report.md).
+
+    Failure mid-loop (any batch's embed/upsert raises): job.error is recorded
+    and the exception re-raised BEFORE the old collection is touched and
+    BEFORE workspace.embedding_model_id is flipped -- the workspace is left
+    pointing at its OLD (still fully populated) collection rather than a new
+    one that only some documents made it into.
+
+    Fix round 3: the failure handling now wraps EVERYTHING from here through
+    the end of the run, not just the per-document loop. The prior version
+    only wrapped the loop -- so a failure in the SETUP phase (old/new model
+    lookup via models_service.get_model, which raises NotFoundError if a
+    model was deleted mid-flight; the collection-name assertion;
+    ensure_collection, a real Qdrant call that can transiently fail; or the
+    documents query/count commit) propagated straight past this function,
+    through Celery's retry wrapper, to IngestTask.on_failure ->
+    ingest.mark_failed(workspace_id, ...) -- which looks for a Document with
+    that id, finds none (it's a workspace_id), and silently no-ops. The
+    ReembedJob row was left with started_at set and finished_at NULL
+    forever, and since create_from_upload's guard checks for exactly that
+    state, every future upload to the workspace was permanently rejected.
+    Now any exception anywhere in this block stamps job.error/finished_at
+    before propagating."""
+    async with _session() as session:
+        workspace = await session.get(Workspace, workspace_id)
+        job = await session.get(ReembedJob, job_id)
+        if workspace is None:
+            # Workspace vanished between start_reembed creating this job and
+            # Celery picking up the task (e.g. deleted meanwhile). Close the
+            # job anyway -- otherwise it stays "in progress" forever and the
+            # create_from_upload guard would (harmlessly, since the
+            # workspace is gone, but pointlessly) never clear for it.
+            if job is not None:
+                job.error = "workspace no longer exists"
+                job.finished_at = naive_utc()
+                await session.commit()
+            return
+        if job is None:
+            # Defensive: start_reembed creates this row synchronously in the
+            # same request that enqueues this task, so it should always
+            # exist by the time Celery runs it. Nothing safe to update
+            # without a job row to report into.
+            log.warning(
+                "reembed_job_missing", workspace_id=str(workspace_id), job_id=str(job_id)
+            )
+            return
+
+        try:
+            old_model = await models_service.get_model(session, workspace.embedding_model_id)
+            new_model = await models_service.get_model(session, new_embedding_model_id)
+            if old_model.id == new_model.id:
+                # Defensive no-op: start_reembed already rejects a same-model
+                # request with a 409 before this task is ever enqueued, so
+                # this should only trigger if the task is invoked directly
+                # (e.g. a replayed Celery message bypassing the route).
+                # Without this guard, old_collection == new_collection below,
+                # and the workspace-scoped delete from the "OLD" collection
+                # after the upsert loop would delete every point this same
+                # run just wrote -- silently wiping the workspace's vectors.
+                # The job still must be closed here (finished_at stamped) --
+                # otherwise it stays "in progress" forever and
+                # create_from_upload's guard would permanently block uploads
+                # to this workspace.
+                log.warning(
+                    "reembed_noop_same_model",
+                    workspace_id=str(workspace_id),
+                    model_id=str(new_model.id),
+                )
+                job.finished_at = naive_utc()
+                await session.commit()
+                return
+            old_collection = old_model.collection_name
+            new_collection = new_model.collection_name
+            assert old_collection is not None and new_collection is not None
+            await ensure_collection(new_collection, new_model.dimension)  # type: ignore[arg-type]
+            new_embedder = get_dense_embedder(
+                new_model.id, provider_kind=new_model.provider_kind,
+                litellm_model_name=new_model.litellm_model_name,
+            )
+
+            docs = list(
+                (
+                    await session.execute(
+                        select(Document).where(
+                            Document.workspace_id == workspace_id,
+                            Document.is_current.is_(True),
+                            Document.status == "indexed",
+                        )
+                    )
+                ).scalars()
+            )
+            job.documents_total = len(docs)
+            await session.commit()
+
+            for doc in docs:
+                raw = await _storage().get(doc.storage_key + ".chunks.json")
+                chunks = [Chunk(**c) for c in json.loads(raw)]
+                for i in range(0, len(chunks), _BATCH_SIZE):
+                    batch = chunks[i : i + _BATCH_SIZE]
+                    dense, sparse = await embed_batch([c.text for c in batch], new_embedder)
+                    await upsert_points(
+                        org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
+                        mime=doc.mime, created_at=doc.created_at,
+                        acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
+                        chunks=batch, dense=dense, sparse=sparse, version=doc.version,
+                        meta=doc.meta, is_current=True, collection_name=new_collection,
+                    )
+                job.documents_done += 1
+                await session.commit()
+
+            # Workspace-scoped delete from the OLD collection -- other
+            # workspaces may still share that collection, so this is never a
+            # whole-collection wipe. Only reached once every document above
+            # has been re-embedded into new_collection without error.
+            await delete_workspace_points(
+                workspace.org_id, workspace_id, collection_name=old_collection
+            )
+
+            workspace.embedding_model_id = new_model.id
+            job.finished_at = naive_utc()
+            await session.commit()
+        except Exception as exc:
+            job.error = str(exc)[:1000]
+            job.finished_at = naive_utc()
+            await session.commit()
+            raise
+
+
 async def run_delete(document_id: UUID, actor_id: UUID | None) -> UUID | None:
     """One task propagating deletion: Qdrant points → MinIO objects → Postgres
     rows, with an audit entry (spec §2.3, DOC-8). Idempotent.
@@ -431,7 +607,8 @@ async def run_delete(document_id: UUID, actor_id: UUID | None) -> UUID | None:
             return None
         org_id = doc.org_id  # captured before the row is gone
         lineage_id = doc.lineage_id
-        await delete_document_points(doc.org_id, document_id)
+        collection_name = await resolve_collection_name(session, doc.workspace_id)
+        await delete_document_points(doc.org_id, document_id, collection_name=collection_name)
         storage = _storage()
         for key in (doc.storage_key, doc.storage_key + ".blocks.json",
                     doc.storage_key + ".chunks.json"):

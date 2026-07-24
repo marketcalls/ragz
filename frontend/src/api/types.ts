@@ -15,6 +15,12 @@ export type CitationOut = components['schemas']['CitationOut'];
 // on MessageNode.feedback for the caller's own rating.
 export type FeedbackOut = components['schemas']['FeedbackOut'];
 export type ModelOut = components['schemas']['ModelOut'];
+// POST /api/v1/admin/models wire shape (DOC-10). features/admin/models/queries.ts
+// defines its own ergonomic ModelCreate (modality/dimension optional --
+// the backend defaults modality to "chat" when the key is omitted, so
+// pre-DOC-10 callers stay byte-identical; provider_kind narrower, excluding
+// the seed-only 'tei') and casts to this alias at the request boundary.
+export type ModelCreateWire = components['schemas']['ModelCreate'];
 // GET /api/v1/models (non-admin, "any authenticated user") returns this
 // slimmer shape — id + display_name only, already filtered to enabled models
 // server-side. ModelOut (id/display_name/enabled/…) is the admin-page shape.

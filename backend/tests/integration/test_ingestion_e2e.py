@@ -9,6 +9,7 @@ from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_par
 from raghub.modules.documents.models import IngestJob
 from raghub.modules.documents.pipeline import IngestFailure
 from raghub.modules.documents.service import create_from_upload
+from raghub.modules.retrieval.client import COLLECTION
 from raghub.modules.retrieval.service import retrieve, update_document_current
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
@@ -48,7 +49,9 @@ async def test_docx_through_real_pipeline_then_hybrid_retrieval(
     # Plan H: freshly-upserted points are is_current=False (invisible) until
     # promotion (Task 6). Real promotion doesn't exist yet, so this test
     # stands in for it via the sanctioned update_document_current path.
-    await update_document_current(ctx.org_id, doc.id, is_current=True)
+    await update_document_current(
+        ctx.org_id, doc.id, is_current=True, collection_name=COLLECTION
+    )
 
     # (a) exact keyword query — real BM25 sparse must surface the billing chunk
     kw = await retrieve(session, ctx, ws.id, "invoice 0231", top_k=5)

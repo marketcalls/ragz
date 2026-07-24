@@ -18,6 +18,8 @@ async def test_ephemeral_search_never_crosses_chats(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
     from raghub.modules.documents.pipeline import Chunk
+    from raghub.modules.models import service as models_service
+    from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
     from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
     from raghub.modules.retrieval.service import (
         ensure_ephemeral_collection,
@@ -27,7 +29,13 @@ async def test_ephemeral_search_never_crosses_chats(
 
     await ensure_ephemeral_collection()
     org_id, chat_a, chat_b = uuid4(), uuid4(), uuid4()
-    embedder = get_dense_embedder()
+    # DOC-10: the ephemeral store has no per-workspace embedding choice --
+    # always the seeded local model (mirrors chat/service.py's route_attachment).
+    ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
+    embedder = get_dense_embedder(
+        ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
+        litellm_model_name=ephemeral_model.litellm_model_name,
+    )
 
     for chat_id, text in [(chat_a, "the vault code is 7431"), (chat_b, "the vault code is 9962")]:
         chunk = Chunk(text=text, page=1, chunk_index=0)
@@ -52,6 +60,8 @@ async def test_ephemeral_search_never_crosses_orgs(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
     from raghub.modules.documents.pipeline import Chunk
+    from raghub.modules.models import service as models_service
+    from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
     from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
     from raghub.modules.retrieval.service import (
         ensure_ephemeral_collection,
@@ -62,7 +72,11 @@ async def test_ephemeral_search_never_crosses_orgs(
     await ensure_ephemeral_collection()
     chat_id = uuid4()
     org_a, org_b = uuid4(), uuid4()
-    embedder = get_dense_embedder()
+    ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
+    embedder = get_dense_embedder(
+        ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
+        litellm_model_name=ephemeral_model.litellm_model_name,
+    )
     chunk = Chunk(text="org secret alpha", page=1, chunk_index=0)
     dense = (await embedder.embed(["org secret alpha"]))[0]
     sparse = embed_sparse(["org secret alpha"])[0]

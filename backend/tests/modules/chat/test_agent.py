@@ -20,6 +20,7 @@ from raghub.modules.chat.agent import (
 from raghub.modules.chat.llm import LLMCompletion, LLMToolCall, LLMUsage
 from raghub.modules.documents.metadata import list_fields
 from raghub.modules.models.models import Model
+from raghub.modules.retrieval.client import COLLECTION
 from raghub.modules.retrieval.service import RetrievedChunk
 from raghub.modules.tenancy.context import TenantContext
 from tests.conftest import FakeChunkReader, FakeCompleter, FakeRetriever
@@ -106,7 +107,7 @@ async def test_execute_search_returns_chunks_and_grounding(
     out = await execute_tool(
         session, ctx, PlannerAction(action="search", query="revenue"),
         workspace=chat_env["workspace"], retriever=retriever,
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is None and out.grounded is True and len(out.chunks) == 2
 
@@ -123,7 +124,7 @@ async def test_execute_search_by_metadata_builds_clauses(
         PlannerAction(action="search_by_metadata", query="q",
                       filters={"department": "HSE"}),
         workspace=chat_env["workspace"], retriever=retriever,
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is None
     clauses = retriever.calls[-1]["metadata_clauses"]
@@ -139,7 +140,7 @@ async def test_execute_metadata_unknown_field_is_error_not_widening(
         PlannerAction(action="search_by_metadata", query="q",
                       filters={"tenant_id": "evil"}),
         workspace=chat_env["workspace"], retriever=retriever,
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is not None and retriever.calls == []  # NotFoundError -> no search at all
 
@@ -155,7 +156,7 @@ async def test_execute_get_document_reads_via_chunk_reader(
     out = await execute_tool(
         session, ctx, PlannerAction(action="get_document", document_id=str(doc_id)),
         workspace=chat_env["workspace"], retriever=FakeRetriever(doc_id),
-        chunk_reader=reader, web_searcher=None,
+        chunk_reader=reader, web_searcher=None, collection_name=COLLECTION,
     )
     assert out.grounded is True and out.chunks[0].text == "body"
 
@@ -166,7 +167,7 @@ async def test_execute_get_document_bad_uuid_is_error(
     out = await execute_tool(
         session, ctx, PlannerAction(action="get_document", document_id="not-a-uuid"),
         workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is not None and out.chunks == []
 
@@ -177,7 +178,7 @@ async def test_execute_web_search_disabled_is_error(
     out = await execute_tool(
         session, ctx, PlannerAction(action="web_search", query="news"),
         workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is not None
 
@@ -195,7 +196,7 @@ async def test_execute_metadata_malformed_date_is_error_not_exception(
         PlannerAction(action="search_by_metadata", query="q",
                       filters={"revision_date": "not-a-date"}),
         workspace=chat_env["workspace"], retriever=retriever,
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is not None and retriever.calls == []
 
@@ -206,7 +207,7 @@ async def test_execute_unknown_action_is_error(
     out = await execute_tool(
         session, ctx, PlannerAction(action="rm_rf", query=""),
         workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
-        chunk_reader=FakeChunkReader(), web_searcher=None,
+        chunk_reader=FakeChunkReader(), web_searcher=None, collection_name=COLLECTION,
     )
     assert out.error is not None
 
@@ -260,6 +261,7 @@ async def test_json_planner_search_then_answer(session, chat_env, ctx, flagged_m
         model=flagged_model, completer=completer,
         retriever=FakeRetriever(chat_env["document"].id),
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert [(s.n, s.tool, s.query) for s in steps] == [(1, "search", "muster point")]
     assert len(gathered.chunks) == 2 and gathered.grounded is True
@@ -281,6 +283,7 @@ async def test_native_protocol_uses_tool_calls(session, chat_env, ctx, plain_mod
         model=plain_model, completer=completer,
         retriever=FakeRetriever(chat_env["document"].id),
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert steps[0].tool == "search"
     assert completer.calls[0]["tools"] is not None  # native schemas offered
@@ -294,6 +297,7 @@ async def test_iteration_cap_forces_answer(session, chat_env, ctx, flagged_model
         model=flagged_model, completer=completer,
         retriever=FakeRetriever(chat_env["document"].id),
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert len(steps) == 4 and len(completer.calls) == 4  # AGENT_MAX_ITERATIONS
     assert gathered.chunks  # synthesizes from whatever was gathered
@@ -311,6 +315,7 @@ async def test_malformed_planner_output_answers_immediately(  # type: ignore[no-
         model=flagged_model, completer=completer,
         retriever=FakeRetriever(chat_env["document"].id),
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert steps == [] and gathered.chunks == [] and gathered.grounded is False
 
@@ -325,6 +330,7 @@ async def test_tool_error_degrades_to_single_shot(session, chat_env, ctx, flagge
         session, ctx, workspace=chat_env["workspace"], question="original question",
         model=flagged_model, completer=completer, retriever=retriever,
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert gathered.degraded is True and gathered.grounded is True
     assert retriever.calls[-1]["query"] == "original question"  # single-shot on the ORIGINAL
@@ -359,6 +365,7 @@ async def test_fallback_retrieval_failure_does_not_crash(  # type: ignore[no-unt
         session, ctx, workspace=chat_env["workspace"], question="original question",
         model=flagged_model, completer=completer, retriever=_RaisingRetriever(),
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert gathered.degraded is True
     assert gathered.grounded is False
@@ -373,5 +380,6 @@ async def test_duplicate_chunks_deduped(session, chat_env, ctx, flagged_model) -
         model=flagged_model, completer=completer,
         retriever=FakeRetriever(chat_env["document"].id),  # same 2 chunks every call
         chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
     ))
     assert len(steps) == 2 and len(gathered.chunks) == 2  # not 4

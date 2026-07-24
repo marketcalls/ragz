@@ -12,6 +12,7 @@ from raghub.modules.documents.models import Document
 from raghub.modules.retrieval import service as retrieval_service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Group
+from raghub.modules.tenancy.reembed_models import ReembedJob
 from raghub.modules.tenancy.service import get_workspace_checked
 
 
@@ -25,6 +26,20 @@ async def create_from_upload(
     data: bytes,
 ) -> Document:
     ws = await get_workspace_checked(session, ctx, workspace_id)
+    reembed_in_progress = (
+        await session.execute(
+            select(ReembedJob.id).where(
+                ReembedJob.workspace_id == ws.id,
+                ReembedJob.started_at.is_not(None),
+                ReembedJob.finished_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if reembed_in_progress is not None:
+        raise ConflictError(
+            "a re-embed job is in progress for this workspace; try again once it completes"
+        )
     content_hash = hashlib.sha256(data).hexdigest()
     dup = (
         await session.execute(
@@ -182,7 +197,10 @@ async def set_document_acl(
     # After commit so a failed Qdrant call never strands a half-applied ACL in
     # PG; on Qdrant failure the route 502s and the admin retries (set_payload
     # is idempotent).
-    await retrieval_service.update_document_acl(ctx.org_id, doc.id, doc.acl_group_ids)
+    collection_name = await retrieval_service.resolve_collection_name(session, doc.workspace_id)
+    await retrieval_service.update_document_acl(
+        ctx.org_id, doc.id, doc.acl_group_ids, collection_name=collection_name
+    )
     return doc
 
 
@@ -246,10 +264,20 @@ async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID)
         row.is_current = row.id == effective.id
     await session.commit()
 
-    await retrieval_service.update_document_current(org_id, effective.id, is_current=True)
+    # DOC-10: every row in a lineage shares the same workspace_id (a document
+    # is never reassigned to a different workspace across versions) -- one
+    # resolution covers both calls below.
+    collection_name = await retrieval_service.resolve_collection_name(
+        session, effective.workspace_id
+    )
+    await retrieval_service.update_document_current(
+        org_id, effective.id, is_current=True, collection_name=collection_name
+    )
     for row in rows:
         if row.id != effective.id and row.vectors_present:
-            await retrieval_service.delete_document_points(org_id, row.id)
+            await retrieval_service.delete_document_points(
+                org_id, row.id, collection_name=collection_name
+            )
             row.vectors_present = False
     await session.commit()
     return None

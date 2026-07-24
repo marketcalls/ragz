@@ -9,6 +9,7 @@ import pytest
 
 from raghub.core.errors import NotFoundError
 from raghub.modules.documents.metadata import build_clauses, create_field
+from raghub.modules.retrieval.client import COLLECTION
 from raghub.modules.retrieval.service import MetadataClause, retrieve, update_document_acl
 from tests.isolation.conftest import ingest_text, seed_acl_workspace
 
@@ -26,7 +27,9 @@ async def test_outsider_cannot_retrieve_acl_restricted_document(session, qdrant_
     proof the document really is findable, just not by the outsider."""
     ctx_in, ctx_out, ctx_admin, ws, finance = await seed_acl_workspace(session)
     doc = await ingest_text(session, ctx_in, ws, "finance.txt", "Q3 revenue is confidential: $42M.")
-    await update_document_acl(ws.org_id, doc.id, acl_group_ids=[finance.id])
+    await update_document_acl(
+        ws.org_id, doc.id, acl_group_ids=[finance.id], collection_name=COLLECTION
+    )
 
     outsider_result = await retrieve(session, ctx_out, ws.id, "Q3 revenue confidential")
     assert not any("42M" in c.text for c in outsider_result.chunks)

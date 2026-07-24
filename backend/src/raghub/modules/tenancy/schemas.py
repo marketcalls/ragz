@@ -11,7 +11,7 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceOut(BaseModel):
     id: UUID
     name: str
-    embedding_model: str
+    embedding_model_id: UUID
     min_score: float
     default_model_id: UUID | None
     top_k: int
@@ -25,6 +25,10 @@ class WorkspaceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class EmbeddingModelPatch(BaseModel):
+    embedding_model_id: UUID
+
+
 class WorkspacePatch(BaseModel):
     default_model_id: UUID | None = None
     top_k: int | None = Field(default=None, ge=1, le=50)
@@ -35,6 +39,23 @@ class WorkspacePatch(BaseModel):
     web_search_enabled: bool | None = None
     strict_mode: bool | None = None
     enrichment_enabled: bool | None = None
+
+
+class ReembedRequest(BaseModel):
+    new_embedding_model_id: UUID
+
+
+class ReembedJobOut(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    old_embedding_model_id: UUID
+    new_embedding_model_id: UUID
+    documents_total: int
+    documents_done: int
+    error: str | None
+    finished_at: str | None  # ISO 8601, None while running
+
+    model_config = {"from_attributes": True}
 
 
 class MemberAdd(BaseModel):

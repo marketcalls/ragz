@@ -107,6 +107,45 @@ async def set_default_model(
     return ws
 
 
+async def workspace_uses_embedding_model(session: AsyncSession, model_id: UUID) -> bool:
+    """DOC-10 delete guard (models/service.py::delete_model): mirrors
+    delete_role_template's "assigned to at least one X" 409 check."""
+    row = (
+        await session.execute(
+            select(Workspace.id).where(Workspace.embedding_model_id == model_id).limit(1)
+        )
+    ).first()
+    return row is not None
+
+
+async def set_embedding_model(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, model_id: UUID
+) -> Workspace:
+    """DOC-10 lock-after-first-index: switches immediately if the workspace
+    has zero indexed documents; 409s (pointing at the re-embed flow) if it
+    has any. Local import: documents.service already imports THIS module
+    (get_workspace_checked) at module scope, so importing documents.service
+    here at module scope would be circular -- same sanctioned shape as this
+    file's existing worker.tasks / evals.service local imports."""
+    from raghub.modules.documents.service import has_indexed_documents
+    from raghub.modules.models import service as models_service
+
+    ws = await get_workspace_checked(session, ctx, workspace_id)
+    model = await models_service.get_model(session, model_id)
+    if model.modality != "embedding":
+        raise ConflictError("model is not an embedding model")
+    if await has_indexed_documents(session, ctx, workspace_id):
+        raise ConflictError(
+            "workspace already has indexed documents -- use the re-embed job to switch models"
+        )
+    ws.embedding_model_id = model_id
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="workspace.embedding_model_changed", target_type="workspace",
+                       target_id=str(ws.id))
+    await session.commit()
+    return ws
+
+
 _RETRIEVAL_SETTINGS_FIELDS = {
     "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
     "web_search_enabled", "strict_mode", "enrichment_enabled",

@@ -260,6 +260,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/embedding-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Embedding Model */
+        patch: operations["patch_embedding_model_api_v1_workspaces__workspace_id__embedding_model_patch"];
+        trace?: never;
+    };
     "/api/v1/workspaces/{workspace_id}": {
         parameters: {
             query?: never;
@@ -275,6 +292,46 @@ export interface paths {
         head?: never;
         /** Patch Workspace */
         patch: operations["patch_workspace_api_v1_workspaces__workspace_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/reembed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Reembed
+         * @description Admin-confirmed switch for a workspace that already has indexed
+         *     content (the 409 path of PATCH .../embedding-model points here). Creates
+         *     no ReembedJob row itself -- run_reembed_workspace creates it once it
+         *     knows the actual document count; this route only validates + enqueues.
+         */
+        post: operations["start_reembed_api_v1_workspaces__workspace_id__reembed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/reembed-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Reembed Status */
+        get: operations["get_reembed_status_api_v1_workspaces__workspace_id__reembed_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/workspaces/{workspace_id}/documents": {
@@ -1394,6 +1451,14 @@ export interface components {
             /** Pinned */
             pinned: boolean;
         };
+        /** EmbeddingModelPatch */
+        EmbeddingModelPatch: {
+            /**
+             * Embedding Model Id
+             * Format: uuid
+             */
+            embedding_model_id: string;
+        };
         /** EvalRunOut */
         EvalRunOut: {
             /**
@@ -1755,7 +1820,7 @@ export interface components {
              * Provider Kind
              * @enum {string}
              */
-            provider_kind: "openai" | "ollama" | "openai_compatible" | "litellm";
+            provider_kind: "openai" | "ollama" | "openai_compatible" | "litellm" | "tei";
             /** Base Url */
             base_url?: string | null;
             /** Api Key */
@@ -1783,6 +1848,14 @@ export interface components {
              * @default false
              */
             supports_vision: boolean;
+            /**
+             * Modality
+             * @default chat
+             * @enum {string}
+             */
+            modality: "chat" | "embedding";
+            /** Dimension */
+            dimension?: number | null;
         };
         /** ModelDayTokens */
         ModelDayTokens: {
@@ -1814,7 +1887,7 @@ export interface components {
              * Provider Kind
              * @enum {string}
              */
-            provider_kind: "openai" | "ollama" | "openai_compatible" | "litellm";
+            provider_kind: "openai" | "ollama" | "openai_compatible" | "litellm" | "tei";
             /** Base Url */
             base_url: string | null;
             /** Enabled */
@@ -1841,6 +1914,15 @@ export interface components {
             supports_vision: boolean;
             /** Is Utility */
             is_utility: boolean;
+            /**
+             * Modality
+             * @enum {string}
+             */
+            modality: "chat" | "embedding";
+            /** Dimension */
+            dimension: number | null;
+            /** Collection Name */
+            collection_name: string | null;
         };
         /** ModelPatch */
         ModelPatch: {
@@ -1867,7 +1949,8 @@ export interface components {
         };
         /**
          * ModelPublic
-         * @description What non-superadmin users see (chat model picker).
+         * @description What non-superadmin users see (chat model picker) -- unchanged shape;
+         *     the route now filters to modality="chat" before serializing (Step 6).
          */
         ModelPublic: {
             /**
@@ -1943,6 +2026,45 @@ export interface components {
             name: string;
             /** Tokens */
             tokens: number;
+        };
+        /** ReembedJobOut */
+        ReembedJobOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+            /**
+             * Old Embedding Model Id
+             * Format: uuid
+             */
+            old_embedding_model_id: string;
+            /**
+             * New Embedding Model Id
+             * Format: uuid
+             */
+            new_embedding_model_id: string;
+            /** Documents Total */
+            documents_total: number;
+            /** Documents Done */
+            documents_done: number;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+        };
+        /** ReembedRequest */
+        ReembedRequest: {
+            /**
+             * New Embedding Model Id
+             * Format: uuid
+             */
+            new_embedding_model_id: string;
         };
         /**
          * RegenerateRequest
@@ -2166,8 +2288,11 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-            /** Embedding Model */
-            embedding_model: string;
+            /**
+             * Embedding Model Id
+             * Format: uuid
+             */
+            embedding_model_id: string;
             /** Min Score */
             min_score: number;
             /** Default Model Id */
@@ -2692,6 +2817,41 @@ export interface operations {
             };
         };
     };
+    patch_embedding_model_api_v1_workspaces__workspace_id__embedding_model_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbeddingModelPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     patch_workspace_api_v1_workspaces__workspace_id__patch: {
         parameters: {
             query?: never;
@@ -2714,6 +2874,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_reembed_api_v1_workspaces__workspace_id__reembed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReembedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReembedJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reembed_status_api_v1_workspaces__workspace_id__reembed_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReembedJobOut"];
                 };
             };
             /** @description Validation Error */

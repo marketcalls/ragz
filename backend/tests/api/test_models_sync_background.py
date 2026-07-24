@@ -9,6 +9,7 @@ from raghub.api.app import create_app
 from raghub.core.config import Settings, get_settings
 from raghub.core.db import build_session_factory
 from raghub.modules.auth.models import User
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 
 OPENAI_BODY = {
     "litellm_model_name": "gpt-4o-mini", "display_name": "GPT-4o mini",
@@ -107,8 +108,12 @@ async def test_model_create_survives_non_upstream_sync_failure(
     # No unhandled exception escaped the background task; the row is simply
     # left at its pre-sync status since sync_models_to_litellm itself never
     # ran far enough to persist anything.
+    # tests/conftest.py's `engine` fixture seeds one globally-present model
+    # (LOCAL_EMBEDDING_MODEL_ID), so the just-created row is looked up by id
+    # rather than assumed to be listing[0].
     listing = await client.get("/api/v1/admin/models", headers=h)
-    assert listing.json()[0]["sync_status"] == "pending"
+    created_row = next(m for m in listing.json() if m["id"] == r.json()["id"])
+    assert created_row["sync_status"] == "pending"
 
 
 async def test_model_delete_triggers_background_sync(
@@ -129,6 +134,10 @@ async def test_model_delete_triggers_background_sync(
     r = await client.delete(f"/api/v1/admin/models/{model_id}", headers=h)
     assert r.status_code == 204
 
+    # tests/conftest.py's `engine` fixture seeds one globally-present model
+    # (LOCAL_EMBEDDING_MODEL_ID) that always precedes both created rows
+    # (created_at order).
     listing = (await client.get("/api/v1/admin/models", headers=h)).json()
-    assert [m["id"] for m in listing] == [other_id]
-    assert listing[0]["sync_status"] == "synced"
+    assert [m["id"] for m in listing] == [str(LOCAL_EMBEDDING_MODEL_ID), other_id]
+    other_row = next(m for m in listing if m["id"] == other_id)
+    assert other_row["sync_status"] == "synced"

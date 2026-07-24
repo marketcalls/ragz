@@ -9,12 +9,14 @@ from raghub.core.config import Settings
 from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.audit.models import AuditEvent
 from raghub.modules.auth.models import User
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from raghub.modules.models.service import (
     create_model,
     delete_model,
     list_enabled_models,
     list_models,
     resolve_model,
+    to_model_out,
     update_model,
 )
 from raghub.modules.secrets.crypto import ensure_kek
@@ -52,6 +54,23 @@ async def test_create_stores_key_as_secret(
     assert "model.created" in actions and "secret.written" in actions
 
 
+async def test_to_model_out_defaults_chat_modality(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """DOC-10: every pre-existing caller of create_model (no modality/dimension
+    passed) keeps working unchanged, and serializes as modality="chat" with
+    dimension/collection_name left None."""
+    ctx = super_ctx(seeded_user)
+    model = await create_model(
+        session, ctx, litellm_model_name="gpt-4o-mini", display_name="GPT-4o mini",
+        provider_kind="openai", base_url=None, api_key="sk-live-xyz", settings=settings,
+    )
+    out = (await to_model_out(session, [model]))[0]
+    assert out.modality == "chat"
+    assert out.dimension is None
+    assert out.collection_name is None
+
+
 async def test_update_and_disable(
     session: AsyncSession, seeded_user: User, settings: Settings
 ) -> None:
@@ -67,8 +86,13 @@ async def test_update_and_disable(
     assert updated.display_name == "Llama 3 8B"
     assert updated.base_url == "http://ollama:11434"  # None = leave unchanged
     assert updated.enabled is False
-    assert await list_enabled_models(session) == []
-    assert len(await list_models(session)) == 1
+    # tests/conftest.py's `engine` fixture seeds one globally-present enabled
+    # embedding model (LOCAL_EMBEDDING_MODEL_ID, mirroring migration
+    # d1e8f4a2b6c3) -- the just-disabled llama3 model must not be among the
+    # enabled ones, but the seeded row still is.
+    enabled = await list_enabled_models(session)
+    assert [m.id for m in enabled] == [LOCAL_EMBEDDING_MODEL_ID]
+    assert len(await list_models(session)) == 2
 
 
 async def test_delete_removes_model_and_secret(
@@ -80,7 +104,10 @@ async def test_delete_removes_model_and_secret(
         provider_kind="openai", base_url=None, api_key="sk-1", settings=settings,
     )
     await delete_model(session, ctx, model.id, settings=settings)
-    assert await list_models(session) == []
+    # Only the globally-seeded local embedding model remains (see
+    # tests/conftest.py's `engine` fixture / migration d1e8f4a2b6c3).
+    remaining = await list_models(session)
+    assert [m.id for m in remaining] == [LOCAL_EMBEDDING_MODEL_ID]
     assert (
         await session.execute(select(Secret).where(Secret.name == f"model:{model.id}"))
     ).scalar_one_or_none() is None
@@ -107,7 +134,10 @@ async def test_create_model_rolls_back_atomically_on_secret_failure(
         )
 
     await session.rollback()
-    assert await list_models(session) == []
+    # Only the globally-seeded local embedding model remains -- the failed
+    # create_model must not have left its row committed either.
+    remaining = await list_models(session)
+    assert [m.id for m in remaining] == [LOCAL_EMBEDDING_MODEL_ID]
 
 
 async def test_resolve_model_order(

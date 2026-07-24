@@ -9,7 +9,7 @@ import { WorkspaceSettingsDialog } from './workspace-settings-dialog';
 const ws: WorkspaceOut = {
   id: 'w1',
   name: 'Finance',
-  embedding_model: 'bge-m3',
+  embedding_model_id: 'model-embed-1',
   min_score: 0.35,
   default_model_id: null,
   top_k: 8,
@@ -33,6 +33,22 @@ function stubFetch(responseBody: WorkspaceOut) {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
+      }
+      // EmbeddingModelSection (DOC-10 mount point) fetches the admin model
+      // list on mount — stub it to an empty list so it doesn't interfere
+      // with these settings-form assertions.
+      if (req.url.includes('/admin/models')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      // EmbeddingModelSection also fetches /reembed-status unconditionally on
+      // mount now (fix round: it must not depend on local dialog state to
+      // stay visible across dialog remounts) — stub a clean 404, matching a
+      // workspace that has never run a re-embed job.
+      if (req.url.includes('/reembed-status')) {
+        return new Response(null, { status: 404 });
       }
       return new Response(JSON.stringify(responseBody), {
         status: 200,

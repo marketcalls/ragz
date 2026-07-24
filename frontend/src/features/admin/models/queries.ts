@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
-import type { CatalogOut, ModelOut } from '@/api/types';
+import type { CatalogOut, ModelCreateWire, ModelOut } from '@/api/types';
 
 export interface ModelCreate {
   display_name: string;
@@ -20,6 +20,13 @@ export interface ModelCreate {
   supports_reasoning: boolean;
   default_reasoning_effort: 'off' | 'low' | 'medium' | 'high';
   supports_vision: boolean;
+  // DOC-10: 'chat' (default, omitted by every pre-DOC-10 call site since the
+  // backend defaults it) or 'embedding' -- dimension required only then.
+  // 'tei' is a valid provider_kind on the WIRE type (ModelOut needs to
+  // represent the seeded row) but is rejected server-side if sent on
+  // create, so it's deliberately excluded from this CREATE type's union.
+  modality?: 'chat' | 'embedding';
+  dimension?: number;
 }
 
 export interface ModelPatchInput {
@@ -104,7 +111,14 @@ export function useCreateModel() {
   const invalidate = useInvalidateModels();
   return useMutation({
     mutationFn: async (body: ModelCreate) => {
-      const { data, error, response } = await api.POST('/api/v1/admin/models', { body });
+      // Cast to the generated wire type: `modality` is required there only
+      // because the backend has no default-implies-optional exemption in its
+      // OpenAPI output, not because callers must send it (the Python default
+      // "chat" applies whenever the key is omitted, matching this file's
+      // ModelCreate contract above).
+      const { data, error, response } = await api.POST('/api/v1/admin/models', {
+        body: body as unknown as ModelCreateWire,
+      });
       if (error) throw mutationError(response);
       return data;
     },

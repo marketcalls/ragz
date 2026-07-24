@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from raghub.core.db import Base, UUIDPk
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 
 
 class Organization(UUIDPk, Base):
@@ -20,7 +21,9 @@ class Workspace(UUIDPk, Base):
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     name: Mapped[str]
-    embedding_model: Mapped[str] = mapped_column(default="bge-m3")
+    embedding_model_id: Mapped[UUID] = mapped_column(
+        ForeignKey("models.id"), default=LOCAL_EMBEDDING_MODEL_ID
+    )
     min_score: Mapped[float] = mapped_column(default=0.35)
     default_model_id: Mapped[UUID | None] = mapped_column(default=None)
     # Plan E (ADM-3): per-workspace retrieval tuning

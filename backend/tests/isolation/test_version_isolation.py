@@ -6,9 +6,12 @@ demoted, or merely in-flight must never leak through retrieve().
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from raghub.core.config import get_settings
 from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from raghub.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch, upsert_points
 from raghub.modules.documents.service import create_from_upload, set_approved
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from raghub.modules.retrieval.client import COLLECTION
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import ensure_collection, retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace
@@ -78,12 +81,19 @@ async def test_in_flight_points_invisible(
     )
     blocks = [PageBlock(page=1, text="the muster point is GATE 9", kind="text")]
     chunks = chunk_blocks(blocks)
-    await ensure_collection()
-    dense, sparse = await embed_batch([c.text for c in chunks], get_dense_embedder())
+    # DOC-10: inline v2-upsert bypass, kept in step with production's
+    # explicit collection_name/model-parameterized get_dense_embedder --
+    # ws here carries the seeded default (LOCAL_EMBEDDING_MODEL_ID/COLLECTION).
+    await ensure_collection(COLLECTION, get_settings().embedding_dim)
+    dense_embedder = get_dense_embedder(
+        LOCAL_EMBEDDING_MODEL_ID, provider_kind="tei", litellm_model_name="local-embeddings"
+    )
+    dense, sparse = await embed_batch([c.text for c in chunks], dense_embedder)
     await upsert_points(
         org_id=ctx.org_id, workspace_id=ws.id, document_id=v2.id, mime=v2.mime,
         created_at=v2.created_at, acl_group_ids=[], chunks=chunks,
         dense=dense, sparse=sparse, version=v2.version, meta=None,
+        collection_name=COLLECTION,
     )  # is_current defaults False -- points exist but must stay invisible
 
     result = await retrieve(session, ctx, ws.id, "the muster point is GATE 9", top_k=10)

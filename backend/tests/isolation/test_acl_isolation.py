@@ -8,6 +8,7 @@ pipeline and queries with the restricted document's exact secret as the lure.
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.modules.documents.service import set_document_acl
+from raghub.modules.retrieval.client import COLLECTION
 from raghub.modules.retrieval.service import retrieve
 from tests.isolation.conftest import ingest_text, seed_acl_workspace
 
@@ -109,11 +110,26 @@ async def test_chunk_readers_respect_acl(
     from raghub.modules.retrieval.service import get_chunks_by_refs, list_document_chunks
 
     ctx_in, ctx_out, _, ws, _, restricted, _ = await _seed(session)
-    assert await list_document_chunks(ctx_out, ws.id, restricted.id) == []
-    assert await get_chunks_by_refs(ctx_out, ws.id, [f"{restricted.id}:1:0"]) == []
+    assert (
+        await list_document_chunks(ctx_out, ws.id, restricted.id, collection_name=COLLECTION)
+        == []
+    )
+    assert (
+        await get_chunks_by_refs(
+            ctx_out, ws.id, [f"{restricted.id}:1:0"], collection_name=COLLECTION
+        )
+        == []
+    )
     # Not vacuous: the group member resolves both paths.
-    assert [c.document_id for c in await list_document_chunks(ctx_in, ws.id, restricted.id)] \
-        == [restricted.id]
-    assert [c.document_id for c in
-            await get_chunks_by_refs(ctx_in, ws.id, [f"{restricted.id}:1:0"])] \
-        == [restricted.id]
+    assert [
+        c.document_id
+        for c in await list_document_chunks(
+            ctx_in, ws.id, restricted.id, collection_name=COLLECTION
+        )
+    ] == [restricted.id]
+    assert [
+        c.document_id
+        for c in await get_chunks_by_refs(
+            ctx_in, ws.id, [f"{restricted.id}:1:0"], collection_name=COLLECTION
+        )
+    ] == [restricted.id]

@@ -35,6 +35,9 @@ const modelA: ModelOut = {
   supports_reasoning: false,
   default_reasoning_effort: 'off',
   supports_vision: false,
+  modality: 'chat',
+  dimension: null,
+  collection_name: null,
 };
 
 const modelB: ModelOut = {
@@ -52,12 +55,35 @@ const modelB: ModelOut = {
   supports_reasoning: false,
   default_reasoning_effort: 'off',
   supports_vision: false,
+  modality: 'chat',
+  dimension: null,
+  collection_name: null,
+};
+
+const modelC: ModelOut = {
+  id: 'm3',
+  litellm_model_name: 'BAAI/bge-m3',
+  display_name: 'TEI embeddings',
+  provider_kind: 'tei',
+  base_url: null,
+  enabled: true,
+  key_fingerprint: null,
+  sync_status: 'synced',
+  mock_response: null,
+  tools_unreliable: false,
+  is_utility: false,
+  supports_reasoning: false,
+  default_reasoning_effort: 'off',
+  supports_vision: false,
+  modality: 'embedding',
+  dimension: 1024,
+  collection_name: 'ws_default_bge_m3',
 };
 
 const patchMutate = vi.fn();
 
 beforeEach(() => {
-  useAdminModels.mockReturnValue({ data: [modelA, modelB], isPending: false });
+  useAdminModels.mockReturnValue({ data: [modelA, modelB, modelC], isPending: false });
   useCatalog.mockReturnValue({ data: { entries: [], new_available: 0 } });
   usePatchModel.mockReturnValue({ mutate: patchMutate, isPending: false });
   useDeleteModel.mockReturnValue({ mutate: vi.fn(), isPending: false });
@@ -96,6 +122,25 @@ test('a short caption explains the utility model designation', () => {
   ).toBeInTheDocument();
 });
 
+test('the chat tab is selected by default and shows only chat-modality rows', () => {
+  render(<ModelsPage />);
+  expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+  expect(screen.getByText('Llama 3')).toBeInTheDocument();
+  expect(screen.queryByText('TEI embeddings')).not.toBeInTheDocument();
+});
+
+test('switching to the embedding tab shows only embedding-modality rows, with the built-in tei row unremovable', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  await user.click(screen.getByRole('button', { name: 'embedding models' }));
+  expect(screen.queryByText('GPT-4o mini')).not.toBeInTheDocument();
+  expect(screen.queryByText('Llama 3')).not.toBeInTheDocument();
+  expect(screen.getByText('TEI embeddings')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Edit TEI embeddings')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Remove TEI embeddings')).not.toBeInTheDocument();
+  expect(screen.getByText('Built-in')).toBeInTheDocument();
+});
+
 test('shows an error message and retry button when the query fails', async () => {
   const refetch = vi.fn();
   useAdminModels.mockReturnValue({
@@ -109,4 +154,15 @@ test('shows an error message and retry button when the query fails', async () =>
   expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load/i);
   await userEvent.click(screen.getByRole('button', { name: /retry/i }));
   expect(refetch).toHaveBeenCalledTimes(1);
+});
+
+test('the Type column displays the modality of each model', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  // On chat tab, verify chat models show 'chat' modality
+  expect(screen.getAllByText('chat', { selector: 'td' }).length).toBeGreaterThan(0);
+  // Switch to embedding tab
+  await user.click(screen.getByRole('button', { name: 'embedding models' }));
+  // On embedding tab, verify embedding models show 'embedding' modality
+  expect(screen.getByText('embedding', { selector: 'td' })).toBeInTheDocument();
 });

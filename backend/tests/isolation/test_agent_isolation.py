@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import raghub
 from raghub.modules.chat.agent import PlannerAction, execute_tool
+from raghub.modules.retrieval.client import COLLECTION
 from raghub.modules.retrieval.service import RetrievalChunkReader, retrieve
 from tests.isolation.conftest import ingest_text, seed_same_org_two_workspaces
 
@@ -38,7 +39,7 @@ async def test_agent_search_cannot_cross_workspaces(
     out_a = await execute_tool(
         session, ctx1, PlannerAction(action="search", query=secret_b),
         workspace=ws1, retriever=retrieve, chunk_reader=RetrievalChunkReader(),
-        web_searcher=None,
+        web_searcher=None, collection_name=COLLECTION,
     )
     assert out_a.error is None
     assert all(c.document_id != doc_b.id for c in out_a.chunks)
@@ -48,7 +49,7 @@ async def test_agent_search_cannot_cross_workspaces(
     out_b = await execute_tool(
         session, ctx2, PlannerAction(action="search", query=secret_b),
         workspace=ws2, retriever=retrieve, chunk_reader=RetrievalChunkReader(),
-        web_searcher=None,
+        web_searcher=None, collection_name=COLLECTION,
     )
     assert out_b.error is None
     assert any(c.document_id == doc_b.id for c in out_b.chunks)
