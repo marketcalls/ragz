@@ -5,6 +5,7 @@ from uuid import UUID
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
@@ -228,3 +229,51 @@ async def test_upload_immediately_after_reembed_enqueued_is_rejected(
     assert upload.status_code == 409
     assert upload.headers["content-type"] == "application/problem+json"
     assert "re-embed job is in progress" in upload.json()["detail"]
+
+
+async def test_post_reembed_enqueue_failure_closes_job(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix round 3 regression: start_reembed commits the ReembedJob row
+    BEFORE calling enqueue_reembed_workspace. If that call itself raises
+    (e.g. the Celery broker/Redis is down), the already-committed job row
+    must not be left "in progress" forever -- it must be closed
+    (error/finished_at stamped) so create_from_upload's guard doesn't
+    permanently reject uploads to this workspace.
+
+    Registering a handler for the bare `Exception` class (as this app does
+    for its catch-all 500) makes Starlette's ServerErrorMiddleware build the
+    problem+json response AND re-raise the original exception (a documented
+    "response of last resort" behavior) -- the `client` fixture's
+    ASGITransport (raise_app_exceptions=True, the default) surfaces that as
+    the original RuntimeError rather than a captured 500 response, same as
+    test_error_handlers.py's crashy_client would need
+    raise_app_exceptions=False to observe the response body instead. Either
+    way, the job-closing behavior is what this test actually verifies."""
+    h = await auth(client, seeded_user.email)
+    ws_id = await make_workspace(client, h)
+    new_model = await _create_embedding_model(session)
+
+    def _boom(workspace_id: UUID, job_id: UUID, new_embedding_model_id: UUID) -> None:
+        raise RuntimeError("celery broker unavailable")
+
+    monkeypatch.setattr("raghub.api.routes.workspaces.enqueue_reembed_workspace", _boom)
+
+    with pytest.raises(RuntimeError, match="celery broker unavailable"):
+        await client.post(
+            f"/api/v1/workspaces/{ws_id}/reembed",
+            json={"new_embedding_model_id": str(new_model.id)},
+            headers=h,
+        )
+
+    jobs = (
+        await session.execute(
+            select(ReembedJob).where(ReembedJob.workspace_id == UUID(ws_id))
+        )
+    ).scalars().all()
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.started_at is not None
+    assert job.finished_at is not None
+    assert job.error is not None and "celery broker unavailable" in job.error

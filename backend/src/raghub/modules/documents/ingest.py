@@ -470,7 +470,23 @@ async def run_reembed_workspace(
     and the exception re-raised BEFORE the old collection is touched and
     BEFORE workspace.embedding_model_id is flipped -- the workspace is left
     pointing at its OLD (still fully populated) collection rather than a new
-    one that only some documents made it into."""
+    one that only some documents made it into.
+
+    Fix round 3: the failure handling now wraps EVERYTHING from here through
+    the end of the run, not just the per-document loop. The prior version
+    only wrapped the loop -- so a failure in the SETUP phase (old/new model
+    lookup via models_service.get_model, which raises NotFoundError if a
+    model was deleted mid-flight; the collection-name assertion;
+    ensure_collection, a real Qdrant call that can transiently fail; or the
+    documents query/count commit) propagated straight past this function,
+    through Celery's retry wrapper, to IngestTask.on_failure ->
+    ingest.mark_failed(workspace_id, ...) -- which looks for a Document with
+    that id, finds none (it's a workspace_id), and silently no-ops. The
+    ReembedJob row was left with started_at set and finished_at NULL
+    forever, and since create_from_upload's guard checks for exactly that
+    state, every future upload to the workspace was permanently rejected.
+    Now any exception anywhere in this block stamps job.error/finished_at
+    before propagating."""
     async with _session() as session:
         workspace = await session.get(Workspace, workspace_id)
         job = await session.get(ReembedJob, job_id)
@@ -494,52 +510,54 @@ async def run_reembed_workspace(
                 "reembed_job_missing", workspace_id=str(workspace_id), job_id=str(job_id)
             )
             return
-        old_model = await models_service.get_model(session, workspace.embedding_model_id)
-        new_model = await models_service.get_model(session, new_embedding_model_id)
-        if old_model.id == new_model.id:
-            # Defensive no-op: start_reembed already rejects a same-model
-            # request with a 409 before this task is ever enqueued, so this
-            # should only trigger if the task is invoked directly (e.g. a
-            # replayed Celery message bypassing the route). Without this
-            # guard, old_collection == new_collection below, and the
-            # workspace-scoped delete from the "OLD" collection after the
-            # upsert loop would delete every point this same run just wrote
-            # -- silently wiping the workspace's vectors. The job still must
-            # be closed here (finished_at stamped) -- otherwise it stays
-            # "in progress" forever and create_from_upload's guard would
-            # permanently block uploads to this workspace.
-            log.warning(
-                "reembed_noop_same_model",
-                workspace_id=str(workspace_id),
-                model_id=str(new_model.id),
-            )
-            job.finished_at = naive_utc()
-            await session.commit()
-            return
-        old_collection = old_model.collection_name
-        new_collection = new_model.collection_name
-        assert old_collection is not None and new_collection is not None
-        await ensure_collection(new_collection, new_model.dimension)  # type: ignore[arg-type]
-        new_embedder = get_dense_embedder(
-            new_model.id, provider_kind=new_model.provider_kind,
-            litellm_model_name=new_model.litellm_model_name,
-        )
-
-        docs = list(
-            (
-                await session.execute(
-                    select(Document).where(
-                        Document.workspace_id == workspace_id,
-                        Document.is_current.is_(True),
-                        Document.status == "indexed",
-                    )
-                )
-            ).scalars()
-        )
-        job.documents_total = len(docs)
-        await session.commit()
 
         try:
+            old_model = await models_service.get_model(session, workspace.embedding_model_id)
+            new_model = await models_service.get_model(session, new_embedding_model_id)
+            if old_model.id == new_model.id:
+                # Defensive no-op: start_reembed already rejects a same-model
+                # request with a 409 before this task is ever enqueued, so
+                # this should only trigger if the task is invoked directly
+                # (e.g. a replayed Celery message bypassing the route).
+                # Without this guard, old_collection == new_collection below,
+                # and the workspace-scoped delete from the "OLD" collection
+                # after the upsert loop would delete every point this same
+                # run just wrote -- silently wiping the workspace's vectors.
+                # The job still must be closed here (finished_at stamped) --
+                # otherwise it stays "in progress" forever and
+                # create_from_upload's guard would permanently block uploads
+                # to this workspace.
+                log.warning(
+                    "reembed_noop_same_model",
+                    workspace_id=str(workspace_id),
+                    model_id=str(new_model.id),
+                )
+                job.finished_at = naive_utc()
+                await session.commit()
+                return
+            old_collection = old_model.collection_name
+            new_collection = new_model.collection_name
+            assert old_collection is not None and new_collection is not None
+            await ensure_collection(new_collection, new_model.dimension)  # type: ignore[arg-type]
+            new_embedder = get_dense_embedder(
+                new_model.id, provider_kind=new_model.provider_kind,
+                litellm_model_name=new_model.litellm_model_name,
+            )
+
+            docs = list(
+                (
+                    await session.execute(
+                        select(Document).where(
+                            Document.workspace_id == workspace_id,
+                            Document.is_current.is_(True),
+                            Document.status == "indexed",
+                        )
+                    )
+                ).scalars()
+            )
+            job.documents_total = len(docs)
+            await session.commit()
+
             for doc in docs:
                 raw = await _storage().get(doc.storage_key + ".chunks.json")
                 chunks = [Chunk(**c) for c in json.loads(raw)]
@@ -555,23 +573,23 @@ async def run_reembed_workspace(
                     )
                 job.documents_done += 1
                 await session.commit()
+
+            # Workspace-scoped delete from the OLD collection -- other
+            # workspaces may still share that collection, so this is never a
+            # whole-collection wipe. Only reached once every document above
+            # has been re-embedded into new_collection without error.
+            await delete_workspace_points(
+                workspace.org_id, workspace_id, collection_name=old_collection
+            )
+
+            workspace.embedding_model_id = new_model.id
+            job.finished_at = naive_utc()
+            await session.commit()
         except Exception as exc:
             job.error = str(exc)[:1000]
             job.finished_at = naive_utc()
             await session.commit()
             raise
-
-        # Workspace-scoped delete from the OLD collection -- other workspaces
-        # may still share that collection, so this is never a whole-collection
-        # wipe. Only reached once every document above has been re-embedded
-        # into new_collection without error.
-        await delete_workspace_points(
-            workspace.org_id, workspace_id, collection_name=old_collection
-        )
-
-        workspace.embedding_model_id = new_model.id
-        job.finished_at = naive_utc()
-        await session.commit()
 
 
 async def run_delete(document_id: UUID, actor_id: UUID | None) -> UUID | None:

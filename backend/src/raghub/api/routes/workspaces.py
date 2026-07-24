@@ -148,7 +148,19 @@ async def start_reembed(
     )
     session.add(job)
     await session.commit()
-    enqueue_reembed_workspace(workspace_id, job.id, body.new_embedding_model_id)
+    try:
+        enqueue_reembed_workspace(workspace_id, job.id, body.new_embedding_model_id)
+    except Exception as exc:
+        # Fix round 3: the job row above is already committed (started_at
+        # set), so if the enqueue call itself blows up (e.g. the Celery
+        # broker/Redis is down), the job would otherwise be left "in
+        # progress" forever with no task ever running to close it --
+        # create_from_upload's guard would then permanently reject uploads
+        # to this workspace. Close it here before letting the error surface.
+        job.error = str(exc)[:1000]
+        job.finished_at = naive_utc()
+        await session.commit()
+        raise
     return ReembedJobOut(
         id=job.id, workspace_id=job.workspace_id,
         old_embedding_model_id=job.old_embedding_model_id,

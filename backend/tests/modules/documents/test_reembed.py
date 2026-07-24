@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
 from raghub.core.db import naive_utc
+from raghub.core.errors import NotFoundError
 from raghub.modules.auth.models import User
 from raghub.modules.documents import ingest
 from raghub.modules.documents.models import Document
@@ -262,3 +263,84 @@ async def test_reembed_failure_leaves_workspace_on_old_model(
     client = get_qdrant()
     old_points, _ = await client.scroll(COLLECTION, limit=10)
     assert any(p.payload["workspace_id"] == str(ws_id) for p in old_points)
+
+
+async def test_reembed_setup_phase_failure_closes_job(
+    session: AsyncSession, ctx: TenantContext, embedding_model_fixture: Model,
+    qdrant_collection: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix round 3 regression: a failure BEFORE the per-document loop even
+    starts (e.g. ensure_collection raising -- a real Qdrant call that can
+    transiently fail) must still stamp job.error/finished_at, not leave the
+    ReembedJob row permanently "in progress". Before this fix, the try/except
+    only wrapped the loop itself, so a setup-phase exception propagated all
+    the way up through Celery's retry wrapper and out to
+    IngestTask.on_failure -> mark_failed(workspace_id, ...), which silently
+    no-ops (workspace_id isn't a document_id) -- leaving the job stuck open
+    forever and permanently blocking future uploads via
+    create_from_upload's in-progress guard."""
+    doc = await _seed_indexed_document(session, ctx, "reembed-ws-setup-fail")
+    ws_id = doc.workspace_id
+    ws_before = await session.get(Workspace, ws_id)
+    assert ws_before is not None
+    old_model_id = ws_before.embedding_model_id
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("qdrant ensure_collection exploded")
+
+    monkeypatch.setattr(ingest, "ensure_collection", _boom)
+
+    job_row = await _start_job(session, ws_id, old_model_id, embedding_model_fixture.id)
+    with pytest.raises(RuntimeError, match="qdrant ensure_collection exploded"):
+        await ingest.run_reembed_workspace(ws_id, job_row.id, embedding_model_fixture.id)
+
+    await session.refresh(ws_before)
+    assert ws_before.embedding_model_id == old_model_id  # unchanged
+
+    await session.refresh(job_row)
+    assert job_row.error is not None
+    assert "qdrant ensure_collection exploded" in job_row.error
+    assert job_row.finished_at is not None
+    assert job_row.documents_total == 0
+    assert job_row.documents_done == 0
+
+
+async def test_reembed_new_model_lookup_failure_closes_job(
+    session: AsyncSession, ctx: TenantContext, embedding_model_fixture: Model,
+    qdrant_collection: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix round 3 regression, a second setup-phase failure mode: the new
+    embedding model was deleted out from under an in-flight re-embed (e.g.
+    between start_reembed's own lookup and Celery actually picking up the
+    task), so models_service.get_model raises NotFoundError before the loop
+    ever starts. Simulated via monkeypatch rather than an actual row
+    deletion, since ReembedJob.new_embedding_model_id FKs to models.id and
+    would otherwise reject creating the job row at all. The job must still
+    be closed, not left stuck open."""
+    doc = await _seed_indexed_document(session, ctx, "reembed-ws-model-gone")
+    ws_id = doc.workspace_id
+    ws_before = await session.get(Workspace, ws_id)
+    assert ws_before is not None
+    old_model_id = ws_before.embedding_model_id
+    new_model_id = embedding_model_fixture.id
+
+    real_get_model = models_service.get_model
+
+    async def _get_model_missing_new(session: AsyncSession, model_id: UUID) -> Model:
+        if model_id == new_model_id:
+            raise NotFoundError("model not found")
+        return await real_get_model(session, model_id)
+
+    monkeypatch.setattr(models_service, "get_model", _get_model_missing_new)
+
+    job_row = await _start_job(session, ws_id, old_model_id, new_model_id)
+    with pytest.raises(NotFoundError):
+        await ingest.run_reembed_workspace(ws_id, job_row.id, new_model_id)
+
+    await session.refresh(ws_before)
+    assert ws_before.embedding_model_id == old_model_id  # unchanged
+
+    await session.refresh(job_row)
+    assert job_row.error is not None
+    assert job_row.finished_at is not None
+    assert job_row.documents_done == 0
