@@ -306,9 +306,21 @@ export interface paths {
         /**
          * Start Reembed
          * @description Admin-confirmed switch for a workspace that already has indexed
-         *     content (the 409 path of PATCH .../embedding-model points here). Creates
-         *     no ReembedJob row itself -- run_reembed_workspace creates it once it
-         *     knows the actual document count; this route only validates + enqueues.
+         *     content (the 409 path of PATCH .../embedding-model points here).
+         *
+         *     Fix round 2: creates the ReembedJob row SYNCHRONOUSLY, with started_at
+         *     set, and commits it in this request's own transaction BEFORE enqueueing
+         *     the Celery task -- not inside run_reembed_workspace as before. That
+         *     closes the race described in
+         *     .superpowers/sdd/final-review-fix-report.md: previously the row only
+         *     came into existence once Celery actually picked up the task, so
+         *     documents/service.py::create_from_upload's in-progress guard saw NO job
+         *     at all during the enqueue-to-pickup gap and let uploads through that
+         *     could then be silently wiped by the re-embed's workspace-wide delete.
+         *     Creating the row here means the guard is armed from the instant this
+         *     response returns to the admin -- no window. documents_total is 0 here
+         *     (the real count isn't known until run_reembed_workspace counts the
+         *     workspace's documents) and gets updated on this same row once it does.
          */
         post: operations["start_reembed_api_v1_workspaces__workspace_id__reembed_post"];
         delete?: never;
@@ -402,6 +414,59 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Folders */
+        get: operations["list_folders_api_v1_workspaces__workspace_id__folders_get"];
+        put?: never;
+        /** Create Folder */
+        post: operations["create_folder_api_v1_workspaces__workspace_id__folders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/folders/ensure-path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ensure Folder Path */
+        post: operations["ensure_folder_path_api_v1_workspaces__workspace_id__folders_ensure_path_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/folders/{folder_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Folder */
+        delete: operations["delete_folder_api_v1_folders__folder_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Folder */
+        patch: operations["patch_folder_api_v1_folders__folder_id__patch"];
         trace?: never;
     };
     "/api/v1/workspaces/{workspace_id}/metadata-fields": {
@@ -1204,6 +1269,8 @@ export interface components {
         Body_upload_document_api_v1_workspaces__workspace_id__documents_post: {
             /** File */
             file: string;
+            /** Folder Id */
+            folder_id?: string | null;
         };
         /** CatalogEntryOut */
         CatalogEntryOut: {
@@ -1449,7 +1516,9 @@ export interface components {
         /** DocumentPatch */
         DocumentPatch: {
             /** Pinned */
-            pinned: boolean;
+            pinned?: boolean | null;
+            /** Folder Id */
+            folder_id?: string | null;
         };
         /** EmbeddingModelPatch */
         EmbeddingModelPatch: {
@@ -1458,6 +1527,11 @@ export interface components {
              * Format: uuid
              */
             embedding_model_id: string;
+        };
+        /** EnsurePathRequest */
+        EnsurePathRequest: {
+            /** Path */
+            path: string;
         };
         /** EvalRunOut */
         EvalRunOut: {
@@ -1570,6 +1644,42 @@ export interface components {
             down_count: number;
             /** Down Rate */
             down_rate: number | null;
+        };
+        /** FolderCreate */
+        FolderCreate: {
+            /** Name */
+            name: string;
+            /** Parent Folder Id */
+            parent_folder_id?: string | null;
+        };
+        /** FolderOut */
+        FolderOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+            /** Parent Folder Id */
+            parent_folder_id: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** FolderPatch */
+        FolderPatch: {
+            /** Name */
+            name?: string | null;
+            /** Parent Folder Id */
+            parent_folder_id?: string | null;
         };
         /** GoldenQueryCreate */
         GoldenQueryCreate: {
@@ -2955,7 +3065,9 @@ export interface operations {
     };
     list_workspace_documents_api_v1_workspaces__workspace_id__documents_get: {
         parameters: {
-            query?: never;
+            query?: {
+                folder_id?: string | null;
+            };
             header?: never;
             path: {
                 workspace_id: string;
@@ -3144,6 +3256,175 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_folders_api_v1_workspaces__workspace_id__folders_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_folder_api_v1_workspaces__workspace_id__folders_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ensure_folder_path_api_v1_workspaces__workspace_id__folders_ensure_path_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnsurePathRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_folder_api_v1_folders__folder_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_folder_api_v1_folders__folder_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                folder_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderOut"];
                 };
             };
             /** @description Validation Error */

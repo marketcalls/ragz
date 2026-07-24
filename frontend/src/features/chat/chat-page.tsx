@@ -53,7 +53,7 @@ export function ChatPage() {
 
   // Persisted citations (MessageNode.citations) → source chips; filenames
   // resolved from the workspace's document list (shared query cache).
-  const { data: documents } = useDocuments(workspaceId);
+  const { data: documents } = useDocuments(workspaceId, null);
   const documentNameById = useMemo(
     () => new Map((documents ?? []).map((d) => [d.id, d.filename])),
     [documents],

@@ -66,6 +66,10 @@ export type OrgQuotaIn = components['schemas']['OrgQuotaIn'];
 // GET /api/v1/users/{user_id}/quota (Task 15): the target user's override
 // (null = using the org default) plus their current-period usage, in one call.
 export type UserQuotaOut = components['schemas']['UserQuotaOut'];
+// GET/POST /api/v1/workspaces/{workspace_id}/folders, PATCH/DELETE
+// /api/v1/folders/{folder_id} (Plan H, folder management Tasks 1-2):
+// workspace-scoped folder tree node. parent_folder_id is null for roots.
+export type FolderOut = components['schemas']['FolderOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 
