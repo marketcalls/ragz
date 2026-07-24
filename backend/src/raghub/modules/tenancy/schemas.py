@@ -41,6 +41,23 @@ class WorkspacePatch(BaseModel):
     enrichment_enabled: bool | None = None
 
 
+class ReembedRequest(BaseModel):
+    new_embedding_model_id: UUID
+
+
+class ReembedJobOut(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    old_embedding_model_id: UUID
+    new_embedding_model_id: UUID
+    documents_total: int
+    documents_done: int
+    error: str | None
+    finished_at: str | None  # ISO 8601, None while running
+
+    model_config = {"from_attributes": True}
+
+
 class MemberAdd(BaseModel):
     user_id: UUID
     role: str = "member"

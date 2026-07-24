@@ -38,12 +38,14 @@ from raghub.modules.quotas import service as quota_service
 from raghub.modules.retrieval.embeddings import get_dense_embedder
 from raghub.modules.retrieval.service import (
     delete_document_points,
+    delete_workspace_points,
     ensure_collection,
     resolve_collection_name,
     update_document_acl,
     update_document_metadata,
 )
 from raghub.modules.tenancy.models import Workspace
+from raghub.modules.tenancy.reembed_models import ReembedJob
 
 log = structlog.get_logger()
 
@@ -439,6 +441,92 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
             feature="ingestion",
             prompt_tokens=total_prompt_tokens, completion_tokens=total_completion_tokens,
         )
+        await session.commit()
+
+
+async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID) -> None:
+    """DOC-10: re-embed every current, indexed document in a workspace into a
+    NEW embedding model's collection, using each document's already-stored
+    chunks.json (never re-parses or re-chunks — same reuse
+    worker/tasks.py::reindex_task already relies on for single-document
+    re-embeds). On completion, deletes the workspace's vectors from the OLD
+    collection (workspace-scoped, via the existing _tenant_filter -- NOT a
+    whole-collection wipe, since other workspaces may still share it) and
+    flips workspace.embedding_model_id. Fan-out shape mirrors
+    run_enrichment_backfill_for_workspace exactly (one job row created
+    up front, one per-document loop after).
+
+    Failure mid-loop (any batch's embed/upsert raises): job.error is recorded
+    and the exception re-raised BEFORE the old collection is touched and
+    BEFORE workspace.embedding_model_id is flipped -- the workspace is left
+    pointing at its OLD (still fully populated) collection rather than a new
+    one that only some documents made it into."""
+    async with _session() as session:
+        workspace = await session.get(Workspace, workspace_id)
+        if workspace is None:
+            return
+        old_model = await models_service.get_model(session, workspace.embedding_model_id)
+        new_model = await models_service.get_model(session, new_embedding_model_id)
+        old_collection = old_model.collection_name
+        new_collection = new_model.collection_name
+        assert old_collection is not None and new_collection is not None
+        await ensure_collection(new_collection, new_model.dimension)  # type: ignore[arg-type]
+        new_embedder = get_dense_embedder(
+            new_model.id, provider_kind=new_model.provider_kind,
+            litellm_model_name=new_model.litellm_model_name,
+        )
+
+        docs = list(
+            (
+                await session.execute(
+                    select(Document).where(
+                        Document.workspace_id == workspace_id,
+                        Document.is_current.is_(True),
+                        Document.status == "indexed",
+                    )
+                )
+            ).scalars()
+        )
+        job = ReembedJob(
+            workspace_id=workspace_id, old_embedding_model_id=old_model.id,
+            new_embedding_model_id=new_model.id, documents_total=len(docs),
+            started_at=naive_utc(),
+        )
+        session.add(job)
+        await session.commit()
+
+        try:
+            for doc in docs:
+                raw = await _storage().get(doc.storage_key + ".chunks.json")
+                chunks = [Chunk(**c) for c in json.loads(raw)]
+                for i in range(0, len(chunks), _BATCH_SIZE):
+                    batch = chunks[i : i + _BATCH_SIZE]
+                    dense, sparse = await embed_batch([c.text for c in batch], new_embedder)
+                    await upsert_points(
+                        org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
+                        mime=doc.mime, created_at=doc.created_at,
+                        acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
+                        chunks=batch, dense=dense, sparse=sparse, version=doc.version,
+                        meta=doc.meta, is_current=True, collection_name=new_collection,
+                    )
+                job.documents_done += 1
+                await session.commit()
+        except Exception as exc:
+            job.error = str(exc)[:1000]
+            job.finished_at = naive_utc()
+            await session.commit()
+            raise
+
+        # Workspace-scoped delete from the OLD collection -- other workspaces
+        # may still share that collection, so this is never a whole-collection
+        # wipe. Only reached once every document above has been re-embedded
+        # into new_collection without error.
+        await delete_workspace_points(
+            workspace.org_id, workspace_id, collection_name=old_collection
+        )
+
+        workspace.embedding_model_id = new_model.id
+        job.finished_at = naive_utc()
         await session.commit()
 
 

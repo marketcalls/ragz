@@ -150,6 +150,32 @@ def enqueue_enrichment_backfill(workspace_id: UUID) -> None:
     enrich_backfill_task.si(str(workspace_id)).apply_async(queue="default")
 
 
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES, name="workspaces.reembed")
+def reembed_workspace_task(self: Task, workspace_id: str, new_embedding_model_id: str) -> str:
+    """DOC-10: fan-out re-embed of every document in a workspace into a new
+    embedding model's collection. base=IngestTask is a reasonable reuse here
+    -- on exhausted retries it calls ingest.mark_failed(args[0], ...), which
+    expects a document_id; workspace_id isn't a document_id, so this task
+    intentionally does NOT rely on that on_failure hook for user-facing
+    status (ReembedJob.error is set directly inside run_reembed_workspace's
+    own except block before it re-raises for Celery's retry to see)."""
+    _run(
+        self,
+        lambda: ingest.run_reembed_workspace(
+            UUID(workspace_id), UUID(new_embedding_model_id)
+        ),
+    )
+    return workspace_id
+
+
+def enqueue_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID) -> None:
+    """Bulk background work (default queue), same posture as
+    enqueue_enrichment_backfill -- never blocks a live request."""
+    reembed_workspace_task.si(str(workspace_id), str(new_embedding_model_id)).apply_async(
+        queue="default"
+    )
+
+
 @celery_app.task(name="chat.audit_message")
 def audit_message_task(message_id: str) -> None:
     """Phase 3 Auditor (§3): async, best-effort. Failures are logged, never

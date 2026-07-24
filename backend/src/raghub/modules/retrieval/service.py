@@ -2,11 +2,11 @@
 
 `_tenant_filter` is the only function allowed to construct a filter against
 the MAIN per-workspace documents collection (`COLLECTION`). Its only callers
-are `retrieve()`, `delete_document_points()`, `list_document_chunks()`,
-`get_chunks_by_refs()`, `update_document_acl()`, `update_document_current()`,
-and `update_document_metadata()` — all in this module. Its ACL, current-only,
-and metadata postures are decided per caller — see the caller table in its
-docstring.
+are `retrieve()`, `delete_document_points()`, `delete_workspace_points()`,
+`list_document_chunks()`, `get_chunks_by_refs()`, `update_document_acl()`,
+`update_document_current()`, and `update_document_metadata()` — all in this
+module. Its ACL, current-only, and metadata postures are decided per caller
+— see the caller table in its docstring.
 
 `_attachment_filter` (below) is a SECOND, deliberately separate sanctioned
 filter function for a SEPARATE store — the ephemeral per-chat attachments
@@ -100,6 +100,7 @@ def _tenant_filter(
     | `list_document_chunks()` | `_ctx_acl(ctx)` | `False` (pinned doc served mid-swap) | `None` |
     | `get_chunks_by_refs()` | `_ctx_acl(ctx)` | `False` (citation backfill resolves) | `None` |
     | `delete_document_points()` | `None` | `False` | `None` |
+    | `delete_workspace_points()` | `None` | `False` | `None` (workspace_id set, document_id=None) |
     | `update_document_acl()` | `None` | `False` | `None` |
     | `update_document_current()` | `None` | `False` | `None` |
     | `update_document_metadata()` | `None` | `False` | `None` |
@@ -674,6 +675,29 @@ async def delete_document_points(org_id: UUID, document_id: UUID, *, collection_
             # maintenance path: must remove ALL of the document's points
             filter=_tenant_filter(
                 org_id=org_id, document_id=document_id,
+                acl_group_ids=None, current_only=False, metadata_clauses=None,
+            )
+        ),
+        wait=True,
+    )
+
+
+async def delete_workspace_points(
+    org_id: UUID, workspace_id: UUID, *, collection_name: str
+) -> None:
+    """DOC-10 re-embed cleanup: removes ALL of a workspace's points from ONE
+    collection (the OLD embedding model's) after every document has been
+    re-embedded into the new collection. Reuses _tenant_filter with
+    document_id=None (workspace-wide) -- no new filter-construction function
+    (iron rule 1); same maintenance posture (acl_group_ids=None,
+    current_only=False) as delete_document_points."""
+    if not await get_qdrant().collection_exists(collection_name):
+        return
+    await get_qdrant().delete(
+        collection_name,
+        points_selector=models.FilterSelector(
+            filter=_tenant_filter(
+                org_id=org_id, workspace_id=workspace_id,
                 acl_group_ids=None, current_only=False, metadata_clauses=None,
             )
         ),

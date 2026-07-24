@@ -1,10 +1,13 @@
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
+from raghub.core.errors import ConflictError, NotFoundError
+from raghub.modules.models import service as models_service
 from raghub.modules.tenancy import service
 from raghub.modules.tenancy.context import (
     TenantContext,
@@ -12,14 +15,17 @@ from raghub.modules.tenancy.context import (
     require_permission,
     require_role,
 )
+from raghub.modules.tenancy.reembed_models import ReembedJob
 from raghub.modules.tenancy.schemas import (
     EmbeddingModelPatch,
     MemberAdd,
+    ReembedJobOut,
+    ReembedRequest,
     WorkspaceCreate,
     WorkspaceOut,
     WorkspacePatch,
 )
-from raghub.worker.tasks import enqueue_enrichment_backfill
+from raghub.worker.tasks import enqueue_enrichment_backfill, enqueue_reembed_workspace
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -101,3 +107,47 @@ async def patch_workspace(
     if was_enrichment_enabled is False:
         enqueue_enrichment_backfill(workspace_id)
     return WorkspaceOut.model_validate(ws)
+
+
+@router.post("/{workspace_id}/reembed", status_code=202, response_model=ReembedJobOut)
+async def start_reembed(
+    workspace_id: UUID, body: ReembedRequest, session: SessionDep, ctx: ConfigureDep
+) -> ReembedJobOut:
+    """Admin-confirmed switch for a workspace that already has indexed
+    content (the 409 path of PATCH .../embedding-model points here). Creates
+    no ReembedJob row itself -- run_reembed_workspace creates it once it
+    knows the actual document count; this route only validates + enqueues."""
+    ws = await service.get_workspace(session, ctx, workspace_id)
+    new_model = await models_service.get_model(session, body.new_embedding_model_id)
+    if new_model.modality != "embedding":
+        raise ConflictError("model is not an embedding model")
+    enqueue_reembed_workspace(workspace_id, body.new_embedding_model_id)
+    return ReembedJobOut(
+        id=uuid4(), workspace_id=workspace_id, old_embedding_model_id=ws.embedding_model_id,
+        new_embedding_model_id=body.new_embedding_model_id, documents_total=0,
+        documents_done=0, error=None, finished_at=None,
+    )
+
+
+@router.get("/{workspace_id}/reembed-status", response_model=ReembedJobOut)
+async def get_reembed_status(
+    workspace_id: UUID, session: SessionDep, ctx: CtxDep
+) -> ReembedJobOut:
+    await service.get_workspace(session, ctx, workspace_id)  # 404s if not accessible
+    job = (
+        await session.execute(
+            select(ReembedJob)
+            .where(ReembedJob.workspace_id == workspace_id)
+            .order_by(ReembedJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise NotFoundError("no re-embed job for this workspace")
+    return ReembedJobOut(
+        id=job.id, workspace_id=job.workspace_id,
+        old_embedding_model_id=job.old_embedding_model_id,
+        new_embedding_model_id=job.new_embedding_model_id,
+        documents_total=job.documents_total, documents_done=job.documents_done,
+        error=job.error, finished_at=job.finished_at.isoformat() if job.finished_at else None,
+    )
