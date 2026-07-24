@@ -88,7 +88,17 @@ export function useStartReembed() {
   });
 }
 
-export function useReembedStatus(workspaceId: string, enabled: boolean) {
+// DOC-10 fix round: the backend's GET /reembed-status already returns the
+// latest job for the workspace unconditionally (or a clean 404 -> null when
+// none has ever run), so this query needs no local "has the user just
+// triggered a re-embed" flag to be safe to fire. Gating it behind such a flag
+// (as this used to do via a `pendingModelId !== null` check in the caller)
+// meant closing and reopening the settings dialog — which remounts the
+// component and resets that local state — silently lost visibility into an
+// in-progress or just-failed job. `enabled` defaults to true so callers only
+// need to pass it explicitly to suppress the fetch (e.g. before workspaceId
+// is known).
+export function useReembedStatus(workspaceId: string, enabled = true) {
   return useQuery({
     queryKey: ['reembed-status', workspaceId],
     enabled,

@@ -43,6 +43,13 @@ function stubFetch(responseBody: WorkspaceOut) {
           headers: { 'content-type': 'application/json' },
         });
       }
+      // EmbeddingModelSection also fetches /reembed-status unconditionally on
+      // mount now (fix round: it must not depend on local dialog state to
+      // stay visible across dialog remounts) — stub a clean 404, matching a
+      // workspace that has never run a re-embed job.
+      if (req.url.includes('/reembed-status')) {
+        return new Response(null, { status: 404 });
+      }
       return new Response(JSON.stringify(responseBody), {
         status: 200,
         headers: { 'content-type': 'application/json' },
