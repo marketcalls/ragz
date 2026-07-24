@@ -51,6 +51,26 @@ class AclUpdate(BaseModel):
     acl_group_ids: list[UUID] | None = Field(min_length=1)
 
 
+class FolderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    parent_folder_id: UUID | None = None
+
+
+class FolderPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    parent_folder_id: UUID | None = None
+
+
+class FolderOut(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    parent_folder_id: UUID | None
+    name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class MetadataFieldCreate(BaseModel):
     """POST /workspaces/{id}/metadata-fields body (DOC-6)."""
 

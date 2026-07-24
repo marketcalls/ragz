@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raghub.api.deps import get_session
 from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
+from raghub.modules.documents import folders as folders_service
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service
 from raghub.modules.documents.models import Document
@@ -15,6 +16,9 @@ from raghub.modules.documents.schemas import (
     ApprovedPatch,
     DocumentOut,
     DocumentPatch,
+    FolderCreate,
+    FolderOut,
+    FolderPatch,
     MetadataFieldCreate,
     MetadataFieldOut,
     MetadataValuesIn,
@@ -136,6 +140,38 @@ async def set_document_approved(
     if needs_reindex is not None:
         enqueue_reindex(needs_reindex)
     return _serialize_document(doc, ctx)
+
+
+@router.post("/workspaces/{workspace_id}/folders", status_code=201, response_model=FolderOut)
+async def create_folder(
+    workspace_id: UUID, body: FolderCreate, session: SessionDep, ctx: UploadDep
+) -> FolderOut:
+    folder = await folders_service.create_folder(
+        session, ctx, workspace_id, name=body.name, parent_folder_id=body.parent_folder_id
+    )
+    return FolderOut.model_validate(folder)
+
+
+@router.get("/workspaces/{workspace_id}/folders", response_model=list[FolderOut])
+async def list_folders(workspace_id: UUID, session: SessionDep, ctx: CtxDep) -> list[FolderOut]:
+    return [
+        FolderOut.model_validate(f)
+        for f in await folders_service.list_folders(session, ctx, workspace_id)
+    ]
+
+
+@router.patch("/folders/{folder_id}", response_model=FolderOut)
+async def patch_folder(
+    folder_id: UUID, body: FolderPatch, session: SessionDep, ctx: UploadDep
+) -> FolderOut:
+    folder = await folders_service.rename_or_move_folder(
+        session, ctx, folder_id, name=body.name, parent_folder_id=body.parent_folder_id,
+        fields_set=body.model_fields_set,
+    )
+    return FolderOut.model_validate(folder)
+
+
+# (DELETE /folders/{folder_id} is added in Task 3, once delete_folder exists.)
 
 
 # DOC-6: metadata schema (fields) + values. Task 13 moves field CRUD to a

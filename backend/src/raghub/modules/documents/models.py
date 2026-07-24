@@ -1,12 +1,43 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from raghub.core.db import Base, UUIDPk, naive_utc
+
+
+class Folder(UUIDPk, Base):
+    """Workspace-scoped folder tree for document organization (navigation only —
+    no ACL of its own; every document keeps its own independent acl_group_ids
+    regardless of which folder it sits in). parent_folder_id=None is a root
+    folder. Deletion is NEVER a raw DB cascade onto Document -- see
+    documents/folders.py::delete_folder for why."""
+
+    __tablename__ = "folders"
+    __table_args__ = (
+        # Postgres treats NULL != NULL, so this compound constraint alone
+        # would NOT catch two root-level folders (parent_folder_id IS NULL)
+        # sharing a name -- the partial index below covers that case.
+        UniqueConstraint(
+            "workspace_id", "parent_folder_id", "name",
+            name="uq_folders_workspace_parent_name",
+        ),
+        Index(
+            "uq_folders_workspace_root_name", "workspace_id", "name",
+            unique=True, postgresql_where=text("parent_folder_id IS NULL"),
+        ),
+    )
+
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    parent_folder_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("folders.id", ondelete="CASCADE"), default=None, index=True
+    )
+    name: Mapped[str]
+    created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
 
 
 class Document(UUIDPk, Base):
