@@ -1,13 +1,10 @@
 """DOC-10 Task 5: Workspace.embedding_model_id FK + lock-after-first-index.
 
-`seeded_local_model` is autouse: this suite's plain `session` fixture builds
-schema via `Base.metadata.create_all` (tests/conftest.py), not the real
-alembic chain, so migration d1e8f4a2b6c3's seed INSERT of the
-LOCAL_EMBEDDING_MODEL_ID row never runs here. Every workspace created in this
-file -- directly via service.create_workspace or via seed_workspace -- relies
-on Workspace.embedding_model_id's Python-side default pointing at that id, and
-the new FK constraint means the row must actually exist first. Mirrors Task
-1's test_embedding_models.py::seeded_local_model fixture exactly.
+Every workspace created in this file -- directly via service.create_workspace
+or via seed_workspace -- relies on Workspace.embedding_model_id's Python-side
+default pointing at LOCAL_EMBEDDING_MODEL_ID. That row is now seeded globally
+by tests/conftest.py's `engine` fixture (mirroring migration d1e8f4a2b6c3's
+seed INSERT), so no local fixture is needed here.
 """
 
 import pytest
@@ -23,24 +20,6 @@ from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
 from raghub.modules.tenancy import service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Organization
-
-
-@pytest.fixture(autouse=True)
-async def seeded_local_model(session: AsyncSession) -> Model:
-    model = Model(
-        id=LOCAL_EMBEDDING_MODEL_ID,
-        litellm_model_name="local-embeddings",
-        display_name="Local Embeddings (bge-m3)",
-        provider_kind="tei",
-        enabled=True,
-        sync_status="synced",
-        modality="embedding",
-        dimension=get_settings().embedding_dim,
-        collection_name="chunks_bge_m3",
-    )
-    session.add(model)
-    await session.commit()
-    return model
 
 
 @pytest.fixture

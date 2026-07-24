@@ -7,9 +7,7 @@ in the way)."""
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
 from raghub.modules.evals import service as evals_service
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
 from raghub.modules.tenancy import service
 from raghub.modules.tenancy.context import TenantContext
 from raghub.modules.tenancy.models import Workspace
@@ -17,32 +15,8 @@ from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
 @pytest.fixture
-async def seeded_local_model(session: AsyncSession) -> Model:
-    """DOC-10 Task 5: seed_workspace below creates a Workspace directly, whose
-    embedding_model_id FK now requires this row to exist first -- this suite's
-    plain `session` fixture builds schema via `Base.metadata.create_all`, not
-    the real alembic chain, so migration d1e8f4a2b6c3's seed INSERT never runs
-    here. Mirrors tests/modules/models/test_embedding_models.py's identically
-    named fixture."""
-    model = Model(
-        id=LOCAL_EMBEDDING_MODEL_ID,
-        litellm_model_name="local-embeddings",
-        display_name="Local Embeddings (bge-m3)",
-        provider_kind="tei",
-        enabled=True,
-        sync_status="synced",
-        modality="embedding",
-        dimension=get_settings().embedding_dim,
-        collection_name="chunks_bge_m3",
-    )
-    session.add(model)
-    await session.commit()
-    return model
-
-
-@pytest.fixture
 async def ctx_ws(
-    session: AsyncSession, stack_env: None, seeded_local_model: Model
+    session: AsyncSession, stack_env: None
 ) -> tuple[TenantContext, Workspace]:
     return await seed_workspace(session, "tenancy-settings", role="admin")
 

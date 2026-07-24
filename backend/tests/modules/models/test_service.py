@@ -9,6 +9,7 @@ from raghub.core.config import Settings
 from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.audit.models import AuditEvent
 from raghub.modules.auth.models import User
+from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from raghub.modules.models.service import (
     create_model,
     delete_model,
@@ -85,8 +86,13 @@ async def test_update_and_disable(
     assert updated.display_name == "Llama 3 8B"
     assert updated.base_url == "http://ollama:11434"  # None = leave unchanged
     assert updated.enabled is False
-    assert await list_enabled_models(session) == []
-    assert len(await list_models(session)) == 1
+    # tests/conftest.py's `engine` fixture seeds one globally-present enabled
+    # embedding model (LOCAL_EMBEDDING_MODEL_ID, mirroring migration
+    # d1e8f4a2b6c3) -- the just-disabled llama3 model must not be among the
+    # enabled ones, but the seeded row still is.
+    enabled = await list_enabled_models(session)
+    assert [m.id for m in enabled] == [LOCAL_EMBEDDING_MODEL_ID]
+    assert len(await list_models(session)) == 2
 
 
 async def test_delete_removes_model_and_secret(
@@ -98,7 +104,10 @@ async def test_delete_removes_model_and_secret(
         provider_kind="openai", base_url=None, api_key="sk-1", settings=settings,
     )
     await delete_model(session, ctx, model.id, settings=settings)
-    assert await list_models(session) == []
+    # Only the globally-seeded local embedding model remains (see
+    # tests/conftest.py's `engine` fixture / migration d1e8f4a2b6c3).
+    remaining = await list_models(session)
+    assert [m.id for m in remaining] == [LOCAL_EMBEDDING_MODEL_ID]
     assert (
         await session.execute(select(Secret).where(Secret.name == f"model:{model.id}"))
     ).scalar_one_or_none() is None
@@ -125,7 +134,10 @@ async def test_create_model_rolls_back_atomically_on_secret_failure(
         )
 
     await session.rollback()
-    assert await list_models(session) == []
+    # Only the globally-seeded local embedding model remains -- the failed
+    # create_model must not have left its row committed either.
+    remaining = await list_models(session)
+    assert [m.id for m in remaining] == [LOCAL_EMBEDDING_MODEL_ID]
 
 
 async def test_resolve_model_order(
