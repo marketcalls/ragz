@@ -16,7 +16,9 @@ import { useClaims } from '@/lib/use-claims';
 
 import { DocumentRow } from './document-row';
 import { Dropzone } from './dropzone';
+import { FolderCreateDialog, FolderDeleteDialog, FolderRenameDialog } from './folder-dialog';
 import { buildFolderTree, useFolders } from './folder-queries';
+import type { FolderNode } from './folder-queries';
 import { FolderTree } from './folder-tree';
 import { matchesMetadataFilter, MetadataFilterBar } from './metadata-filter-bar';
 import { useDeleteDocument, useDocuments, useMetadataFields, usePinDocument } from './queries';
@@ -47,6 +49,10 @@ export function DocumentsPage() {
   const { data: workspaces } = useWorkspaces();
   const workspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [creatingUnder, setCreatingUnder] = useState<string | null>(null);
+  const [creatingOpen, setCreatingOpen] = useState(false);
+  const [renamingFolder, setRenamingFolder] = useState<FolderNode | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState<FolderNode | null>(null);
 
   const groups = documents.data
     ? groupByLineage(documents.data).filter(({ current }) =>
@@ -90,12 +96,35 @@ export function DocumentsPage() {
       {workspace && settingsOpen ? (
         <WorkspaceSettingsDialog workspace={workspace} open onOpenChange={setSettingsOpen} />
       ) : null}
+      <FolderCreateDialog
+        workspaceId={workspaceId}
+        parentFolderId={creatingUnder}
+        open={creatingOpen}
+        onOpenChange={setCreatingOpen}
+      />
+      <FolderRenameDialog
+        workspaceId={workspaceId}
+        folder={renamingFolder}
+        onOpenChange={(open) => !open && setRenamingFolder(null)}
+      />
+      <FolderDeleteDialog
+        workspaceId={workspaceId}
+        folder={deletingFolder}
+        allFolders={folders.data ?? []}
+        onOpenChange={(open) => !open && setDeletingFolder(null)}
+      />
       <div className="flex flex-1 overflow-hidden">
         <div className="w-56 shrink-0 overflow-y-auto border-r border-line p-3">
           <FolderTree
             tree={folderTree}
             selectedId={selectedFolderId}
             onSelect={setSelectedFolderId}
+            onNewChild={(parentId) => {
+              setCreatingUnder(parentId);
+              setCreatingOpen(true);
+            }}
+            onRename={setRenamingFolder}
+            onDelete={setDeletingFolder}
           />
         </div>
         <div className="flex-1 overflow-y-auto p-4">

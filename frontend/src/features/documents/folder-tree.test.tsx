@@ -51,8 +51,12 @@ function buildTree() {
   ]);
 }
 
+// Default no-op handlers for the hover-action callbacks, spread into tests
+// that don't exercise create/rename/delete so every render call stays short.
+const noopActions = { onNewChild: vi.fn(), onRename: vi.fn(), onDelete: vi.fn() };
+
 test('renders only "All documents" when there are zero folders (the default/common case)', () => {
-  render(<FolderTree tree={[]} selectedId={null} onSelect={vi.fn()} />);
+  render(<FolderTree tree={[]} selectedId={null} onSelect={vi.fn()} {...noopActions} />);
 
   const nav = screen.getByRole('navigation', { name: 'Folders' });
   expect(within(nav).getByRole('button', { name: 'All documents' })).toBeInTheDocument();
@@ -60,7 +64,7 @@ test('renders only "All documents" when there are zero folders (the default/comm
 });
 
 test('renders "All documents" plus every root folder (and its nested children)', () => {
-  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={vi.fn()} />);
+  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={vi.fn()} {...noopActions} />);
 
   expect(screen.getByRole('button', { name: 'All documents' })).toBeInTheDocument();
   expect(screen.getByText('Root A')).toBeInTheDocument();
@@ -71,7 +75,7 @@ test('renders "All documents" plus every root folder (and its nested children)',
 test('clicking a folder calls onSelect with its id', async () => {
   const user = userEvent.setup();
   const onSelect = vi.fn();
-  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={onSelect} />);
+  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={onSelect} {...noopActions} />);
 
   // Root B has no children, so its row is a plain button with an
   // unambiguous accessible name (no nested expand/collapse toggle).
@@ -83,7 +87,7 @@ test('clicking a folder calls onSelect with its id', async () => {
 test('clicking a folder that has children also selects it (not just expand/collapse)', async () => {
   const user = userEvent.setup();
   const onSelect = vi.fn();
-  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={onSelect} />);
+  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={onSelect} {...noopActions} />);
 
   // Root A's row button has a nested toggle, which pollutes its computed
   // accessible name -- locate the row via its visible text instead.
@@ -97,7 +101,9 @@ test('clicking a folder that has children also selects it (not just expand/colla
 test('clicking "All documents" calls onSelect(null)', async () => {
   const user = userEvent.setup();
   const onSelect = vi.fn();
-  render(<FolderTree tree={buildTree()} selectedId="root-a" onSelect={onSelect} />);
+  render(
+    <FolderTree tree={buildTree()} selectedId="root-a" onSelect={onSelect} {...noopActions} />,
+  );
 
   await user.click(screen.getByRole('button', { name: 'All documents' }));
 
@@ -107,7 +113,7 @@ test('clicking "All documents" calls onSelect(null)', async () => {
 test('collapsing a folder hides its children without changing selection, and expanding restores them', async () => {
   const user = userEvent.setup();
   const onSelect = vi.fn();
-  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={onSelect} />);
+  render(<FolderTree tree={buildTree()} selectedId={null} onSelect={onSelect} {...noopActions} />);
 
   expect(screen.getByText('Child')).toBeInTheDocument();
 
@@ -119,5 +125,86 @@ test('collapsing a folder hides its children without changing selection, and exp
   await user.click(screen.getByRole('button', { name: 'Expand Root A' }));
 
   expect(screen.getByText('Child')).toBeInTheDocument();
+  expect(onSelect).not.toHaveBeenCalled();
+});
+
+test('clicking "New folder" calls onNewChild(null) to create a root folder', async () => {
+  const user = userEvent.setup();
+  const onNewChild = vi.fn();
+  render(
+    <FolderTree
+      tree={buildTree()}
+      selectedId={null}
+      onSelect={vi.fn()}
+      {...noopActions}
+      onNewChild={onNewChild}
+    />,
+  );
+
+  await user.click(screen.getByRole('button', { name: 'New folder' }));
+
+  expect(onNewChild).toHaveBeenCalledWith(null);
+});
+
+test('clicking a folder\'s "+" hover action calls onNewChild with that folder\'s id, not root', async () => {
+  const user = userEvent.setup();
+  const onNewChild = vi.fn();
+  const onSelect = vi.fn();
+  render(
+    <FolderTree
+      tree={buildTree()}
+      selectedId={null}
+      onSelect={onSelect}
+      {...noopActions}
+      onNewChild={onNewChild}
+    />,
+  );
+
+  await user.click(screen.getByRole('button', { name: 'New subfolder in Root A' }));
+
+  expect(onNewChild).toHaveBeenCalledWith('root-a');
+  // The hover-action click must not also select the row.
+  expect(onSelect).not.toHaveBeenCalled();
+});
+
+test("clicking a folder's rename hover action calls onRename with that folder node, without selecting it", async () => {
+  const user = userEvent.setup();
+  const onRename = vi.fn();
+  const onSelect = vi.fn();
+  render(
+    <FolderTree
+      tree={buildTree()}
+      selectedId={null}
+      onSelect={onSelect}
+      {...noopActions}
+      onRename={onRename}
+    />,
+  );
+
+  await user.click(screen.getByRole('button', { name: 'Rename Root A' }));
+
+  expect(onRename).toHaveBeenCalledTimes(1);
+  expect(onRename.mock.calls[0]?.[0]?.id).toBe('root-a');
+  expect(onSelect).not.toHaveBeenCalled();
+});
+
+test("clicking a folder's delete hover action calls onDelete with that folder node, without selecting it", async () => {
+  const user = userEvent.setup();
+  const onDelete = vi.fn();
+  const onSelect = vi.fn();
+  render(
+    <FolderTree
+      tree={buildTree()}
+      selectedId={null}
+      onSelect={onSelect}
+      {...noopActions}
+      onDelete={onDelete}
+    />,
+  );
+
+  await user.click(screen.getByRole('button', { name: 'Delete Child' }));
+
+  expect(onDelete).toHaveBeenCalledTimes(1);
+  expect(onDelete.mock.calls[0]?.[0]?.id).toBe('child');
   expect(onSelect).not.toHaveBeenCalled();
 });
