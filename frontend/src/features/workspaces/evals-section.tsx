@@ -15,12 +15,14 @@ import { useCreateGoldenQuery, useDeleteGoldenQuery, useGoldenQueries } from './
 // GoldenQuery fixtures, sibling to (not nested in) MetadataFieldsSection —
 // same immediate-mutation pattern, no separate "Save" step. `documents`
 // isn't threaded in as a prop from WorkspaceSettingsDialog's mount point
-// (DocumentsPage already has its own useDocuments(workspaceId) call, but
-// piping that through two more prop layers is strictly more plumbing than
-// this component fetching its own copy — same queryKey, so TanStack Query
-// dedupes/caches it regardless of who asks).
+// (DocumentsPage already has its own useDocuments(workspaceId, folderId)
+// call, but piping that through two more prop layers is strictly more
+// plumbing than this component fetching its own unfiltered copy —
+// passing folderId: null here means it only shares DocumentsPage's cache
+// entry when DocumentsPage also has no folder selected; TanStack Query
+// dedupes/caches by the full ['documents', workspaceId, folderId] key).
 export function EvalsSection({ workspaceId }: { workspaceId: string }) {
-  const documents = useDocuments(workspaceId);
+  const documents = useDocuments(workspaceId, null);
   const queries = useGoldenQueries(workspaceId);
   const createQuery = useCreateGoldenQuery(workspaceId);
   const deleteQuery = useDeleteGoldenQuery(workspaceId);

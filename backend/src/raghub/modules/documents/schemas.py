@@ -29,7 +29,8 @@ class DocumentOut(BaseModel):
 
 
 class DocumentPatch(BaseModel):
-    pinned: bool
+    pinned: bool | None = None
+    folder_id: UUID | None = None
 
 
 class ApprovedPatch(BaseModel):
@@ -49,6 +50,39 @@ class AclUpdate(BaseModel):
     """
 
     acl_group_ids: list[UUID] | None = Field(min_length=1)
+
+
+class FolderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    parent_folder_id: UUID | None = None
+
+
+class FolderPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    parent_folder_id: UUID | None = None
+
+
+class EnsurePathRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=2000)
+
+
+class FolderOut(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    parent_folder_id: UUID | None
+    name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class FolderDeletePreview(BaseModel):
+    """GET /folders/{id}/delete-preview response -- a read-only look at how
+    many documents and subfolders delete_folder(id) would cascade over,
+    computed before the (irreversible) delete runs."""
+
+    document_count: int
+    subfolder_count: int
 
 
 class MetadataFieldCreate(BaseModel):

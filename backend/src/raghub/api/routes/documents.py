@@ -1,12 +1,13 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
 from raghub.core.config import get_settings
 from raghub.core.errors import PayloadTooLarge
+from raghub.modules.documents import folders as folders_service
 from raghub.modules.documents import metadata as metadata_service
 from raghub.modules.documents import service
 from raghub.modules.documents.models import Document
@@ -15,6 +16,11 @@ from raghub.modules.documents.schemas import (
     ApprovedPatch,
     DocumentOut,
     DocumentPatch,
+    EnsurePathRequest,
+    FolderCreate,
+    FolderDeletePreview,
+    FolderOut,
+    FolderPatch,
     MetadataFieldCreate,
     MetadataFieldOut,
     MetadataValuesIn,
@@ -56,6 +62,7 @@ def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
 async def upload_document(
     workspace_id: UUID, session: SessionDep, ctx: UploadDep,
     request: Request, file: Annotated[UploadFile, File()],
+    folder_id: Annotated[UUID | None, Form()] = None,
 ) -> DocumentOut:
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
 
@@ -79,7 +86,7 @@ async def upload_document(
         session, ctx, workspace_id,
         filename=file.filename or "upload.bin",
         mime=file.content_type or "application/octet-stream",
-        data=data,
+        data=data, folder_id=folder_id,
     )
     enqueue_ingest(doc.id, doc.size_bytes)
     return _serialize_document(doc, ctx)
@@ -87,9 +94,10 @@ async def upload_document(
 
 @router.get("/workspaces/{workspace_id}/documents", response_model=list[DocumentOut])
 async def list_workspace_documents(
-    workspace_id: UUID, session: SessionDep, ctx: CtxDep
+    workspace_id: UUID, session: SessionDep, ctx: CtxDep,
+    folder_id: UUID | None = None,
 ) -> list[DocumentOut]:
-    docs = await service.list_documents(session, ctx, workspace_id)
+    docs = await service.list_documents(session, ctx, workspace_id, folder_id)
     return [_serialize_document(d, ctx) for d in docs]
 
 
@@ -112,7 +120,11 @@ async def delete_document(
 async def patch_document(
     document_id: UUID, body: DocumentPatch, session: SessionDep, ctx: CtxDep
 ) -> DocumentOut:
-    doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    doc = await service.get_document_checked(session, ctx, document_id)
+    if "pinned" in body.model_fields_set and body.pinned is not None:
+        doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    if "folder_id" in body.model_fields_set:
+        doc = await service.move_document(session, ctx, document_id, body.folder_id)
     return _serialize_document(doc, ctx)
 
 
@@ -136,6 +148,73 @@ async def set_document_approved(
     if needs_reindex is not None:
         enqueue_reindex(needs_reindex)
     return _serialize_document(doc, ctx)
+
+
+@router.post("/workspaces/{workspace_id}/folders", status_code=201, response_model=FolderOut)
+async def create_folder(
+    workspace_id: UUID, body: FolderCreate, session: SessionDep, ctx: UploadDep
+) -> FolderOut:
+    folder = await folders_service.create_folder(
+        session, ctx, workspace_id, name=body.name, parent_folder_id=body.parent_folder_id
+    )
+    return FolderOut.model_validate(folder)
+
+
+@router.post(
+    "/workspaces/{workspace_id}/folders/ensure-path", status_code=200, response_model=FolderOut
+)
+async def ensure_folder_path(
+    workspace_id: UUID, body: EnsurePathRequest, session: SessionDep, ctx: UploadDep
+) -> FolderOut:
+    folder = await folders_service.ensure_path(session, ctx, workspace_id, body.path)
+    return FolderOut.model_validate(folder)
+
+
+@router.get("/workspaces/{workspace_id}/folders", response_model=list[FolderOut])
+async def list_folders(workspace_id: UUID, session: SessionDep, ctx: CtxDep) -> list[FolderOut]:
+    return [
+        FolderOut.model_validate(f)
+        for f in await folders_service.list_folders(session, ctx, workspace_id)
+    ]
+
+
+@router.patch("/folders/{folder_id}", response_model=FolderOut)
+async def patch_folder(
+    folder_id: UUID, body: FolderPatch, session: SessionDep, ctx: UploadDep
+) -> FolderOut:
+    folder = await folders_service.rename_or_move_folder(
+        session, ctx, folder_id, name=body.name, parent_folder_id=body.parent_folder_id,
+        fields_set=body.model_fields_set,
+    )
+    return FolderOut.model_validate(folder)
+
+
+@router.get("/folders/{folder_id}/delete-preview", response_model=FolderDeletePreview)
+async def preview_folder_delete(
+    folder_id: UUID, session: SessionDep, ctx: DeleteDep
+) -> FolderDeletePreview:
+    # Gated behind the same "documents.delete" permission as the actual
+    # delete route below (DeleteDep), since this preview only exists to back
+    # that delete's confirmation dialog.
+    document_count, subfolder_count = await folders_service.count_subtree(
+        session, ctx, folder_id
+    )
+    return FolderDeletePreview(document_count=document_count, subfolder_count=subfolder_count)
+
+
+@router.delete("/folders/{folder_id}", status_code=202)
+async def delete_folder(
+    folder_id: UUID, session: SessionDep, ctx: DeleteDep
+) -> dict[str, int]:
+    # Task 3: folders_service.delete_folder never enqueues itself (modules/
+    # must never import worker/, Plan K Task 11's inversion) -- it returns
+    # the document ids whose status it already flipped to "deleting"; this
+    # route is the entrypoint layer allowed to import worker.tasks, so it
+    # performs the actual enqueue_delete call for each one.
+    document_ids = await folders_service.delete_folder(session, ctx, folder_id)
+    for document_id in document_ids:
+        enqueue_delete(document_id, ctx.user_id)
+    return {"documents_deleted": len(document_ids)}
 
 
 # DOC-6: metadata schema (fields) + values. Task 13 moves field CRUD to a

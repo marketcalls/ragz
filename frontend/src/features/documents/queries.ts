@@ -13,15 +13,18 @@ export interface MetadataFieldCreateInput {
   options: string[] | null;
 }
 
-export function useDocuments(workspaceId: string | null) {
+export function useDocuments(workspaceId: string | null, folderId: string | null) {
   return useQuery({
-    queryKey: ['documents', workspaceId],
+    queryKey: ['documents', workspaceId, folderId],
     enabled: workspaceId !== null,
     refetchInterval: (query) =>
       shouldPoll(query.state.data as DocumentOut[] | undefined) ? 2500 : false,
     queryFn: async () => {
       const { data, error } = await api.GET('/api/v1/workspaces/{workspace_id}/documents', {
-        params: { path: { workspace_id: workspaceId as string } },
+        params: {
+          path: { workspace_id: workspaceId as string },
+          query: folderId ? { folder_id: folderId } : {},
+        },
       });
       if (error) throw new Error('failed to load documents');
       return data;
@@ -38,8 +41,7 @@ export function useDeleteDocument(workspaceId: string | null) {
       });
       if (error) throw new Error('failed to delete document');
     },
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
   });
 }
 
@@ -82,10 +84,9 @@ export function useMetadataFields(workspaceId: string | null) {
     queryKey: ['metadata-fields', workspaceId],
     enabled: workspaceId !== null,
     queryFn: async () => {
-      const { data, error } = await api.GET(
-        '/api/v1/workspaces/{workspace_id}/metadata-fields',
-        { params: { path: { workspace_id: workspaceId as string } } },
-      );
+      const { data, error } = await api.GET('/api/v1/workspaces/{workspace_id}/metadata-fields', {
+        params: { path: { workspace_id: workspaceId as string } },
+      });
       if (error) throw new Error('failed to load metadata fields');
       return data;
     },
@@ -96,13 +97,10 @@ export function useCreateMetadataField(workspaceId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: MetadataFieldCreateInput) => {
-      const { data, error } = await api.POST(
-        '/api/v1/workspaces/{workspace_id}/metadata-fields',
-        {
-          params: { path: { workspace_id: workspaceId as string } },
-          body: input,
-        },
-      );
+      const { data, error } = await api.POST('/api/v1/workspaces/{workspace_id}/metadata-fields', {
+        params: { path: { workspace_id: workspaceId as string } },
+        body: input,
+      });
       if (error) throw new Error(problemDetail(error));
       return data;
     },
