@@ -16,6 +16,7 @@ import raghub.modules.models.models  # noqa: F401
 import raghub.modules.quotas.models  # noqa: F401
 import raghub.modules.secrets.models  # noqa: F401
 import raghub.modules.tenancy.models  # noqa: F401
+import raghub.modules.tenancy.reembed_models  # noqa: F401
 from raghub.core.config import get_settings
 from raghub.core.db import Base
 
