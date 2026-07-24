@@ -6,10 +6,14 @@ from pydantic import BaseModel, Field, model_validator
 # "litellm": any LiteLLM-native provider (anthropic, gemini, groq, ...) —
 # litellm_model_name is passed to the gateway VERBATIM (catalog names for
 # non-openai providers already carry their prefix, e.g. gemini/gemini-2.5-pro);
-# no base_url needed, api_key attached as usual.
-ProviderKind = Literal["openai", "ollama", "openai_compatible", "litellm"]
+# no base_url needed, api_key attached as usual. "tei" is reserved for
+# the single bootstrap-seeded local embedding model (DOC-10) -- never
+# creatable via this API, see ModelCreate's validator below.
+ProviderKind = Literal["openai", "ollama", "openai_compatible", "litellm", "tei"]
 
 ReasoningEffort = Literal["off", "low", "medium", "high"]
+
+ModelModality = Literal["chat", "embedding"]
 
 
 class ModelCreate(BaseModel):
@@ -26,11 +30,28 @@ class ModelCreate(BaseModel):
     supports_reasoning: bool = False
     default_reasoning_effort: ReasoningEffort = "off"
     supports_vision: bool = False
+    # DOC-10: "chat" (default, every pre-DOC-10 caller is unaffected) or
+    # "embedding". dimension is required (and only meaningful) for embedding.
+    modality: ModelModality = "chat"
+    dimension: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _base_url_required_for_self_hosted(self) -> "ModelCreate":
         if self.provider_kind in ("ollama", "openai_compatible") and not self.base_url:
             raise ValueError("base_url is required for ollama and openai_compatible providers")
+        return self
+
+    @model_validator(mode="after")
+    def _embedding_modality_shape(self) -> "ModelCreate":
+        if self.provider_kind == "tei":
+            raise ValueError(
+                "provider_kind 'tei' is reserved for the built-in local embedding "
+                "model and cannot be created via this API"
+            )
+        if self.modality == "embedding" and self.dimension is None:
+            raise ValueError("dimension is required when modality is 'embedding'")
+        if self.modality == "chat" and self.dimension is not None:
+            raise ValueError("dimension only applies to modality 'embedding'")
         return self
 
 
@@ -48,6 +69,9 @@ class ModelPatch(BaseModel):
     # Phase 3 Plan J (D5/§4): setting True clears every OTHER model's flag in
     # the same transaction (service.update_model) — exactly one utility model.
     is_utility: bool | None = None
+    # modality/dimension/collection_name are deliberately absent here --
+    # immutable after creation (changing dimension would silently mismatch
+    # the already-created Qdrant collection's vector size).
 
 
 SyncStatus = Literal["synced", "error", "pending"]
@@ -74,10 +98,14 @@ class ModelOut(BaseModel):
     # Phase 3 Plan J (D5/§4): superadmin-designated utility model. Exactly
     # one row is True at a time — enforced in service.update_model.
     is_utility: bool
+    modality: ModelModality
+    dimension: int | None
+    collection_name: str | None
 
 
 class ModelPublic(BaseModel):
-    """What non-superadmin users see (chat model picker)."""
+    """What non-superadmin users see (chat model picker) -- unchanged shape;
+    the route now filters to modality="chat" before serializing (Step 6)."""
 
     id: UUID
     display_name: str

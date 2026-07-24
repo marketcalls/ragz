@@ -15,6 +15,7 @@ from raghub.modules.models.service import (
     list_enabled_models,
     list_models,
     resolve_model,
+    to_model_out,
     update_model,
 )
 from raghub.modules.secrets.crypto import ensure_kek
@@ -50,6 +51,23 @@ async def test_create_stores_key_as_secret(
     assert model.sync_status == "pending"  # sync (Task 6) flips it
     actions = [e.action for e in (await session.execute(select(AuditEvent))).scalars()]
     assert "model.created" in actions and "secret.written" in actions
+
+
+async def test_to_model_out_defaults_chat_modality(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """DOC-10: every pre-existing caller of create_model (no modality/dimension
+    passed) keeps working unchanged, and serializes as modality="chat" with
+    dimension/collection_name left None."""
+    ctx = super_ctx(seeded_user)
+    model = await create_model(
+        session, ctx, litellm_model_name="gpt-4o-mini", display_name="GPT-4o mini",
+        provider_kind="openai", base_url=None, api_key="sk-live-xyz", settings=settings,
+    )
+    out = (await to_model_out(session, [model]))[0]
+    assert out.modality == "chat"
+    assert out.dimension is None
+    assert out.collection_name is None
 
 
 async def test_update_and_disable(

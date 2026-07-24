@@ -72,6 +72,7 @@ async def create_model(
         supports_reasoning=body.supports_reasoning,
         default_reasoning_effort=body.default_reasoning_effort,
         supports_vision=body.supports_vision,
+        modality=body.modality, dimension=body.dimension,
     )
     _schedule_sync(background_tasks, request, settings)
     return (await service.to_model_out(session, [model]))[0]
@@ -164,4 +165,7 @@ async def force_refresh_catalog(
 
 @router.get("/models", response_model=list[ModelPublic])
 async def list_public_models(session: SessionDep, ctx: CtxDep) -> list[ModelPublic]:
-    return [ModelPublic.model_validate(m) for m in await service.list_enabled_models(session)]
+    return [
+        ModelPublic.model_validate(m)
+        for m in await service.list_enabled_models(session, modality="chat")
+    ]

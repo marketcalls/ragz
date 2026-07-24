@@ -107,6 +107,26 @@ async def set_default_model(
     return ws
 
 
+async def workspace_uses_embedding_model(session: AsyncSession, model_id: UUID) -> bool:
+    """DOC-10 delete guard (models/service.py::delete_model): mirrors
+    delete_role_template's "assigned to at least one X" 409 check.
+
+    Forward reference: `Workspace.embedding_model_id` doesn't exist until
+    Task 5's migration/ORM column land -- the attr-defined ignore below is
+    expected to become removable (and this function type-checked for real)
+    once that column exists. Unreachable today: nothing calls this until an
+    embedding-modality Model row exists (Task 1's own delete_model guard is
+    the only caller, and it only fires for modality="embedding" rows)."""
+    row = (
+        await session.execute(
+            select(Workspace.id).where(
+                Workspace.embedding_model_id == model_id  # type: ignore[attr-defined]
+            ).limit(1)
+        )
+    ).first()
+    return row is not None
+
+
 _RETRIEVAL_SETTINGS_FIELDS = {
     "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
     "web_search_enabled", "strict_mode", "enrichment_enabled",

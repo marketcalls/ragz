@@ -62,7 +62,10 @@ async def sync_models_to_litellm(
     Persists the outcome on every registry row (sync_status: synced|error) - the
     replay is all-or-nothing, so the outcome is uniform.
     """
-    models = await list_enabled_models(session)
+    # DOC-10: the local TEI model is never routed through the gateway --
+    # registering it would fall into _litellm_params's openai/* branch and
+    # produce a nonsense LiteLLM deployment for a provider that isn't there.
+    models = [m for m in await list_enabled_models(session) if m.provider_kind != "tei"]
     all_models = await list_models(session)
     headers = {"Authorization": f"Bearer {settings.litellm_master_key}"}
     limits = httpx.Limits(
