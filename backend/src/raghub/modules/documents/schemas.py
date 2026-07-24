@@ -29,7 +29,8 @@ class DocumentOut(BaseModel):
 
 
 class DocumentPatch(BaseModel):
-    pinned: bool
+    pinned: bool | None = None
+    folder_id: UUID | None = None
 
 
 class ApprovedPatch(BaseModel):

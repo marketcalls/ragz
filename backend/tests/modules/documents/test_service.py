@@ -7,14 +7,41 @@ from raghub.core.db import naive_utc
 from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from raghub.core.storage import build_storage
 from raghub.modules.audit.models import AuditEvent
+from raghub.modules.auth.models import User
+from raghub.modules.documents import folders as folders_service
 from raghub.modules.documents import service
 from raghub.modules.documents.service import (
     create_from_upload,
     get_document_checked,
     list_documents,
+    move_document,
 )
+from raghub.modules.tenancy import service as tenancy_service
+from raghub.modules.tenancy.context import TenantContext
+from raghub.modules.tenancy.models import Organization
 from raghub.modules.tenancy.reembed_models import ReembedJob
 from tests.modules.retrieval.test_retrieve import seed_workspace
+
+
+@pytest.fixture
+async def ctx(session: AsyncSession) -> TenantContext:
+    """Real Organization + User rows (Workspace.org_id and Folder.created_by
+    FK to them) -- role="admin" so get_workspace_checked/get_folder_checked
+    never need explicit workspace membership, mirroring
+    tests/modules/documents/test_folders.py's identically-shaped fixture."""
+    org = Organization(name="doc-svc-org")
+    session.add(org)
+    await session.flush()
+    user = User(
+        org_id=org.id, email="doc-svc@test.com", password_hash="x",  # noqa: S106
+        role="admin",
+    )
+    session.add(user)
+    await session.flush()
+    return TenantContext(
+        user_id=user.id, org_id=org.id, role="admin",
+        workspace_ids=frozenset(), group_ids=frozenset(),
+    )
 
 
 async def test_upload_stores_row_object_and_audit(
@@ -167,3 +194,63 @@ async def test_has_indexed_documents(session: AsyncSession, stack_env: None) -> 
     doc.status = "indexed"
     await session.commit()
     assert await service.has_indexed_documents(session, ctx, ws.id)
+
+
+async def test_same_filename_in_different_folders_is_independent_lineage(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    folder_a = await folders_service.create_folder(
+        session, ctx, ws.id, name="A", parent_folder_id=None
+    )
+    folder_b = await folders_service.create_folder(
+        session, ctx, ws.id, name="B", parent_folder_id=None
+    )
+    doc_a = await create_from_upload(
+        session, ctx, ws.id, filename="report.pdf", mime="application/pdf",
+        data=b"content-a", folder_id=folder_a.id,
+    )
+    doc_b = await create_from_upload(
+        session, ctx, ws.id, filename="report.pdf", mime="application/pdf",
+        data=b"content-b", folder_id=folder_b.id,
+    )
+    assert doc_a.lineage_id != doc_b.lineage_id
+    assert doc_a.version == 1
+    assert doc_b.version == 1
+
+
+async def test_same_filename_same_folder_still_versions(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    folder = await folders_service.create_folder(
+        session, ctx, ws.id, name="A", parent_folder_id=None
+    )
+    v1 = await create_from_upload(
+        session, ctx, ws.id, filename="report.pdf", mime="application/pdf",
+        data=b"v1", folder_id=folder.id,
+    )
+    v2 = await create_from_upload(
+        session, ctx, ws.id, filename="report.pdf", mime="application/pdf",
+        data=b"v2", folder_id=folder.id,
+    )
+    assert v2.lineage_id == v1.lineage_id
+    assert v2.version == 2
+    assert v2.supersedes_document_id == v1.id
+
+
+async def test_move_document_preserves_lineage(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
+    folder = await folders_service.create_folder(
+        session, ctx, ws.id, name="A", parent_folder_id=None
+    )
+    doc = await create_from_upload(
+        session, ctx, ws.id, filename="report.pdf", mime="application/pdf", data=b"x",
+    )
+    original_lineage, original_version = doc.lineage_id, doc.version
+    moved = await move_document(session, ctx, doc.id, folder.id)
+    assert moved.folder_id == folder.id
+    assert moved.lineage_id == original_lineage
+    assert moved.version == original_version

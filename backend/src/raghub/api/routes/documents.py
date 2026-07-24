@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
@@ -60,6 +60,7 @@ def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
 async def upload_document(
     workspace_id: UUID, session: SessionDep, ctx: UploadDep,
     request: Request, file: Annotated[UploadFile, File()],
+    folder_id: Annotated[UUID | None, Form()] = None,
 ) -> DocumentOut:
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
 
@@ -83,7 +84,7 @@ async def upload_document(
         session, ctx, workspace_id,
         filename=file.filename or "upload.bin",
         mime=file.content_type or "application/octet-stream",
-        data=data,
+        data=data, folder_id=folder_id,
     )
     enqueue_ingest(doc.id, doc.size_bytes)
     return _serialize_document(doc, ctx)
@@ -91,9 +92,10 @@ async def upload_document(
 
 @router.get("/workspaces/{workspace_id}/documents", response_model=list[DocumentOut])
 async def list_workspace_documents(
-    workspace_id: UUID, session: SessionDep, ctx: CtxDep
+    workspace_id: UUID, session: SessionDep, ctx: CtxDep,
+    folder_id: UUID | None = None,
 ) -> list[DocumentOut]:
-    docs = await service.list_documents(session, ctx, workspace_id)
+    docs = await service.list_documents(session, ctx, workspace_id, folder_id)
     return [_serialize_document(d, ctx) for d in docs]
 
 
@@ -116,7 +118,11 @@ async def delete_document(
 async def patch_document(
     document_id: UUID, body: DocumentPatch, session: SessionDep, ctx: CtxDep
 ) -> DocumentOut:
-    doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    doc = await service.get_document_checked(session, ctx, document_id)
+    if "pinned" in body.model_fields_set and body.pinned is not None:
+        doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    if "folder_id" in body.model_fields_set:
+        doc = await service.move_document(session, ctx, document_id, body.folder_id)
     return _serialize_document(doc, ctx)
 
 

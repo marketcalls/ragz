@@ -8,6 +8,7 @@ from raghub.core.config import get_settings
 from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from raghub.core.storage import build_storage
 from raghub.modules.audit.service import record_audit
+from raghub.modules.documents import folders as folders_service
 from raghub.modules.documents.models import Document
 from raghub.modules.retrieval import service as retrieval_service
 from raghub.modules.tenancy.context import TenantContext
@@ -24,8 +25,11 @@ async def create_from_upload(
     filename: str,
     mime: str,
     data: bytes,
+    folder_id: UUID | None = None,
 ) -> Document:
     ws = await get_workspace_checked(session, ctx, workspace_id)
+    if folder_id is not None:
+        await folders_service.get_folder_checked(session, ctx, folder_id, workspace_id=ws.id)
     reembed_in_progress = (
         await session.execute(
             select(ReembedJob.id).where(
@@ -50,10 +54,18 @@ async def create_from_upload(
     ).scalar_one_or_none()
     if dup is not None:
         raise ConflictError(f"identical content already uploaded as document {dup.id}")
+    # Folder-scoped predecessor match (this task): the SAME filename in a
+    # DIFFERENT folder is an unrelated document with its own lineage --
+    # Document.folder_id == folder_id correctly matches NULL == NULL for
+    # root-level uploads via SQLAlchemy's `==` operator.
     predecessor = (
         await session.execute(
             select(Document)
-            .where(Document.workspace_id == ws.id, Document.filename == filename)
+            .where(
+                Document.workspace_id == ws.id,
+                Document.folder_id == folder_id,
+                Document.filename == filename,
+            )
             .order_by(Document.version.desc())
             .limit(1)
         )
@@ -61,7 +73,7 @@ async def create_from_upload(
     doc = Document(
         org_id=ctx.org_id, workspace_id=ws.id, filename=filename, mime=mime,
         size_bytes=len(data), content_hash=content_hash, storage_key="",
-        created_by=ctx.user_id,
+        created_by=ctx.user_id, folder_id=folder_id,
         version=(predecessor.version + 1) if predecessor else 1,
         lineage_id=predecessor.lineage_id if predecessor else uuid4(),  # placeholder, fixed below
         supersedes_document_id=predecessor.id if predecessor else None,
@@ -82,12 +94,13 @@ async def create_from_upload(
 
 
 async def list_documents(
-    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID,
+    folder_id: UUID | None = None,
 ) -> list[Document]:
     ws = await get_workspace_checked(session, ctx, workspace_id)
     stmt = (
         select(Document)
-        .where(Document.workspace_id == ws.id)
+        .where(Document.workspace_id == ws.id, Document.folder_id == folder_id)
         .order_by(Document.created_at.desc())
     )
     return list((await session.execute(stmt)).scalars())
@@ -144,6 +157,27 @@ async def set_pinned(
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="document.pinned" if pinned else "document.unpinned",
                        target_type="document", target_id=str(doc.id))
+    await session.commit()
+    return doc
+
+
+async def move_document(
+    session: AsyncSession, ctx: TenantContext, document_id: UUID, folder_id: UUID | None
+) -> Document:
+    """Moves a document to a different folder (or to root, folder_id=None).
+    Never touches lineage_id/version/supersedes_document_id -- a document's
+    version history stays with it regardless of which folder it currently
+    sits in; only a NEW upload with a matching filename in the document's
+    CURRENT folder continues that lineage going forward (create_from_upload's
+    folder-scoped predecessor match)."""
+    doc = await get_document_checked(session, ctx, document_id)
+    if folder_id is not None:
+        await folders_service.get_folder_checked(
+            session, ctx, folder_id, workspace_id=doc.workspace_id
+        )
+    doc.folder_id = folder_id
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="document.moved", target_type="document", target_id=str(doc.id))
     await session.commit()
     return doc
 

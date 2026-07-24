@@ -80,6 +80,15 @@ class Document(UUIDPk, Base):
     # enrichment (hq points + keyword-augmented sparse text + summary
     # payload). Gates backfill selection (Task 7) and re-ingest skip logic.
     enriched: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Folder org navigation (v1: no ACL inheritance) -- NULL = root level.
+    # SET NULL, not CASCADE: folder deletion must go through the app-level
+    # cascade in folders.py::delete_folder (Task 3), which reuses the
+    # existing single-document delete pipeline for every document found,
+    # never a raw DB cascade straight onto Document (that would skip Qdrant/
+    # MinIO cleanup entirely).
+    folder_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("folders.id", ondelete="SET NULL"), default=None, index=True
+    )
 
 
 class IngestJob(UUIDPk, Base):
