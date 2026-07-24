@@ -1,11 +1,12 @@
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.api.deps import get_session
+from raghub.core.db import naive_utc
 from raghub.core.errors import ConflictError, NotFoundError
 from raghub.modules.models import service as models_service
 from raghub.modules.tenancy import service
@@ -114,9 +115,21 @@ async def start_reembed(
     workspace_id: UUID, body: ReembedRequest, session: SessionDep, ctx: ConfigureDep
 ) -> ReembedJobOut:
     """Admin-confirmed switch for a workspace that already has indexed
-    content (the 409 path of PATCH .../embedding-model points here). Creates
-    no ReembedJob row itself -- run_reembed_workspace creates it once it
-    knows the actual document count; this route only validates + enqueues."""
+    content (the 409 path of PATCH .../embedding-model points here).
+
+    Fix round 2: creates the ReembedJob row SYNCHRONOUSLY, with started_at
+    set, and commits it in this request's own transaction BEFORE enqueueing
+    the Celery task -- not inside run_reembed_workspace as before. That
+    closes the race described in
+    .superpowers/sdd/final-review-fix-report.md: previously the row only
+    came into existence once Celery actually picked up the task, so
+    documents/service.py::create_from_upload's in-progress guard saw NO job
+    at all during the enqueue-to-pickup gap and let uploads through that
+    could then be silently wiped by the re-embed's workspace-wide delete.
+    Creating the row here means the guard is armed from the instant this
+    response returns to the admin -- no window. documents_total is 0 here
+    (the real count isn't known until run_reembed_workspace counts the
+    workspace's documents) and gets updated on this same row once it does."""
     ws = await service.get_workspace(session, ctx, workspace_id)
     if body.new_embedding_model_id == ws.embedding_model_id:
         # Guards against a double-submit/retry re-requesting the model the
@@ -128,11 +141,20 @@ async def start_reembed(
     new_model = await models_service.get_model(session, body.new_embedding_model_id)
     if new_model.modality != "embedding":
         raise ConflictError("model is not an embedding model")
-    enqueue_reembed_workspace(workspace_id, body.new_embedding_model_id)
-    return ReembedJobOut(
-        id=uuid4(), workspace_id=workspace_id, old_embedding_model_id=ws.embedding_model_id,
+    job = ReembedJob(
+        workspace_id=workspace_id, old_embedding_model_id=ws.embedding_model_id,
         new_embedding_model_id=body.new_embedding_model_id, documents_total=0,
-        documents_done=0, error=None, finished_at=None,
+        started_at=naive_utc(),
+    )
+    session.add(job)
+    await session.commit()
+    enqueue_reembed_workspace(workspace_id, job.id, body.new_embedding_model_id)
+    return ReembedJobOut(
+        id=job.id, workspace_id=job.workspace_id,
+        old_embedding_model_id=job.old_embedding_model_id,
+        new_embedding_model_id=job.new_embedding_model_id,
+        documents_total=job.documents_total, documents_done=job.documents_done,
+        error=job.error, finished_at=job.finished_at.isoformat() if job.finished_at else None,
     )
 
 

@@ -5,11 +5,13 @@ workspace's points from the OLD collection ONLY after every document has
 been successfully re-embedded, and only then flips
 workspace.embedding_model_id."""
 
+from uuid import UUID
+
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
+from raghub.core.db import naive_utc
 from raghub.modules.auth.models import User
 from raghub.modules.documents import ingest
 from raghub.modules.documents.models import Document
@@ -84,6 +86,24 @@ async def _seed_indexed_document(
     return doc
 
 
+async def _start_job(
+    session: AsyncSession, workspace_id: UUID, old_model_id: UUID, new_model_id: UUID,
+) -> ReembedJob:
+    """Fix round 2: run_reembed_workspace no longer creates its own
+    ReembedJob row -- api/routes/workspaces.py::start_reembed creates it
+    synchronously (started_at set) before enqueueing the Celery task, and
+    passes the row's id through. Mirror that here so these tests, which
+    call run_reembed_workspace directly (no Celery broker in this test
+    process), exercise the same shape."""
+    job = ReembedJob(
+        workspace_id=workspace_id, old_embedding_model_id=old_model_id,
+        new_embedding_model_id=new_model_id, documents_total=0, started_at=naive_utc(),
+    )
+    session.add(job)
+    await session.commit()
+    return job
+
+
 async def test_reembed_workspace_moves_vectors_and_flips_model(
     session: AsyncSession, ctx: TenantContext, embedding_model_fixture: Model,
     qdrant_collection: None,
@@ -95,19 +115,21 @@ async def test_reembed_workspace_moves_vectors_and_flips_model(
     old_model_id = ws_before.embedding_model_id
     assert old_model_id != embedding_model_fixture.id
 
-    await ingest.run_reembed_workspace(ws_id, embedding_model_fixture.id)
+    job_row = await _start_job(session, ws_id, old_model_id, embedding_model_fixture.id)
+    await ingest.run_reembed_workspace(ws_id, job_row.id, embedding_model_fixture.id)
 
     # run_reembed_workspace commits via its OWN session (a separate engine
-    # connection, per _session()'s docstring) -- session.get() on THIS
-    # session would otherwise return the stale identity-mapped object from
-    # ws_before above instead of re-querying, so force a refresh.
+    # connection, per _session()'s docstring) -- session.get()/a plain
+    # select() on THIS session would otherwise return the stale
+    # identity-mapped object for both ws_before AND job_row (this test's
+    # OWN session created job_row via _start_job, so it's already cached),
+    # so force a refresh on both instead of re-querying.
     await session.refresh(ws_before)
     ws = ws_before
     assert ws.embedding_model_id == embedding_model_fixture.id
 
-    job = (
-        await session.execute(select(ReembedJob).where(ReembedJob.workspace_id == ws_id))
-    ).scalar_one()
+    await session.refresh(job_row)
+    job = job_row
     assert job.old_embedding_model_id == old_model_id
     assert job.new_embedding_model_id == embedding_model_fixture.id
     assert job.documents_done == job.documents_total == 1
@@ -134,8 +156,13 @@ async def test_reembed_isolation_only_touches_target_workspace(
     doc_a = await _seed_indexed_document(session, ctx, "reembed-ws-a")
     doc_b = await _seed_indexed_document(session, ctx, "reembed-ws-b")
     ws_a_id, ws_b_id = doc_a.workspace_id, doc_b.workspace_id
+    ws_a = await session.get(Workspace, ws_a_id)
+    assert ws_a is not None
 
-    await ingest.run_reembed_workspace(ws_a_id, embedding_model_fixture.id)
+    job_row = await _start_job(
+        session, ws_a_id, ws_a.embedding_model_id, embedding_model_fixture.id
+    )
+    await ingest.run_reembed_workspace(ws_a_id, job_row.id, embedding_model_fixture.id)
 
     client = get_qdrant()
     remaining, _ = await client.scroll(COLLECTION, limit=100)
@@ -158,7 +185,13 @@ async def test_reembed_workspace_same_model_is_noop(
     old_collection == new_collection, so the post-upsert "delete from OLD
     collection" step would wipe every point (including the ones this same
     run just re-upserted) since it targets the very collection the points
-    now live in."""
+    now live in.
+
+    Fix round 2: the ReembedJob row now exists BEFORE run_reembed_workspace
+    is ever called (start_reembed creates it synchronously), so this test
+    creates one itself and asserts the no-op path still closes it
+    (finished_at stamped) -- otherwise create_from_upload's in-progress
+    guard would stay armed for this workspace forever."""
     doc = await _seed_indexed_document(session, ctx, "reembed-ws-same-model")
     ws_id = doc.workspace_id
     ws_before = await session.get(Workspace, ws_id)
@@ -169,7 +202,8 @@ async def test_reembed_workspace_same_model_is_noop(
     before_points, _ = await client.scroll(COLLECTION, limit=10)
     assert any(p.payload["workspace_id"] == str(ws_id) for p in before_points)
 
-    await ingest.run_reembed_workspace(ws_id, current_model_id)
+    job_row = await _start_job(session, ws_id, current_model_id, current_model_id)
+    await ingest.run_reembed_workspace(ws_id, job_row.id, current_model_id)
 
     await session.refresh(ws_before)
     assert ws_before.embedding_model_id == current_model_id  # unchanged
@@ -177,12 +211,13 @@ async def test_reembed_workspace_same_model_is_noop(
     after_points, _ = await client.scroll(COLLECTION, limit=10)
     assert any(p.payload["workspace_id"] == str(ws_id) for p in after_points)
 
-    # No ReembedJob row should have been created -- the guard returns before
-    # the job is ever built.
-    job = (
-        await session.execute(select(ReembedJob).where(ReembedJob.workspace_id == ws_id))
-    ).scalar_one_or_none()
-    assert job is None
+    # The job must be closed (not left "in progress" forever) even on this
+    # defensive no-op path -- otherwise the create_from_upload guard would
+    # permanently block uploads to this workspace. Refresh (not a plain
+    # select) since this test's own session already cached job_row via
+    # _start_job -- see the success test's comment on why that matters.
+    await session.refresh(job_row)
+    assert job_row.finished_at is not None
 
 
 async def test_reembed_failure_leaves_workspace_on_old_model(
@@ -204,8 +239,9 @@ async def test_reembed_failure_leaves_workspace_on_old_model(
 
     monkeypatch.setattr(ingest, "embed_batch", _boom)
 
+    job_row = await _start_job(session, ws_id, old_model_id, embedding_model_fixture.id)
     with pytest.raises(RuntimeError, match="embed batch exploded"):
-        await ingest.run_reembed_workspace(ws_id, embedding_model_fixture.id)
+        await ingest.run_reembed_workspace(ws_id, job_row.id, embedding_model_fixture.id)
 
     # Force a refresh past this session's identity map (see the success
     # test's comment) -- not load-bearing here since the value shouldn't
@@ -214,12 +250,12 @@ async def test_reembed_failure_leaves_workspace_on_old_model(
     await session.refresh(ws_before)
     assert ws_before.embedding_model_id == old_model_id  # unchanged
 
-    job = (
-        await session.execute(select(ReembedJob).where(ReembedJob.workspace_id == ws_id))
-    ).scalar_one()
-    assert job.error is not None and "embed batch exploded" in job.error
-    assert job.finished_at is not None
-    assert job.documents_done == 0
+    # Refresh (not a plain select) since this test's own session already
+    # cached job_row via _start_job -- see the success test's comment.
+    await session.refresh(job_row)
+    assert job_row.error is not None and "embed batch exploded" in job_row.error
+    assert job_row.finished_at is not None
+    assert job_row.documents_done == 0
 
     # Old collection must still carry this workspace's points -- the failed
     # run must never have reached the old-collection delete.

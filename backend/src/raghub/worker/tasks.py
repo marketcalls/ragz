@@ -151,29 +151,41 @@ def enqueue_enrichment_backfill(workspace_id: UUID) -> None:
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES, name="workspaces.reembed")
-def reembed_workspace_task(self: Task, workspace_id: str, new_embedding_model_id: str) -> str:
+def reembed_workspace_task(
+    self: Task, workspace_id: str, job_id: str, new_embedding_model_id: str
+) -> str:
     """DOC-10: fan-out re-embed of every document in a workspace into a new
     embedding model's collection. base=IngestTask is a reasonable reuse here
     -- on exhausted retries it calls ingest.mark_failed(args[0], ...), which
     expects a document_id; workspace_id isn't a document_id, so this task
     intentionally does NOT rely on that on_failure hook for user-facing
     status (ReembedJob.error is set directly inside run_reembed_workspace's
-    own except block before it re-raises for Celery's retry to see)."""
+    own except block before it re-raises for Celery's retry to see).
+
+    Fix round 2: job_id identifies the ReembedJob row start_reembed already
+    created SYNCHRONOUSLY (with started_at set) in its own request
+    transaction, before this task was ever enqueued -- closing the race
+    where create_from_upload's in-progress guard saw no job during the
+    enqueue-to-Celery-pickup gap. This task updates that existing row rather
+    than creating a new one."""
     _run(
         self,
         lambda: ingest.run_reembed_workspace(
-            UUID(workspace_id), UUID(new_embedding_model_id)
+            UUID(workspace_id), UUID(job_id), UUID(new_embedding_model_id)
         ),
     )
     return workspace_id
 
 
-def enqueue_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID) -> None:
+def enqueue_reembed_workspace(
+    workspace_id: UUID, job_id: UUID, new_embedding_model_id: UUID
+) -> None:
     """Bulk background work (default queue), same posture as
-    enqueue_enrichment_backfill -- never blocks a live request."""
-    reembed_workspace_task.si(str(workspace_id), str(new_embedding_model_id)).apply_async(
-        queue="default"
-    )
+    enqueue_enrichment_backfill -- never blocks a live request. job_id is the
+    ReembedJob row the caller (start_reembed) already created synchronously."""
+    reembed_workspace_task.si(
+        str(workspace_id), str(job_id), str(new_embedding_model_id)
+    ).apply_async(queue="default")
 
 
 @celery_app.task(name="chat.audit_message")

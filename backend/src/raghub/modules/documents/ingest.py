@@ -444,7 +444,9 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
         await session.commit()
 
 
-async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID) -> None:
+async def run_reembed_workspace(
+    workspace_id: UUID, job_id: UUID, new_embedding_model_id: UUID
+) -> None:
     """DOC-10: re-embed every current, indexed document in a workspace into a
     NEW embedding model's collection, using each document's already-stored
     chunks.json (never re-parses or re-chunks — same reuse
@@ -452,9 +454,17 @@ async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID
     re-embeds). On completion, deletes the workspace's vectors from the OLD
     collection (workspace-scoped, via the existing _tenant_filter -- NOT a
     whole-collection wipe, since other workspaces may still share it) and
-    flips workspace.embedding_model_id. Fan-out shape mirrors
-    run_enrichment_backfill_for_workspace exactly (one job row created
-    up front, one per-document loop after).
+    flips workspace.embedding_model_id.
+
+    Fix round 2: job_id identifies the ReembedJob row that
+    api/routes/workspaces.py::start_reembed already created SYNCHRONOUSLY
+    (started_at set) in its own request transaction, BEFORE enqueueing the
+    Celery task that runs this function -- this runner updates that existing
+    row (documents_total/documents_done/error/finished_at) instead of
+    creating one of its own. That closes the window where
+    documents/service.py::create_from_upload's in-progress guard would see
+    no ReembedJob at all between the route returning 202 and Celery actually
+    picking up the task (see .superpowers/sdd/final-review-fix-report.md).
 
     Failure mid-loop (any batch's embed/upsert raises): job.error is recorded
     and the exception re-raised BEFORE the old collection is touched and
@@ -463,7 +473,26 @@ async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID
     one that only some documents made it into."""
     async with _session() as session:
         workspace = await session.get(Workspace, workspace_id)
+        job = await session.get(ReembedJob, job_id)
         if workspace is None:
+            # Workspace vanished between start_reembed creating this job and
+            # Celery picking up the task (e.g. deleted meanwhile). Close the
+            # job anyway -- otherwise it stays "in progress" forever and the
+            # create_from_upload guard would (harmlessly, since the
+            # workspace is gone, but pointlessly) never clear for it.
+            if job is not None:
+                job.error = "workspace no longer exists"
+                job.finished_at = naive_utc()
+                await session.commit()
+            return
+        if job is None:
+            # Defensive: start_reembed creates this row synchronously in the
+            # same request that enqueues this task, so it should always
+            # exist by the time Celery runs it. Nothing safe to update
+            # without a job row to report into.
+            log.warning(
+                "reembed_job_missing", workspace_id=str(workspace_id), job_id=str(job_id)
+            )
             return
         old_model = await models_service.get_model(session, workspace.embedding_model_id)
         new_model = await models_service.get_model(session, new_embedding_model_id)
@@ -475,12 +504,17 @@ async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID
             # guard, old_collection == new_collection below, and the
             # workspace-scoped delete from the "OLD" collection after the
             # upsert loop would delete every point this same run just wrote
-            # -- silently wiping the workspace's vectors.
+            # -- silently wiping the workspace's vectors. The job still must
+            # be closed here (finished_at stamped) -- otherwise it stays
+            # "in progress" forever and create_from_upload's guard would
+            # permanently block uploads to this workspace.
             log.warning(
                 "reembed_noop_same_model",
                 workspace_id=str(workspace_id),
                 model_id=str(new_model.id),
             )
+            job.finished_at = naive_utc()
+            await session.commit()
             return
         old_collection = old_model.collection_name
         new_collection = new_model.collection_name
@@ -502,12 +536,7 @@ async def run_reembed_workspace(workspace_id: UUID, new_embedding_model_id: UUID
                 )
             ).scalars()
         )
-        job = ReembedJob(
-            workspace_id=workspace_id, old_embedding_model_id=old_model.id,
-            new_embedding_model_id=new_model.id, documents_total=len(docs),
-            started_at=naive_utc(),
-        )
-        session.add(job)
+        job.documents_total = len(docs)
         await session.commit()
 
         try:

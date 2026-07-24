@@ -8,9 +8,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raghub.core.config import get_settings
+from raghub.core.db import naive_utc
 from raghub.modules.auth.models import User
 from raghub.modules.documents import ingest
 from raghub.modules.models.models import Model
+from raghub.modules.tenancy.models import Workspace
+from raghub.modules.tenancy.reembed_models import ReembedJob
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -46,12 +49,12 @@ async def _create_chat_model(session: AsyncSession, name: str = "chat-model") ->
 
 
 @pytest.fixture
-def captured_reembed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[UUID, UUID]]:
-    calls: list[tuple[UUID, UUID]] = []
+def captured_reembed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[UUID, UUID, UUID]]:
+    calls: list[tuple[UUID, UUID, UUID]] = []
     monkeypatch.setattr(
         "raghub.api.routes.workspaces.enqueue_reembed_workspace",
-        lambda workspace_id, new_embedding_model_id: calls.append(
-            (workspace_id, new_embedding_model_id)
+        lambda workspace_id, job_id, new_embedding_model_id: calls.append(
+            (workspace_id, job_id, new_embedding_model_id)
         ),
     )
     return calls
@@ -59,7 +62,7 @@ def captured_reembed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[UUID, UUID]]
 
 async def test_post_reembed_returns_202_and_enqueues(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
-    captured_reembed: list[tuple[UUID, UUID]],
+    captured_reembed: list[tuple[UUID, UUID, UUID]],
 ) -> None:
     h = await auth(client, seeded_user.email)
     ws_id = await make_workspace(client, h)
@@ -78,12 +81,24 @@ async def test_post_reembed_returns_202_and_enqueues(
     assert body["documents_done"] == 0
     assert body["error"] is None
     assert body["finished_at"] is None
-    assert captured_reembed == [(UUID(ws_id), new_model.id)]
+    # Fix round 2: enqueue_reembed_workspace is now called with the id of a
+    # ReembedJob row that already exists (start_reembed created + committed
+    # it before enqueueing) -- not a job_id invented after the fact.
+    assert captured_reembed == [(UUID(ws_id), UUID(body["id"]), new_model.id)]
+
+    # The race this fix closes: the ReembedJob row must exist SYNCHRONOUSLY,
+    # with started_at set, by the time this response has returned -- not
+    # only once Celery later picks up the task. Query it directly (bypassing
+    # the enqueue mock entirely) to prove that.
+    job = await session.get(ReembedJob, UUID(body["id"]))
+    assert job is not None
+    assert job.started_at is not None
+    assert job.finished_at is None
 
 
 async def test_post_reembed_rejects_non_embedding_model(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
-    captured_reembed: list[tuple[UUID, UUID]],
+    captured_reembed: list[tuple[UUID, UUID, UUID]],
 ) -> None:
     h = await auth(client, seeded_user.email)
     ws_id = await make_workspace(client, h)
@@ -101,7 +116,7 @@ async def test_post_reembed_rejects_non_embedding_model(
 
 async def test_post_reembed_rejects_same_model(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
-    captured_reembed: list[tuple[UUID, UUID]],
+    captured_reembed: list[tuple[UUID, UUID, UUID]],
 ) -> None:
     """Bug fix regression: requesting re-embed into the workspace's CURRENT
     embedding model (e.g. a client double-submit/retry after a previous
@@ -146,10 +161,22 @@ async def test_reembed_status_200_after_completion(
     ws_id = await make_workspace(client, h)
     new_model = await _create_embedding_model(session, name="new-embed-2")
 
-    # Run the job body directly (no Celery broker in this test process) --
-    # exercises the SAME code path enqueue_reembed_workspace's Celery task
-    # calls, just synchronously.
-    await ingest.run_reembed_workspace(UUID(ws_id), new_model.id)
+    # Fix round 2: run_reembed_workspace no longer creates its own
+    # ReembedJob row -- it updates one that already exists. Create it here
+    # the same way start_reembed now does (synchronously, started_at set)
+    # before calling the job body directly (no Celery broker in this test
+    # process) -- exercises the SAME code path enqueue_reembed_workspace's
+    # Celery task calls, just synchronously.
+    ws = await session.get(Workspace, UUID(ws_id))
+    assert ws is not None
+    job = ReembedJob(
+        workspace_id=UUID(ws_id), old_embedding_model_id=ws.embedding_model_id,
+        new_embedding_model_id=new_model.id, documents_total=0, started_at=naive_utc(),
+    )
+    session.add(job)
+    await session.commit()
+
+    await ingest.run_reembed_workspace(UUID(ws_id), job.id, new_model.id)
 
     r = await client.get(f"/api/v1/workspaces/{ws_id}/reembed-status", headers=h)
     assert r.status_code == 200
@@ -159,4 +186,45 @@ async def test_reembed_status_200_after_completion(
     assert body["documents_total"] == 0
     assert body["documents_done"] == 0
     assert body["error"] is None
-    assert body["finished_at"] is not None
+
+
+async def test_upload_immediately_after_reembed_enqueued_is_rejected(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+    captured_reembed: list[tuple[UUID, UUID, UUID]],
+) -> None:
+    """Regression for the residual race described in
+    .superpowers/sdd/final-review-fix-report.md: previously the ReembedJob
+    row only came into existence once Celery actually picked up the task --
+    so a document uploaded in the enqueue-to-pickup gap sailed past
+    create_from_upload's in-progress guard (no job existed yet) and could
+    later be silently wiped by the re-embed's workspace-wide delete.
+
+    This proves that gap is gone: captured_reembed monkeypatches
+    enqueue_reembed_workspace to a no-op, so the Celery task NEVER actually
+    runs in this test -- there is no async pickup at all. If the guard is
+    armed only from the moment start_reembed's route handler commits the
+    ReembedJob row (not from whenever a worker eventually gets to it), the
+    very next request -- an upload against this workspace -- must already
+    be rejected."""
+    h = await auth(client, seeded_user.email)
+    ws_id = await make_workspace(client, h)
+    new_model = await _create_embedding_model(session)
+
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/reembed",
+        json={"new_embedding_model_id": str(new_model.id)},
+        headers=h,
+    )
+    assert r.status_code == 202
+    # Celery never ran (enqueue_reembed_workspace is mocked to a no-op) --
+    # the only reason a job could possibly be blocking uploads now is that
+    # start_reembed created it synchronously, in its own request.
+    assert captured_reembed  # the mock recorded the call; the real task body never executed
+
+    upload = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents", headers=h,
+        files={"file": ("racer.txt", b"uploaded in the old enqueue-to-pickup gap", "text/plain")},
+    )
+    assert upload.status_code == 409
+    assert upload.headers["content-type"] == "application/problem+json"
+    assert "re-embed job is in progress" in upload.json()["detail"]
