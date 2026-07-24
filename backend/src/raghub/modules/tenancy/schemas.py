@@ -11,7 +11,7 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceOut(BaseModel):
     id: UUID
     name: str
-    embedding_model: str
+    embedding_model_id: UUID
     min_score: float
     default_model_id: UUID | None
     top_k: int
@@ -23,6 +23,10 @@ class WorkspaceOut(BaseModel):
     enrichment_enabled: bool
 
     model_config = {"from_attributes": True}
+
+
+class EmbeddingModelPatch(BaseModel):
+    embedding_model_id: UUID
 
 
 class WorkspacePatch(BaseModel):

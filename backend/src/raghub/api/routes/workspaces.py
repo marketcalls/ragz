@@ -13,6 +13,7 @@ from raghub.modules.tenancy.context import (
     require_role,
 )
 from raghub.modules.tenancy.schemas import (
+    EmbeddingModelPatch,
     MemberAdd,
     WorkspaceCreate,
     WorkspaceOut,
@@ -51,6 +52,14 @@ _SETTINGS_FIELDS = (
     "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
     "web_search_enabled", "strict_mode", "enrichment_enabled",
 )
+
+
+@router.patch("/{workspace_id}/embedding-model", response_model=WorkspaceOut)
+async def patch_embedding_model(
+    workspace_id: UUID, body: EmbeddingModelPatch, session: SessionDep, ctx: ConfigureDep
+) -> WorkspaceOut:
+    ws = await service.set_embedding_model(session, ctx, workspace_id, body.embedding_model_id)
+    return WorkspaceOut.model_validate(ws)
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceOut)
