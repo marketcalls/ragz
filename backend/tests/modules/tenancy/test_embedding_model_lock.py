@@ -10,7 +10,7 @@ seed INSERT), so no local fixture is needed here.
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragz.core.config import get_settings
+from ragz.core.config import Settings
 from ragz.core.errors import ConflictError
 from ragz.modules.auth.models import User
 from ragz.modules.documents.models import Document
@@ -46,20 +46,24 @@ async def ctx(session: AsyncSession) -> TenantContext:
 
 
 @pytest.fixture
-async def embedding_model_fixture(session: AsyncSession, ctx: TenantContext) -> Model:
+async def embedding_model_fixture(
+    session: AsyncSession, ctx: TenantContext, test_settings: Settings
+) -> Model:
     return await models_service.create_model(
         session, ctx, litellm_model_name="text-embedding-3-small",
         display_name="OpenAI Small", provider_kind="openai", base_url=None,
-        api_key="sk-test", settings=get_settings(), modality="embedding", dimension=1536,
+        api_key="sk-test", settings=test_settings, modality="embedding", dimension=1536,
     )
 
 
 @pytest.fixture
-async def chat_model_fixture(session: AsyncSession, ctx: TenantContext) -> Model:
+async def chat_model_fixture(
+    session: AsyncSession, ctx: TenantContext, test_settings: Settings
+) -> Model:
     return await models_service.create_model(
         session, ctx, litellm_model_name="gpt-4o-mini",
         display_name="GPT-4o mini", provider_kind="openai", base_url=None,
-        api_key="sk-test", settings=get_settings(), modality="chat",
+        api_key="sk-test", settings=test_settings, modality="chat",
     )
 
 

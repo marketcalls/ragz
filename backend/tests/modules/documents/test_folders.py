@@ -152,7 +152,7 @@ async def test_get_folder_checked_rejects_cross_workspace_parent(
 
 
 async def test_delete_folder_cascades_to_subfolders_and_documents(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
     parent = await folders_service.create_folder(
@@ -183,7 +183,7 @@ async def test_delete_folder_cascades_to_subfolders_and_documents(
 
 
 async def test_count_subtree_matches_delete_folder_document_count(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     """count_subtree is a preview: it must report the exact same counts a
     subsequent delete_folder call would act on, across a multi-level subtree

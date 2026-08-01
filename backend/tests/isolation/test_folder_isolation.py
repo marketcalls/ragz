@@ -141,7 +141,7 @@ async def test_cross_workspace_folder_access_denied_for_plain_member(
 
 
 async def test_subtree_delete_query_guard_rejects_forged_cross_tenant_document(
-    session: AsyncSession,
+    session: AsyncSession, stack_env: None,
 ) -> None:
     """Regression test for the Finding-1 hardening: prove the QUERY-LEVEL
     workspace_id guard added to _collect_subtree_folder_ids/count_subtree/
