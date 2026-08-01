@@ -110,6 +110,10 @@ async def delete_model(
 class CatalogEntryOut(BaseModel):
     name: str
     provider: str
+    mode: str | None  # LiteLLM mode: chat | embedding | image_generation | ... —
+    # drives the add-model picker's Type filter (DOC-10): an "Embedding model"
+    # selection lists only mode=="embedding" entries, so text-embedding-* aren't
+    # buried under newer chat/image/audio models sorted ahead of them.
     max_input_tokens: int | None
     input_cost_per_1m: float | None  # derived: input_cost_per_token * 1e6
     output_cost_per_1m: float | None
@@ -141,7 +145,8 @@ async def get_catalog(session: SessionDep, ctx: SuperadminDep) -> CatalogOut:
     registered = set((await session.execute(select(Model.litellm_model_name))).scalars())
     out = [
         CatalogEntryOut(
-            name=e.name, provider=e.provider, max_input_tokens=e.max_input_tokens,
+            name=e.name, provider=e.provider, mode=e.mode,
+            max_input_tokens=e.max_input_tokens,
             input_cost_per_1m=(
                 e.input_cost_per_token * 1e6 if e.input_cost_per_token is not None else None
             ),

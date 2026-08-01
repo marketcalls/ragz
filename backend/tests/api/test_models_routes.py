@@ -117,13 +117,16 @@ async def test_catalog_listing_flags_unregistered_models(
     await client.post("/api/v1/admin/models", json=OPENAI_BODY, headers=h_super)  # registers it
 
     session.add_all([
-        ModelCatalogEntry(name="gpt-4o-mini", provider="openai", max_input_tokens=128000,
+        ModelCatalogEntry(name="gpt-4o-mini", provider="openai", mode="chat",
+                          max_input_tokens=128000,
                           input_cost_per_token=0.00000015, output_cost_per_token=0.0000006,
                           source="snapshot", position=3),
-        ModelCatalogEntry(name="claude-3-haiku", provider="anthropic", max_input_tokens=200000,
+        ModelCatalogEntry(name="claude-3-haiku", provider="anthropic", mode="chat",
+                          max_input_tokens=200000,
                           input_cost_per_token=0.00000025, output_cost_per_token=0.00000125,
                           source="snapshot", position=5),
-        ModelCatalogEntry(name="claude-3-opus", provider="anthropic", max_input_tokens=200000,
+        ModelCatalogEntry(name="claude-3-opus", provider="anthropic", mode="chat",
+                          max_input_tokens=200000,
                           input_cost_per_token=0.000015, output_cost_per_token=0.000075,
                           source="snapshot", position=7),
     ])
@@ -142,6 +145,10 @@ async def test_catalog_listing_flags_unregistered_models(
     assert by_name["gpt-4o-mini"]["position"] == 3
     assert by_name["claude-3-haiku"]["registered"] is False
     assert by_name["claude-3-haiku"]["input_cost_per_1m"] == 0.25
+    # DOC-10: mode is exposed so the add-model picker can filter by Type
+    # (Embedding vs Chat) -- without it, text-embedding-* get buried under
+    # newer chat/image models sorted ahead of them.
+    assert by_name["gpt-4o-mini"]["mode"] == "chat"
 
     h_admin = await auth(client, "a@acme.com")
     assert (await client.get("/api/v1/admin/models/catalog",

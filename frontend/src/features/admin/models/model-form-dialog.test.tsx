@@ -35,17 +35,23 @@ const fixtureModel: ModelOut = {
 
 // Entries as the API returns them: provider ASC, position DESC (newest first).
 const fixtureCatalog: CatalogOut = {
-  new_available: 4,
+  new_available: 5,
   entries: [
-    { name: 'claude-4-sonnet', provider: 'anthropic', max_input_tokens: 200000,
+    { name: 'claude-4-sonnet', provider: 'anthropic', mode: 'chat', max_input_tokens: 200000,
       input_cost_per_1m: 3, output_cost_per_1m: 15, position: 9, registered: false },
-    { name: 'claude-3-haiku', provider: 'anthropic', max_input_tokens: 200000,
+    { name: 'claude-3-haiku', provider: 'anthropic', mode: 'chat', max_input_tokens: 200000,
       input_cost_per_1m: 0.25, output_cost_per_1m: 1.25, position: 2, registered: false },
-    { name: 'gemini/gemini-2.5-pro', provider: 'gemini', max_input_tokens: 1048576,
+    { name: 'gemini/gemini-2.5-pro', provider: 'gemini', mode: 'chat', max_input_tokens: 1048576,
       input_cost_per_1m: 1.25, output_cost_per_1m: 10, position: 7, registered: false },
-    { name: 'gpt-4o-mini', provider: 'openai', max_input_tokens: 128000,
+    // openai has a newer chat model (higher position) AND an embedding model —
+    // the picker must filter by the selected Type so text-embedding-3-small
+    // isn't hidden behind gpt-4o-mini when "Embedding model" is chosen.
+    { name: 'gpt-4o-mini', provider: 'openai', mode: 'chat', max_input_tokens: 128000,
       input_cost_per_1m: 0.15, output_cost_per_1m: 0.6, position: 5, registered: true },
-    { name: 'zeta-chat', provider: 'zeta', max_input_tokens: null,
+    { name: 'text-embedding-3-small', provider: 'openai', mode: 'embedding',
+      max_input_tokens: 8191, input_cost_per_1m: 0.02, output_cost_per_1m: 0,
+      position: 3, registered: false },
+    { name: 'zeta-chat', provider: 'zeta', mode: 'chat', max_input_tokens: null,
       input_cost_per_1m: null, output_cost_per_1m: null, position: 1, registered: false },
   ],
 };
@@ -147,6 +153,30 @@ test('model picker shows the provider models newest-first with context and prici
   expect(options[0]).toHaveTextContent('$3.00/$15.00');
   expect(options[1]).toHaveTextContent('claude-3-haiku');
   expect(options).toHaveLength(2);
+});
+
+test('the model picker filters by Type: Embedding shows only embedding models, Chat excludes them', async () => {
+  const user = userEvent.setup();
+  renderDialog();
+  // openai has one chat model (gpt-4o-mini, position 5) and one embedding
+  // model (text-embedding-3-small, position 3). Default Type is Chat.
+  const providers = await openProviderList(user);
+  await user.click(providers.getByRole('option', { name: 'openai' }));
+  await user.click(screen.getByLabelText('Model'));
+  let names = within(screen.getByRole('listbox'))
+    .getAllByRole('option')
+    .map((o) => o.textContent);
+  expect(names.some((n) => n?.includes('gpt-4o-mini'))).toBe(true);
+  expect(names.some((n) => n?.includes('text-embedding-3-small'))).toBe(false);
+
+  // Switch to Embedding: now the embedding model shows and the chat one is gone.
+  await user.selectOptions(screen.getByLabelText('Type'), 'embedding');
+  await user.click(screen.getByLabelText('Model'));
+  names = within(screen.getByRole('listbox'))
+    .getAllByRole('option')
+    .map((o) => o.textContent);
+  expect(names.some((n) => n?.includes('text-embedding-3-small'))).toBe(true);
+  expect(names.some((n) => n?.includes('gpt-4o-mini'))).toBe(false);
 });
 
 test('selecting a model fills the verbatim name, suggests a display name, and derives litellm kind', async () => {

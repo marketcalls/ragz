@@ -1295,6 +1295,8 @@ export interface components {
             name: string;
             /** Provider */
             provider: string;
+            /** Mode */
+            mode: string | null;
             /** Max Input Tokens */
             max_input_tokens: number | null;
             /** Input Cost Per 1M */

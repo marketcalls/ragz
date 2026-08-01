@@ -224,12 +224,18 @@ export function ModelFormDialog({
   const modelOptions = useMemo((): ComboOption[] => {
     // The API already orders (provider ASC, position DESC); the re-sort keeps
     // newest-first self-evident and robust to any caller reordering.
+    // Filter by the selected Type: an "Embedding model" lists only
+    // mode==="embedding" catalog entries; a "Chat model" lists everything
+    // except embeddings (chat/image/audio/etc. all stay, matching the
+    // pre-DOC-10 behavior minus embeddings). Without this, text-embedding-*
+    // are buried under newer chat/image/audio models ranked ahead of them.
     return (catalog.data?.entries ?? [])
       .filter((e) => e.provider === catalogProvider)
+      .filter((e) => (modality === 'embedding' ? e.mode === 'embedding' : e.mode !== 'embedding'))
       .slice()
       .sort((a, b) => b.position - a.position)
       .map((e) => ({ value: e.name, label: e.name, detail: entryDetail(e) }));
-  }, [catalog.data, catalogProvider]);
+  }, [catalog.data, catalogProvider, modality]);
 
   const pending = isEdit ? patch.isPending : create.isPending;
   const activeError = isEdit
