@@ -6,7 +6,7 @@ import { problemDetail } from '@/features/auth/mutations';
 // Task 10 (eval harness, design §6): mirrors documents/queries.ts's
 // metadata-field hooks — one query keyed by workspace, two mutations that
 // invalidate it. GoldenQueryOut/GoldenQueryCreate come straight off the
-// generated schema (backend/src/raghub/modules/evals/schemas.py) — no
+// generated schema (backend/src/ragz/modules/evals/schemas.py) — no
 // hand-rolled duplicate types at this boundary.
 export function useGoldenQueries(workspaceId: string | null) {
   return useQuery({

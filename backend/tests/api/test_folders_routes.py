@@ -2,7 +2,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
+from ragz.modules.auth.models import User
 
 
 @pytest.fixture
@@ -12,11 +12,11 @@ def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # ty
     route loops calling enqueue_delete once per document, same as the
     single-document delete route."""
     calls: dict[str, list] = {"ingest": [], "delete": [], "reindex": []}  # type: ignore[type-arg]
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_ingest",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_ingest",
                         lambda doc_id, size: calls["ingest"].append((doc_id, size)))
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_delete",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_delete",
                         lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_reindex",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_reindex",
                         lambda doc_id: calls["reindex"].append(doc_id))
     return calls
 

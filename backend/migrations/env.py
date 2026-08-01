@@ -6,19 +6,19 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-import raghub.core.app_settings  # noqa: F401
-import raghub.modules.audit.models  # noqa: F401
-import raghub.modules.auth.models  # noqa: F401  (registered as tasks add them)
-import raghub.modules.chat.models  # noqa: F401
-import raghub.modules.documents.models  # noqa: F401
-import raghub.modules.models.catalog  # noqa: F401
-import raghub.modules.models.models  # noqa: F401
-import raghub.modules.quotas.models  # noqa: F401
-import raghub.modules.secrets.models  # noqa: F401
-import raghub.modules.tenancy.models  # noqa: F401
-import raghub.modules.tenancy.reembed_models  # noqa: F401
-from raghub.core.config import get_settings
-from raghub.core.db import Base
+import ragz.core.app_settings  # noqa: F401
+import ragz.modules.audit.models  # noqa: F401
+import ragz.modules.auth.models  # noqa: F401  (registered as tasks add them)
+import ragz.modules.chat.models  # noqa: F401
+import ragz.modules.documents.models  # noqa: F401
+import ragz.modules.models.catalog  # noqa: F401
+import ragz.modules.models.models  # noqa: F401
+import ragz.modules.quotas.models  # noqa: F401
+import ragz.modules.secrets.models  # noqa: F401
+import ragz.modules.tenancy.models  # noqa: F401
+import ragz.modules.tenancy.reembed_models  # noqa: F401
+from ragz.core.config import get_settings
+from ragz.core.db import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -11,7 +11,7 @@ export interface RoleTemplateInput {
 
 // Admins (not just superadmins) can GET the list — they need it to populate
 // the assignment select on the users page. Only superadmin can mutate
-// (enforced server-side; see backend/src/raghub/api/routes/admin_roles.py).
+// (enforced server-side; see backend/src/ragz/api/routes/admin_roles.py).
 export function useRoles() {
   return useQuery({
     queryKey: ['roles'],

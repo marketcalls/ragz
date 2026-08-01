@@ -3,7 +3,7 @@ name: Red-team tier (nightly)
 # --------------------------------------------------------------------------
 # Phase 3 Plan J, Task 13: adversarial injection/evasion/fabrication probes
 # living in backend/tests/redteam/, gated behind REDTEAM=1 exactly like
-# RAGHUB_TEST_OCR (backend/tests/integration/test_ocr_e2e.py, J-C16).
+# RAGZ_TEST_OCR (backend/tests/integration/test_ocr_e2e.py, J-C16).
 #
 # Deliberately NOT wired to `pull_request`/`push`: this tier spins up the
 # full testcontainers stack (Postgres/Redis/Qdrant/MinIO) for every probe,

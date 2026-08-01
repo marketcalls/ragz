@@ -1,7 +1,7 @@
 import pytest
 
-from raghub.modules.documents.pipeline import embed_batch
-from raghub.modules.retrieval.embeddings import HashDenseEmbedder
+from ragz.modules.documents.pipeline import embed_batch
+from ragz.modules.retrieval.embeddings import HashDenseEmbedder
 
 
 @pytest.fixture

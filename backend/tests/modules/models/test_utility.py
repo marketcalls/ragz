@@ -19,14 +19,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import raghub.modules as modules_pkg
-from raghub.core.config import Settings
-from raghub.modules.auth.models import User
-from raghub.modules.models import service
-from raghub.modules.models.models import Model
-from raghub.modules.models.utility import get_utility_model
-from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.tenancy.context import TenantContext
+import ragz.modules as modules_pkg
+from ragz.core.config import Settings
+from ragz.modules.auth.models import User
+from ragz.modules.models import service
+from ragz.modules.models.models import Model
+from ragz.modules.models.utility import get_utility_model
+from ragz.modules.secrets.crypto import ensure_kek
+from ragz.modules.tenancy.context import TenantContext
 
 
 @pytest.fixture

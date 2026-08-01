@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import { useWorkspaces } from './queries';
 
-const KEY = 'raghub-workspace';
+const KEY = 'ragz-workspace';
 
 interface WorkspaceState {
   workspaceId: string | null;

@@ -2,17 +2,17 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
+from ragz.modules.auth.models import User
 
 
 @pytest.fixture
 def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # type: ignore[type-arg]
     calls: dict[str, list] = {"ingest": [], "delete": [], "reindex": []}  # type: ignore[type-arg]
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_ingest",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_ingest",
                         lambda doc_id, size: calls["ingest"].append((doc_id, size)))
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_delete",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_delete",
                         lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_reindex",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_reindex",
                         lambda doc_id: calls["reindex"].append(doc_id))
     return calls
 
@@ -101,8 +101,8 @@ async def test_oversized_upload_413(
     monkeypatch: pytest.MonkeyPatch,
     captured_enqueues: dict,  # type: ignore[type-arg]
 ) -> None:
-    from raghub.core.config import get_settings
-    monkeypatch.setenv("RAGHUB_MAX_UPLOAD_MB", "0")
+    from ragz.core.config import get_settings
+    monkeypatch.setenv("RAGZ_MAX_UPLOAD_MB", "0")
     get_settings.cache_clear()
     h = await auth(client, "a@acme.com")
     ws_id = await make_workspace(client, h)
@@ -120,8 +120,8 @@ async def test_oversized_upload_chunked_abort_413(
     captured_enqueues: dict,  # type: ignore[type-arg]
 ) -> None:
     """Test that oversized uploads are aborted during chunked read."""
-    from raghub.core.config import get_settings
-    monkeypatch.setenv("RAGHUB_MAX_UPLOAD_MB", "1")
+    from ragz.core.config import get_settings
+    monkeypatch.setenv("RAGZ_MAX_UPLOAD_MB", "1")
     get_settings.cache_clear()
     h = await auth(client, "a@acme.com")
     ws_id = await make_workspace(client, h)
@@ -149,10 +149,10 @@ async def test_approve_route_enqueues_reindex_when_needed(
     asserts enqueue_reindex fires with v1's id."""
     from sqlalchemy import select
 
-    from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-    from raghub.modules.documents.service import create_from_upload
-    from raghub.modules.tenancy.context import TenantContext
-    from raghub.modules.tenancy.models import Workspace
+    from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+    from ragz.modules.documents.service import create_from_upload
+    from ragz.modules.tenancy.context import TenantContext
+    from ragz.modules.tenancy.models import Workspace
 
     h = await auth(client, "a@acme.com")
     await make_workspace(client, h)  # created via HTTP so the route exercises real membership
@@ -191,10 +191,10 @@ async def test_approve_route_no_reindex_when_points_already_present(
     points is a pure flip -- no reindex needed, route must not enqueue."""
     from sqlalchemy import select
 
-    from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-    from raghub.modules.documents.service import create_from_upload
-    from raghub.modules.tenancy.context import TenantContext
-    from raghub.modules.tenancy.models import Workspace
+    from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+    from ragz.modules.documents.service import create_from_upload
+    from ragz.modules.tenancy.context import TenantContext
+    from ragz.modules.tenancy.models import Workspace
 
     h = await auth(client, "a@acme.com")
     await make_workspace(client, h)  # created via HTTP so the route exercises real membership

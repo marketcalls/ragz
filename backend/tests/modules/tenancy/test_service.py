@@ -7,10 +7,10 @@ in the way)."""
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.evals import service as evals_service
-from raghub.modules.tenancy import service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Workspace
+from ragz.modules.evals import service as evals_service
+from ragz.modules.tenancy import service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Workspace
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
@@ -45,7 +45,7 @@ async def test_top_k_change_triggers_eval_run_when_golden_queries_exist(
     # mirrors tests/modules/documents/test_versioning.py's enqueue_reindex
     # patching for the same reason.
     monkeypatch.setattr(
-        "raghub.worker.tasks.enqueue_eval_run",
+        "ragz.worker.tasks.enqueue_eval_run",
         lambda workspace_id, triggered_by: enqueued.append((workspace_id, triggered_by)),
     )
     await service.update_retrieval_settings(session, ctx, ws.id, {"top_k": 12})
@@ -59,7 +59,7 @@ async def test_fallback_policy_change_does_not_trigger_eval_run(
     top_k/min_score/rerank_enabled do."""
     enqueued: list[tuple[object, str]] = []
     monkeypatch.setattr(
-        "raghub.worker.tasks.enqueue_eval_run",
+        "ragz.worker.tasks.enqueue_eval_run",
         lambda workspace_id, triggered_by: enqueued.append((workspace_id, triggered_by)),
     )
     await service.update_retrieval_settings(session, ctx, ws.id, {"fallback_policy": "decline"})

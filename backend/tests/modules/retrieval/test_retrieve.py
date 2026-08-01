@@ -5,25 +5,25 @@ import pytest
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.errors import WorkspaceAccessDenied
-from raghub.modules.auth.models import User
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.retrieval import service as retrieval_service
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-from raghub.modules.retrieval.service import (
+from ragz.core.config import get_settings
+from ragz.core.errors import WorkspaceAccessDenied
+from ragz.modules.auth.models import User
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.retrieval import service as retrieval_service
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from ragz.modules.retrieval.service import (
     RetrievedChunk,
     _dedupe_hq,
     delete_document_points,
     ensure_collection,
     retrieve,
 )
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization, Workspace, WorkspaceMember
 
 # The dense embedder used by test-seeded points (upsert_texts and friends):
-# always resolves to HashDenseEmbedder under RAGHUB_EMBEDDING_BACKEND=hash
+# always resolves to HashDenseEmbedder under RAGZ_EMBEDDING_BACKEND=hash
 # (stack_env), but get_dense_embedder's signature (DOC-10, Task 2) now
 # requires a model identity regardless of backend -- these args mirror the
 # LOCAL_EMBEDDING_MODEL_ID row the shared `engine` fixture seeds.
@@ -125,7 +125,7 @@ async def test_retrieve_uses_workspace_specific_collection(
     attribute (Task 5 replaced it with `embedding_model_id`), so the old
     `await ensure_collection(ws.embedding_model)` line raises AttributeError
     before either query_points call is reached."""
-    from raghub.modules.models import service as models_service
+    from ragz.modules.models import service as models_service
 
     ctx, ws = await seed_workspace(session, "orgh")
     # Seed the workspace's DEFAULT (bge-m3) collection with a matching chunk --
@@ -184,7 +184,7 @@ async def test_delete_restricted_document_points(
     ignores ACL). Kills the mutant hard-coding a groupset in delete's filter."""
     from uuid import UUID
 
-    from raghub.modules.retrieval.client import COLLECTION
+    from ragz.modules.retrieval.client import COLLECTION
 
     ctx, ws = await seed_workspace(session, "orgg")
     # Seed a restricted document with ACL payload (acl_groups=[finance_group_id])
@@ -229,8 +229,8 @@ async def test_delete_points_tolerates_missing_collection(stack_env: None) -> No
     """
     from uuid import uuid4
 
-    from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-    from raghub.modules.retrieval.service import delete_document_points
+    from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+    from ragz.modules.retrieval.service import delete_document_points
 
     client = get_qdrant()
     if await client.collection_exists(COLLECTION):

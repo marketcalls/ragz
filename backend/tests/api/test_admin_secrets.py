@@ -1,6 +1,6 @@
 import httpx
 
-from raghub.modules.auth.models import User
+from ragz.modules.auth.models import User
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:

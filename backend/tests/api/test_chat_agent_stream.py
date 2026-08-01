@@ -8,13 +8,13 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.api.app import create_app
-from raghub.core.config import Settings, get_settings
-from raghub.core.db import build_session_factory
-from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.chat.models import Citation
-from raghub.modules.chat.service import NO_ANSWER_TEXT
-from raghub.modules.models.models import Model
+from ragz.api.app import create_app
+from ragz.core.config import Settings, get_settings
+from ragz.core.db import build_session_factory
+from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+from ragz.modules.chat.models import Citation
+from ragz.modules.chat.service import NO_ANSWER_TEXT
+from ragz.modules.models.models import Model
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
 from tests.conftest import (
     FakeChunkReader,

@@ -1,5 +1,5 @@
-from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.chat.prompting import (
+from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+from ragz.modules.chat.prompting import (
     GENERAL_KNOWLEDGE_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     PromptSource,

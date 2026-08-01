@@ -4,12 +4,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.errors import NotFoundError, SecretsError
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.secrets.models import Secret
-from raghub.modules.secrets.service import (
+from ragz.core.config import Settings
+from ragz.core.errors import NotFoundError, SecretsError
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.secrets.crypto import ensure_kek
+from ragz.modules.secrets.models import Secret
+from ragz.modules.secrets.service import (
     _get_secret_decrypted,
     delete_secret,
     list_secrets,

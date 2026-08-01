@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from raghub.core.errors import SecretsError
-from raghub.modules.secrets.crypto import (
+from ragz.core.errors import SecretsError
+from ragz.modules.secrets.crypto import (
     decrypt,
     encrypt,
     ensure_kek,

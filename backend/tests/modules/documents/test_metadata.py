@@ -2,18 +2,18 @@ import pytest
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import ConflictError, NotFoundError
-from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-from raghub.modules.documents.metadata import (
+from ragz.core.errors import ConflictError, NotFoundError
+from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+from ragz.modules.documents.metadata import (
     PRESET_FIELDS,
     build_clauses,
     create_field,
     list_fields,
     set_document_metadata,
 )
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.service import MetadataClause
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.retrieval.service import MetadataClause
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 

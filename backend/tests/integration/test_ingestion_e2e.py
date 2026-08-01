@@ -5,12 +5,12 @@ from docx import Document as DocxBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-from raghub.modules.documents.models import IngestJob
-from raghub.modules.documents.pipeline import IngestFailure
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.retrieval.client import COLLECTION
-from raghub.modules.retrieval.service import retrieve, update_document_current
+from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+from ragz.modules.documents.models import IngestJob
+from ragz.modules.documents.pipeline import IngestFailure
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.retrieval.client import COLLECTION
+from ragz.modules.retrieval.service import retrieve, update_document_current
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 

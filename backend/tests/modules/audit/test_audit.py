@@ -1,12 +1,12 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.auth.service import login
-from raghub.modules.tenancy.models import Organization
+from ragz.core.config import Settings
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.auth.service import login
+from ragz.modules.tenancy.models import Organization
 
 
 async def test_login_writes_audit(session: AsyncSession) -> None:

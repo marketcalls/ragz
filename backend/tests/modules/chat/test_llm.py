@@ -3,8 +3,8 @@ import json
 import httpx
 import pytest
 
-from raghub.core.errors import UpstreamError
-from raghub.modules.chat.llm import LiteLLMStreamer, LLMCompletion, LLMDelta, LLMUsage
+from ragz.core.errors import UpstreamError
+from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompletion, LLMDelta, LLMUsage
 
 
 def sse_body(chunks: list[dict[str, object]]) -> bytes:

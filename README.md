@@ -1,4 +1,4 @@
-# RagHub
+# Ragz
 
 Self-hosted, multi-tenant RAG platform. Specs live in `docs/superpowers/specs/`.
 
@@ -13,15 +13,15 @@ docker compose -f deploy/compose.yaml up -d
 # 2. Backend (from backend/)
 cd backend && uv sync
 uv run alembic upgrade head
-RAGHUB_BOOTSTRAP_EMAIL=root@raghub.internal RAGHUB_BOOTSTRAP_PASSWORD=changeme12345 \
-  uv run python -m raghub.bootstrap
-uv run uvicorn --factory raghub.api.app:create_app --port 8000
+RAGZ_BOOTSTRAP_EMAIL=root@ragz.internal RAGZ_BOOTSTRAP_PASSWORD=changeme12345 \
+  uv run python -m ragz.bootstrap
+uv run uvicorn --factory ragz.api.app:create_app --port 8000
 # worker (second terminal, from backend/):
-uv run celery -A raghub.worker.celery_app:celery_app worker -Q interactive,default -l info
+uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default -l info
 # macOS note: add --pool=solo — Docling's native libraries crash under the default
 # prefork pool (fork-safety); Linux deployments can keep prefork.
 # beat (third terminal, from backend/) — scheduled jobs (model catalog sync):
-uv run celery -A raghub.worker.celery_app:celery_app beat -l info
+uv run celery -A ragz.worker.celery_app:celery_app beat -l info
 ```
 
 **OCR (scanned PDFs).** The ingestion worker OCRs low-text PDFs automatically via EasyOCR.
@@ -29,7 +29,7 @@ First use downloads ~90 MB of models to `~/.EasyOCR` **on the machine running th
 pre-fetch with `uv run python -c "import easyocr; easyocr.Reader(['en'])"`. Air-gapped
 installs: copy a populated `~/.EasyOCR` directory into the worker's home. arm64 (Apple
 Silicon / Graviton): EasyOCR runs on standard PyTorch CPU wheels — no extra system packages
-(this is why EasyOCR over Tesseract). Disable globally with `RAGHUB_OCR_ENABLED=false`.
+(this is why EasyOCR over Tesseract). Disable globally with `RAGZ_OCR_ENABLED=false`.
 
 ```bash
 # 3. Frontend (from frontend/)
@@ -86,16 +86,16 @@ an instance beyond localhost:
 
 1. **Change every dev credential**: `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`
    (encrypts provider keys at rest in LiteLLM's own DB — changing it later requires
-   wiping the `litellm` database, which is safe: RagHub replays the full model config),
+   wiping the `litellm` database, which is safe: Ragz replays the full model config),
    the Postgres and MinIO passwords in `deploy/compose.yaml`, and your
-   `RAGHUB_BOOTSTRAP_PASSWORD` (12+ chars).
+   `RAGZ_BOOTSTRAP_PASSWORD` (12+ chars).
 2. **Back up two things**: the Postgres volume (`pgdata`) and the KEK file
-   (`backend/data/raghub_kek` by default, configurable via `RAGHUB_KEK_FILE`).
+   (`backend/data/ragz_kek` by default, configurable via `RAGZ_KEK_FILE`).
    Losing the KEK makes every stored provider key unrecoverable; re-enter keys via
    Superadmin › Models after generating a new one.
 3. **Embeddings**: TEI serves `BAAI/bge-m3` (1024-dim) by default and needs ~4 GB+
    RAM; on memory-constrained or ARM-emulated hosts, point TEI at a smaller model
-   (e.g. `BAAI/bge-small-en-v1.5`) and set `RAGHUB_EMBEDDING_DIM` to match.
+   (e.g. `BAAI/bge-small-en-v1.5`) and set `RAGZ_EMBEDDING_DIM` to match.
    The embedding model is locked per workspace after first indexing.
 4. **Workers**: run one or more `celery ... worker` processes; the default prefork
    pool is correct on Linux (`--pool=solo` is only a macOS dev workaround). Scale

@@ -5,12 +5,12 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.modules.auth.models import User
-from raghub.modules.models.service import create_model
-from raghub.modules.models.sync import sync_models_to_litellm
-from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.tenancy.context import TenantContext
+from ragz.core.config import Settings
+from ragz.modules.auth.models import User
+from ragz.modules.models.service import create_model
+from ragz.modules.models.sync import sync_models_to_litellm
+from ragz.modules.secrets.crypto import ensure_kek
+from ragz.modules.tenancy.context import TenantContext
 
 
 @pytest.fixture

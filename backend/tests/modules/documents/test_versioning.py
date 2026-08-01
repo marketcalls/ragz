@@ -8,12 +8,12 @@ approve v2 as well -> v2 current (highest approved wins)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.ingest import run_chunk, run_delete, run_embed_upsert, run_parse
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload, promote_lineage, set_approved
-from raghub.modules.retrieval.service import retrieve
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Workspace
+from ragz.modules.documents.ingest import run_chunk, run_delete, run_embed_upsert, run_parse
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import create_from_upload, promote_lineage, set_approved
+from ragz.modules.retrieval.service import retrieve
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Workspace
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
@@ -237,4 +237,4 @@ def test_import_linter_documents_service_worker_exception_removed() -> None:
     ignored = {
         entry for contract in contracts for entry in contract.get("ignore_imports", [])
     }
-    assert "raghub.modules.documents.service -> raghub.worker.tasks" not in ignored
+    assert "ragz.modules.documents.service -> ragz.worker.tasks" not in ignored

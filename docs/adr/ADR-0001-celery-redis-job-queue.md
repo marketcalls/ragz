@@ -9,7 +9,7 @@ Document ingestion (parse → chunk → embed → upsert) is long-running, must 
 
 ## Decision
 
-Celery with Redis as broker. Task entrypoints live in `backend/src/raghub/worker/` and are thin wrappers over module services.
+Celery with Redis as broker. Task entrypoints live in `backend/src/ragz/worker/` and are thin wrappers over module services.
 
 ## Rationale
 

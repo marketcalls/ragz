@@ -2,24 +2,24 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.db import naive_utc
-from raghub.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
-from raghub.core.storage import build_storage
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.auth.models import User
-from raghub.modules.documents import folders as folders_service
-from raghub.modules.documents import service
-from raghub.modules.documents.service import (
+from ragz.core.config import get_settings
+from ragz.core.db import naive_utc
+from ragz.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
+from ragz.core.storage import build_storage
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.auth.models import User
+from ragz.modules.documents import folders as folders_service
+from ragz.modules.documents import service
+from ragz.modules.documents.service import (
     create_from_upload,
     get_document_checked,
     list_documents,
     move_document,
 )
-from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization
-from raghub.modules.tenancy.reembed_models import ReembedJob
+from ragz.modules.tenancy import service as tenancy_service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization
+from ragz.modules.tenancy.reembed_models import ReembedJob
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 

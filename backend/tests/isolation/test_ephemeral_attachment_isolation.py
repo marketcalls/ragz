@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def test_ephemeral_search_never_crosses_chats(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
-    from raghub.modules.documents.pipeline import Chunk
-    from raghub.modules.models import service as models_service
-    from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-    from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-    from raghub.modules.retrieval.service import (
+    from ragz.modules.documents.pipeline import Chunk
+    from ragz.modules.models import service as models_service
+    from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+    from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+    from ragz.modules.retrieval.service import (
         ensure_ephemeral_collection,
         search_ephemeral_attachments,
         upsert_ephemeral_chunks,
@@ -59,11 +59,11 @@ async def test_ephemeral_search_never_crosses_chats(
 async def test_ephemeral_search_never_crosses_orgs(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
-    from raghub.modules.documents.pipeline import Chunk
-    from raghub.modules.models import service as models_service
-    from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-    from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-    from raghub.modules.retrieval.service import (
+    from ragz.modules.documents.pipeline import Chunk
+    from ragz.modules.models import service as models_service
+    from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+    from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+    from ragz.modules.retrieval.service import (
         ensure_ephemeral_collection,
         search_ephemeral_attachments,
         upsert_ephemeral_chunks,

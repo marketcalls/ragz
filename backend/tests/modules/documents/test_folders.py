@@ -3,15 +3,15 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.core.db import build_session_factory
-from raghub.core.errors import ConflictError, NotFoundError
-from raghub.modules.auth.models import User
-from raghub.modules.documents import folders as folders_service
-from raghub.modules.documents.models import Folder
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization
+from ragz.core.db import build_session_factory
+from ragz.core.errors import ConflictError, NotFoundError
+from ragz.modules.auth.models import User
+from ragz.modules.documents import folders as folders_service
+from ragz.modules.documents.models import Folder
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.tenancy import service as tenancy_service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization
 
 
 @pytest.fixture

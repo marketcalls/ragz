@@ -2,8 +2,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.quotas.models import UsageRecord
+from ragz.modules.auth.models import User
+from ragz.modules.quotas.models import UsageRecord
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -75,7 +75,7 @@ async def test_exhausted_quota_blocks_before_streaming(
                                "reset_day": 1})
     assert r.status_code == 200
 
-    from raghub.modules.quotas.service import record_usage
+    from ragz.modules.quotas.service import record_usage
 
     await record_usage(session, org_id=seeded_user.org_id, user_id=seeded_user.id,
                        model_id=None, feature="chat", prompt_tokens=10, completion_tokens=0)

@@ -7,10 +7,10 @@ Gated behind REDTEAM=1 - see tests/redteam/conftest.py.
 
 import pytest
 
-from raghub.core.errors import NotFoundError
-from raghub.modules.documents.metadata import build_clauses, create_field
-from raghub.modules.retrieval.client import COLLECTION
-from raghub.modules.retrieval.service import MetadataClause, retrieve, update_document_acl
+from ragz.core.errors import NotFoundError
+from ragz.modules.documents.metadata import build_clauses, create_field
+from ragz.modules.retrieval.client import COLLECTION
+from ragz.modules.retrieval.service import MetadataClause, retrieve, update_document_acl
 from tests.isolation.conftest import ingest_text, seed_acl_workspace
 
 from .conftest import REDTEAM_ENABLED

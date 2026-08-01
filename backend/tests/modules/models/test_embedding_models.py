@@ -3,11 +3,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.errors import ConflictError
-from raghub.modules.models import service
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.tenancy.context import TenantContext
+from ragz.core.config import get_settings
+from ragz.core.errors import ConflictError
+from ragz.modules.models import service
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.tenancy.context import TenantContext
 
 
 @pytest.fixture

@@ -6,16 +6,16 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.db import build_session_factory
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.chat import service
-from raghub.modules.chat.llm import LLMDelta, LLMUsage
-from raghub.modules.chat.models import Chat, Message
-from raghub.modules.quotas.models import UsageRecord
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization, Workspace
+from ragz.core.config import Settings
+from ragz.core.db import build_session_factory
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.chat import service
+from ragz.modules.chat.llm import LLMDelta, LLMUsage
+from ragz.modules.chat.models import Chat, Message
+from ragz.modules.quotas.models import UsageRecord
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization, Workspace
 
 SETTINGS = Settings(_env_file=None)
 

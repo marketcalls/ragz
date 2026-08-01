@@ -4,9 +4,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError, QuotaExceeded
-from raghub.modules.auth.models import User
-from raghub.modules.quotas.service import (
+from ragz.core.errors import NotFoundError, QuotaExceeded
+from ragz.modules.auth.models import User
+from ragz.modules.quotas.service import (
     check_quota,
     get_usage_status,
     period_bounds,
@@ -14,8 +14,8 @@ from raghub.modules.quotas.service import (
     set_org_quota,
     set_user_quota,
 )
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization
 
 
 def test_period_bounds_clamps_and_wraps() -> None:

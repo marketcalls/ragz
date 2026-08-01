@@ -1,10 +1,10 @@
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.documents.service import get_document_checked
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Group, WorkspaceMember
+from ragz.modules.auth.models import User
+from ragz.modules.documents.service import get_document_checked
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Group, WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -66,7 +66,7 @@ async def test_acl_rejects_foreign_group(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
     chat_env: dict, stack_env: None,  # type: ignore[type-arg]
 ) -> None:
-    from raghub.modules.tenancy.models import Organization
+    from ragz.modules.tenancy.models import Organization
 
     other = Organization(name="Foreign")
     session.add(other)
@@ -85,7 +85,7 @@ async def test_restricted_document_direct_access_denied(
 ) -> None:
     import pytest
 
-    from raghub.core.errors import WorkspaceAccessDenied
+    from ragz.core.errors import WorkspaceAccessDenied
 
     doc = chat_env["document"]
     group = Group(org_id=seeded_user.org_id, name="finance")

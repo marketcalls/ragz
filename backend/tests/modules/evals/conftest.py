@@ -11,10 +11,10 @@ membership check for role="user" -- see tenancy/service.py).
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Workspace
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Workspace
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 

@@ -10,9 +10,9 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.tenancy.models import Organization
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.tenancy.models import Organization
 from tests.api.test_chat_stream import auth, make_model_and_chat
 
 # chat_client/fake_streamer fixtures live in test_chat_stream; pytest only

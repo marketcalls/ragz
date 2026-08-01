@@ -10,16 +10,16 @@ seed INSERT), so no local fixture is needed here.
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.errors import ConflictError
-from raghub.modules.auth.models import User
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.models import service as models_service
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
-from raghub.modules.tenancy import service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization
+from ragz.core.config import get_settings
+from ragz.core.errors import ConflictError
+from ragz.modules.auth.models import User
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.models import service as models_service
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
+from ragz.modules.tenancy import service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization
 
 
 @pytest.fixture

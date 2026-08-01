@@ -8,8 +8,8 @@ excluded by the caller's own metadata filter.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.metadata import build_clauses, list_fields, set_document_metadata
-from raghub.modules.retrieval.service import retrieve
+from ragz.modules.documents.metadata import build_clauses, list_fields, set_document_metadata
+from ragz.modules.retrieval.service import retrieve
 from tests.isolation.conftest import ingest_text
 from tests.modules.retrieval.test_retrieve import seed_workspace
 

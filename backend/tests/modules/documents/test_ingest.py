@@ -6,25 +6,25 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.db import build_session_factory
-from raghub.core.storage import build_storage
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.documents import ingest as ingest_module
-from raghub.modules.documents.ingest import (
+from ragz.core.config import get_settings
+from ragz.core.db import build_session_factory
+from ragz.core.storage import build_storage
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+from ragz.modules.documents import ingest as ingest_module
+from ragz.modules.documents.ingest import (
     mark_failed,
     run_chunk,
     run_delete,
     run_embed_upsert,
     run_parse,
 )
-from raghub.modules.documents.models import Document, IngestJob
-from raghub.modules.documents.pipeline import IngestFailure
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.service import retrieve, update_document_current
-from raghub.modules.tenancy.models import Group
+from ragz.modules.documents.models import Document, IngestJob
+from ragz.modules.documents.pipeline import IngestFailure
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.retrieval.service import retrieve, update_document_current
+from ragz.modules.tenancy.models import Group
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 TEXT = b"The flux capacitor requires 1.21 gigawatts.\n\nInvoice 0231 covers plutonium."

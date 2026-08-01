@@ -1,6 +1,6 @@
 import structlog
 
-from raghub.core.logging import configure_logging, redact_sensitive
+from ragz.core.logging import configure_logging, redact_sensitive
 
 
 def test_redaction_processor() -> None:

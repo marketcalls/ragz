@@ -5,12 +5,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.errors import ConflictError, NotFoundError
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.auth.models import User
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.models.service import (
+from ragz.core.config import Settings
+from ragz.core.errors import ConflictError, NotFoundError
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.auth.models import User
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.models.service import (
     create_model,
     delete_model,
     list_enabled_models,
@@ -19,9 +19,9 @@ from raghub.modules.models.service import (
     to_model_out,
     update_model,
 )
-from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.secrets.models import Secret
-from raghub.modules.tenancy.context import TenantContext
+from ragz.modules.secrets.crypto import ensure_kek
+from ragz.modules.secrets.models import Secret
+from ragz.modules.tenancy.context import TenantContext
 
 
 @pytest.fixture
@@ -125,7 +125,7 @@ async def test_create_model_rolls_back_atomically_on_secret_failure(
     async def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("secrets backend unavailable")
 
-    monkeypatch.setattr("raghub.modules.models.service.secrets_service.set_secret", boom)
+    monkeypatch.setattr("ragz.modules.models.service.secrets_service.set_secret", boom)
 
     with pytest.raises(RuntimeError, match="secrets backend unavailable"):
         await create_model(

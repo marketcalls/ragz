@@ -5,9 +5,9 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.api.app import create_app
-from raghub.core.db import build_session_factory
-from raghub.modules.auth.models import User
+from ragz.api.app import create_app
+from ragz.core.db import build_session_factory
+from ragz.modules.auth.models import User
 
 
 @pytest.fixture

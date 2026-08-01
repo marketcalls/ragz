@@ -1,6 +1,6 @@
 import pytest
 
-from raghub.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
+from ragz.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
 
 
 @pytest.mark.parametrize(

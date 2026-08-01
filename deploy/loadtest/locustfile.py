@@ -1,9 +1,9 @@
-"""N concurrent SSE chats + uploads against a running RagHub backend.
+"""N concurrent SSE chats + uploads against a running Ragz backend.
 
 Each simulated user logs in as its own seeded account (per-user chat rate
 limit is 30/60s - one account per locust user stays far under it).
 
-Deviation from the D2 brief: seeded emails use ``@loadtest-raghub.com``
+Deviation from the D2 brief: seeded emails use ``@loadtest-ragz.com``
 rather than ``@loadtest.local`` (see ``deploy/loadtest/seed.py`` docstring -
 ``EmailStr`` rejects the ``.local`` special-use TLD, which would 422 every
 login). The upload path is also adapted to the real route
@@ -59,7 +59,7 @@ from locust import HttpUser, between, events, task
 
 _counter = itertools.count()
 _upload_counter = itertools.count()
-EMAIL_DOMAIN = "loadtest-raghub.com"
+EMAIL_DOMAIN = "loadtest-ragz.com"
 
 # /api/v1/auth/login is rate-limited per client IP at 10/60s (core/ratelimit.py).
 # If .tokens.json (written by seed.py) is missing or incomplete, on_start falls

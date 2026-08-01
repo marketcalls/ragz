@@ -10,10 +10,10 @@ test.skip(process.env.E2E !== '1', 'set E2E=1 with a running compose stack to ru
 // Playwright's test runner — __dirname isn't defined; derive it from import.meta.url.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const EMAIL = process.env.E2E_EMAIL ?? 'root@raghub.internal';
+const EMAIL = process.env.E2E_EMAIL ?? 'root@ragz.internal';
 const PASSWORD = process.env.E2E_PASSWORD ?? 'changeme12345';
 const FIXTURE = path.join(__dirname, 'fixtures', 'sample.pdf');
-const QUESTION = 'What is the internal launch codename for the RagHub payroll project?';
+const QUESTION = 'What is the internal launch codename for the Ragz payroll project?';
 
 async function login(page: Page): Promise<void> {
   await page.goto('/login');

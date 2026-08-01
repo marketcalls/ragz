@@ -3,10 +3,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.app_settings import get_app_setting
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.auth.models import User
-from raghub.modules.auth.oidc import OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY
+from ragz.core.app_settings import get_app_setting
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.auth.models import User
+from ragz.modules.auth.oidc import OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -22,7 +22,7 @@ async def test_sso_config_roundtrip_never_redisplays_secret(
     assert r.json() == {"issuer": None, "client_id": None, "client_secret_set": False}
 
     r = await client.put("/api/v1/admin/sso", headers=h, json={
-        "issuer": "https://idp.example.com", "client_id": "raghub",
+        "issuer": "https://idp.example.com", "client_id": "ragz",
         "client_secret": "s3cret-value",
     })
     assert r.status_code == 200
@@ -32,9 +32,9 @@ async def test_sso_config_roundtrip_never_redisplays_secret(
 
     # PUT without a secret keeps the stored one
     r = await client.put("/api/v1/admin/sso", headers=h, json={
-        "issuer": "https://idp.example.com", "client_id": "raghub2",
+        "issuer": "https://idp.example.com", "client_id": "ragz2",
     })
-    assert r.json() == {"issuer": "https://idp.example.com", "client_id": "raghub2",
+    assert r.json() == {"issuer": "https://idp.example.com", "client_id": "ragz2",
                         "client_secret_set": True}
 
 
@@ -73,14 +73,14 @@ async def test_put_sso_rolls_back_atomically_on_secret_failure(
     async def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("secrets backend unavailable")
 
-    monkeypatch.setattr("raghub.modules.auth.oidc.secrets_service.set_secret", boom)
+    monkeypatch.setattr("ragz.modules.auth.oidc.secrets_service.set_secret", boom)
 
     # The default `client` fixture's ASGITransport re-raises app exceptions (see
     # tests/api/test_error_handlers.py's crashy_client for the same caveat); a real
     # deployment's global handler still turns this into a bare 500 for the caller.
     with pytest.raises(RuntimeError, match="secrets backend unavailable"):
         await client.put("/api/v1/admin/sso", headers=h, json={
-            "issuer": "https://idp.example.com", "client_id": "raghub",
+            "issuer": "https://idp.example.com", "client_id": "ragz",
             "client_secret": "s3cret-value",
         })
 

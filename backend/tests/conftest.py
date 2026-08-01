@@ -11,23 +11,23 @@ from testcontainers.postgres import PostgresContainer
 from testcontainers.qdrant import QdrantContainer
 from testcontainers.redis import RedisContainer
 
-from raghub.api.app import create_app
-from raghub.core.config import Settings, get_settings
-from raghub.core.db import Base, build_engine, build_session_factory
-from raghub.core.storage import ObjectStorage
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.chat.llm import LLMCompletion, LLMDelta, LLMUsage
-from raghub.modules.chat.models import Chat
-from raghub.modules.chat.web import WebResult
-from raghub.modules.documents.models import Document
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
-from raghub.modules.retrieval.client import get_qdrant
-from raghub.modules.retrieval.embeddings import get_dense_embedder
-from raghub.modules.retrieval.rerank import get_reranker
-from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
-from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+from ragz.api.app import create_app
+from ragz.core.config import Settings, get_settings
+from ragz.core.db import Base, build_engine, build_session_factory
+from ragz.core.storage import ObjectStorage
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.chat.llm import LLMCompletion, LLMDelta, LLMUsage
+from ragz.modules.chat.models import Chat
+from ragz.modules.chat.web import WebResult
+from ragz.modules.documents.models import Document
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
+from ragz.modules.retrieval.client import get_qdrant
+from ragz.modules.retrieval.embeddings import get_dense_embedder
+from ragz.modules.retrieval.rerank import get_reranker
+from ragz.modules.retrieval.service import RetrievalResult, RetrievedChunk
+from ragz.modules.secrets.crypto import ensure_kek
+from ragz.modules.tenancy.models import Organization, Workspace, WorkspaceMember
 
 
 @pytest.fixture(scope="session")
@@ -80,7 +80,7 @@ async def storage(minio_config: dict[str, str]) -> ObjectStorage:
         endpoint_url=minio_config["endpoint"],
         access_key=minio_config["access_key"],
         secret_key=minio_config["secret_key"],
-        bucket="raghub-test",
+        bucket="ragz-test",
     )
     await s.ensure_bucket()
     return s
@@ -95,14 +95,14 @@ def stack_env(
 ) -> Iterator[None]:
     """Point ambient settings at the test containers; dense backend = deterministic
     hash (no TEI, no model downloads)."""
-    monkeypatch.setenv("RAGHUB_DATABASE_URL", pg_url)
-    monkeypatch.setenv("RAGHUB_QDRANT_URL", qdrant_url)
-    monkeypatch.setenv("RAGHUB_MINIO_ENDPOINT", minio_config["endpoint"])
-    monkeypatch.setenv("RAGHUB_MINIO_ACCESS_KEY", minio_config["access_key"])
-    monkeypatch.setenv("RAGHUB_MINIO_SECRET_KEY", minio_config["secret_key"])
-    monkeypatch.setenv("RAGHUB_MINIO_BUCKET", "raghub-test")
-    monkeypatch.setenv("RAGHUB_EMBEDDING_BACKEND", "hash")
-    monkeypatch.setenv("RAGHUB_RERANK_BACKEND", "lexical")
+    monkeypatch.setenv("RAGZ_DATABASE_URL", pg_url)
+    monkeypatch.setenv("RAGZ_QDRANT_URL", qdrant_url)
+    monkeypatch.setenv("RAGZ_MINIO_ENDPOINT", minio_config["endpoint"])
+    monkeypatch.setenv("RAGZ_MINIO_ACCESS_KEY", minio_config["access_key"])
+    monkeypatch.setenv("RAGZ_MINIO_SECRET_KEY", minio_config["secret_key"])
+    monkeypatch.setenv("RAGZ_MINIO_BUCKET", "ragz-test")
+    monkeypatch.setenv("RAGZ_EMBEDDING_BACKEND", "hash")
+    monkeypatch.setenv("RAGZ_RERANK_BACKEND", "lexical")
     _clear_caches()
     yield
     _clear_caches()
@@ -111,8 +111,8 @@ def stack_env(
 @pytest.fixture
 async def qdrant_collection(stack_env: None) -> None:
     """Fresh collection per test (the Qdrant container is session-scoped)."""
-    from raghub.modules.retrieval.client import COLLECTION
-    from raghub.modules.retrieval.service import ensure_collection
+    from ragz.modules.retrieval.client import COLLECTION
+    from ragz.modules.retrieval.service import ensure_collection
 
     client = get_qdrant()
     if await client.collection_exists(COLLECTION):
@@ -166,7 +166,7 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
-    path = tmp_path_factory.mktemp("kek") / "raghub_kek"
+    path = tmp_path_factory.mktemp("kek") / "ragz_kek"
     ensure_kek(str(path))
     return str(path)
 

@@ -1,9 +1,9 @@
 """Eval runner (Phase 3 §6): hit-rate/citation-precision always compute;
 faithfulness only with a utility model + a synthesizable answer."""
 
-from raghub.modules.evals.runner import run_eval
-from raghub.modules.models.models import Model
-from raghub.modules.retrieval.service import retrieve
+from ragz.modules.evals.runner import run_eval
+from ragz.modules.models.models import Model
+from ragz.modules.retrieval.service import retrieve
 from tests.conftest import FakeCompleter
 from tests.isolation.conftest import ingest_text
 
@@ -12,7 +12,7 @@ async def test_hit_rate_and_precision_without_utility_model(
     session, ctx, ws, qdrant_collection,
 ) -> None:  # type: ignore[no-untyped-def]
     doc = await ingest_text(session, ctx, ws, "policy.txt", "Muster at gate B in an emergency.")
-    from raghub.modules.evals import service
+    from ragz.modules.evals import service
     await service.create_golden_query(
         session, ctx, ws.id, question="Where is the muster point?",
         expected_document_ids=[doc.id],
@@ -35,7 +35,7 @@ async def test_off_corpus_query_counts_as_hit_when_nothing_retrieved(
     # only "not good enough" once min_score is above zero.
     ws.min_score = 0.3
     await session.commit()
-    from raghub.modules.evals import service
+    from ragz.modules.evals import service
     await service.create_golden_query(
         session, ctx, ws.id, question="What is the capital of a fictional planet?",
         expected_document_ids=[],
@@ -47,7 +47,7 @@ async def test_off_corpus_query_counts_as_hit_when_nothing_retrieved(
 async def test_faithfulness_computed_with_utility_model(
     session, ctx, ws, qdrant_collection, utility_model,
 ) -> None:  # type: ignore[no-untyped-def]
-    from raghub.modules.chat.llm import LLMCompletion, LLMUsage
+    from ragz.modules.chat.llm import LLMCompletion, LLMUsage
     doc = await ingest_text(session, ctx, ws, "policy.txt", "Muster at gate B in an emergency.")
     # A default (synthesis) model is required in addition to the utility
     # (judge) model designated by the `utility_model` fixture -- faithfulness
@@ -60,7 +60,7 @@ async def test_faithfulness_computed_with_utility_model(
     await session.flush()
     ws.default_model_id = default_model.id
     await session.commit()
-    from raghub.modules.evals import service
+    from ragz.modules.evals import service
     await service.create_golden_query(
         session, ctx, ws.id, question="Where is the muster point?",
         expected_document_ids=[doc.id],
@@ -82,7 +82,7 @@ async def test_faithfulness_unavailable_without_default_model(
     means there's nothing to synthesize an answer with, so faithfulness stays
     None (not zero), even though a completer and a utility model both exist."""
     doc = await ingest_text(session, ctx, ws, "policy.txt", "Muster at gate B in an emergency.")
-    from raghub.modules.evals import service
+    from ragz.modules.evals import service
     await service.create_golden_query(
         session, ctx, ws.id, question="Where is the muster point?",
         expected_document_ids=[doc.id],

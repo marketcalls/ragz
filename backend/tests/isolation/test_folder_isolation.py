@@ -1,6 +1,6 @@
 """Adversarial isolation tests for folders (iron rule 1).
 
-Folders (backend/src/raghub/modules/documents/folders.py) are a new
+Folders (backend/src/ragz/modules/documents/folders.py) are a new
 org-owned table, and delete_folder is the single most destructive bulk
 operation this feature adds -- a cascade over an entire folder subtree that
 flips every document found to status="deleting". If any test here fails,
@@ -13,14 +13,14 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.documents import folders as folders_service
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization, Workspace
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.documents import folders as folders_service
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.tenancy import service as tenancy_service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization, Workspace
 from tests.api.test_folders_routes import auth
 
 

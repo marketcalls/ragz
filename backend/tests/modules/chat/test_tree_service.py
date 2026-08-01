@@ -3,11 +3,11 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import ConflictError, NotFoundError
-from raghub.modules.auth.models import User
-from raghub.modules.chat import service
-from raghub.modules.chat.models import Chat
-from raghub.modules.chat.service import (
+from ragz.core.errors import ConflictError, NotFoundError
+from ragz.modules.auth.models import User
+from ragz.modules.chat import service
+from ragz.modules.chat.models import Chat
+from ragz.modules.chat.service import (
     active_leaf,
     add_message,
     create_chat,
@@ -17,8 +17,8 @@ from raghub.modules.chat.service import (
     list_messages,
     rename_chat,
 )
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Workspace, WorkspaceMember
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Workspace, WorkspaceMember
 from tests.conftest import FakeCompleter
 
 
@@ -204,8 +204,8 @@ async def test_audit_message_persists_scores(
     session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext, utility_model: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from raghub.modules.chat import service as chat_service
-    from raghub.modules.chat.llm import LLMCompletion, LLMUsage
+    from ragz.modules.chat import service as chat_service
+    from ragz.modules.chat.llm import LLMCompletion, LLMUsage
 
     fake = FakeCompleter([LLMCompletion(
         text='{"grounding_score": 0.8, "completeness_score": 0.9}', tool_calls=[],

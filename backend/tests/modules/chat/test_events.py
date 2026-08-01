@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 
-from raghub.modules.chat.events import (
+from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
     agent_step_event,

@@ -1,8 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.models import Organization
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import Organization
 
 
 async def test_create_org_and_user(session: AsyncSession) -> None:

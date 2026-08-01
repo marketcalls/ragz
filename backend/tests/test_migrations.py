@@ -11,7 +11,7 @@ from alembic import command
 from alembic.config import Config
 from testcontainers.postgres import PostgresContainer
 
-from raghub.core.config import get_settings
+from ragz.core.config import get_settings
 
 EXPECTED_TABLES = {
     "organizations",

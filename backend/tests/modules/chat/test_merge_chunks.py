@@ -1,7 +1,7 @@
 from uuid import uuid4
 
-from raghub.modules.chat.service import cap_chunks_by_tokens, merge_chunks
-from raghub.modules.retrieval.service import RetrievedChunk
+from ragz.modules.chat.service import cap_chunks_by_tokens, merge_chunks
+from ragz.modules.retrieval.service import RetrievedChunk
 
 
 def chunk(doc_id, page: int, idx: int, text: str, score: float = 0.5) -> RetrievedChunk:  # type: ignore[no-untyped-def]

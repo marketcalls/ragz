@@ -5,10 +5,10 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.errors import NotFoundError, UpstreamError
-from raghub.modules.chat.web import TAVILY_SECRET_NAME, TavilySearcher, WebResult
-from raghub.modules.secrets import service as secrets_service
+from ragz.core.config import Settings
+from ragz.core.errors import NotFoundError, UpstreamError
+from ragz.modules.chat.web import TAVILY_SECRET_NAME, TavilySearcher, WebResult
+from ragz.modules.secrets import service as secrets_service
 
 
 async def _store_key(session: AsyncSession, settings: Settings) -> None:
@@ -69,7 +69,7 @@ def test_web_module_is_in_the_decrypt_allowlist() -> None:
     # locally: web.py IS expected to reference _get_secret_decrypted.
     from pathlib import Path
 
-    import raghub
+    import ragz
 
-    src = (Path(raghub.__file__).parent / "modules" / "chat" / "web.py").read_text()
+    src = (Path(ragz.__file__).parent / "modules" / "chat" / "web.py").read_text()
     assert "_get_secret_decrypted" in src

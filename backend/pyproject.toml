@@ -1,5 +1,5 @@
 [project]
-name = "raghub"
+name = "ragz"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -49,7 +49,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/raghub"]
+packages = ["src/ragz"]
 
 [tool.ruff]
 line-length = 100
@@ -63,7 +63,7 @@ ignore = ["S101"]  # allow assert in tests
 [tool.mypy]
 strict = true
 mypy_path = "src"
-packages = ["raghub"]
+packages = ["ragz"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -73,7 +73,7 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "raghub.worker.tasks"
+module = "ragz.worker.tasks"
 disallow_untyped_decorators = false
 disallow_subclassing_any = false
 
@@ -82,12 +82,12 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.importlinter]
-root_package = "raghub"
+root_package = "ragz"
 
 [[tool.importlinter.contracts]]
 name = "Layered architecture"
 type = "layers"
-layers = ["raghub.api", "raghub.worker", "raghub.modules", "raghub.core"]
+layers = ["ragz.api", "ragz.worker", "ragz.modules", "ragz.core"]
 ignore_imports = [
     # Task 12 (Plan J, §6): update_retrieval_settings's settings-change eval
     # trigger needs worker.tasks.enqueue_eval_run, and importing it at module
@@ -101,5 +101,5 @@ ignore_imports = [
     # same module, no import needed) and the approve route (api -> worker is
     # an allowed layer direction) -- perform the actual enqueue. This entry
     # remains a live, narrow exception for the unrelated tenancy.service edge.
-    "raghub.modules.tenancy.service -> raghub.worker.tasks",
+    "ragz.modules.tenancy.service -> ragz.worker.tasks",
 ]

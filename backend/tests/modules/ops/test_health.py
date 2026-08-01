@@ -16,12 +16,12 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from raghub.api.app import create_app
-from raghub.api.routes import superadmin_ops
-from raghub.core.config import Settings, get_settings
-from raghub.core.db import build_session_factory
-from raghub.modules.auth.models import User
-from raghub.modules.ops import health as ops_health
+from ragz.api.app import create_app
+from ragz.api.routes import superadmin_ops
+from ragz.core.config import Settings, get_settings
+from ragz.core.db import build_session_factory
+from ragz.modules.auth.models import User
+from ragz.modules.ops import health as ops_health
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
