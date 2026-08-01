@@ -43,6 +43,44 @@ workspace, upload documents, chat.
 
 ## Deployment notes (single-node)
 
+### Hardware sizing
+
+The dominant cost driver is the **generation LLM**, so sizing forks on whether you run it
+locally or via a cloud API. Everything else (Postgres, Qdrant, Redis, MinIO, LiteLLM,
+Dex, the two TEI model servers) is modest.
+
+| | **Recommended (cloud LLM)** | **Fully self-hosted / air-gapped** |
+|---|---|---|
+| Generation model | OpenAI / Anthropic / Gemini via LiteLLM — no local weights | Local LLM (Ollama / vLLM) — **GPU required** |
+| RAM | **16 GB** min · 32 GB comfortable | 32–64 GB |
+| Disk (SSD) | **80–100 GB** | 150–250 GB |
+| vCPU | 4 min · 8 recommended | 8+ min |
+| GPU | not required | required (16 GB+ VRAM; CPU inference is impractically slow) |
+
+For a startup, run the whole self-hosted stack on **one 16 GB / 4–8 vCPU / 100 GB Linux
+VM** and pay per-token for generation. This is also the right size for a customer demo.
+
+**Why 16 GB, not 8.** The memory pressure isn't the database — it's three CPU-bound model
+workloads that spike together: the embeddings TEI (`bge-m3`, ~2–3 GB resident), the
+reranker TEI (`tei-rerank`, ~1.5–2.5 GB), and the Celery worker running Docling + EasyOCR
+(spikes 2–4 GB while OCR'ing a scanned PDF). Idle sits ~8–9 GB; concurrent upload + chat
+pushes to 12–14 GB. The reranker is an optional per-workspace toggle with a lexical
+fallback — drop the `tei-rerank` container for a light pilot to reclaim ~2 GB.
+
+**Why ~80–100 GB disk.** Roughly 25–30 GB is fixed overhead before any user data — Docker
+images (~4 GB; LiteLLM is the largest), embedding + rerank model weights (~4–5 GB; the
+`bge-m3` volume alone is ~2.4 GB), plus OS and app. Corpus then grows disk linearly: MinIO
+stores each document *plus* its extracted `blocks.json` + `chunks.json` (~2–2.5× the raw
+file size), and Qdrant stores dense + sparse + up to 3× hypothetical-question vectors per
+chunk (budget ~2–3 GB per ~100 K chunks).
+
+**What scales it up:** corpus size → disk; concurrent users → RAM/vCPU for uvicorn +
+Celery; heavy OCR volume → a dedicated ingestion worker; local LLM / air-gapped → the GPU
+tier above. For a paying production customer, move Postgres to a managed instance with its
+own backups (see below).
+
+### Going live
+
 The compose file in `deploy/` is the reference single-node deployment. Before exposing
 an instance beyond localhost:
 
