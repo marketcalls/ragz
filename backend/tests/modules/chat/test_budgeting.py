@@ -1,4 +1,4 @@
-from raghub.modules.chat.prompting import (
+from ragz.modules.chat.prompting import (
     CANNONBALL_MARKER,
     SYSTEM_PROMPT,
     TRUNCATION_NOTE,

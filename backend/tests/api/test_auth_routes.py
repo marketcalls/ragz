@@ -1,6 +1,6 @@
 import httpx
 
-from raghub.modules.auth.models import User
+from ragz.modules.auth.models import User
 
 
 async def test_login_ok(client: httpx.AsyncClient, seeded_user: User) -> None:

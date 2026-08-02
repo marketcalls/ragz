@@ -3,9 +3,9 @@
 
 import json
 
-from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.chat.prompting import PromptSource
-from raghub.modules.chat.validation import (
+from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+from ragz.modules.chat.prompting import PromptSource
+from ragz.modules.chat.validation import (
     AUDITOR_SYSTEM_PROMPT,
     GATEKEEPER_SYSTEM_PROMPT,
     AuditorScores,
@@ -125,8 +125,8 @@ def test_parse_escalation_verdict() -> None:
 
 
 async def test_classify_escalation_returns_verdict_and_usage() -> None:
-    from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-    from raghub.modules.models.models import Model
+    from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+    from ragz.modules.models.models import Model
 
     completer = FakeCompleter([
         LLMCompletion(text='{"escalate": true}', tool_calls=[], usage=LLMUsage(15, 4)),

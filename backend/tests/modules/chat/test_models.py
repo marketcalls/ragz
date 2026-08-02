@@ -2,9 +2,9 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.chat.models import Chat, Citation, Message
-from raghub.modules.tenancy.models import Workspace
+from ragz.modules.auth.models import User
+from ragz.modules.chat.models import Chat, Citation, Message
+from ragz.modules.tenancy.models import Workspace
 
 
 async def test_tree_rows_and_sibling_constraint(

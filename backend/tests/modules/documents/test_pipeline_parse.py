@@ -3,8 +3,8 @@ import io
 import pytest
 from docx import Document as DocxBuilder
 
-from raghub.modules.documents import pipeline
-from raghub.modules.documents.pipeline import IngestFailure, PageBlock, needs_ocr, parse_bytes
+from ragz.modules.documents import pipeline
+from ragz.modules.documents.pipeline import IngestFailure, PageBlock, needs_ocr, parse_bytes
 
 
 def build_docx() -> bytes:

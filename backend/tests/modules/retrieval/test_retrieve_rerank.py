@@ -1,9 +1,9 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.modules.retrieval.rerank import get_reranker
-from raghub.modules.retrieval.service import retrieve
+from ragz.core.config import get_settings
+from ragz.modules.retrieval.rerank import get_reranker
+from ragz.modules.retrieval.service import retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace, upsert_texts
 
 
@@ -55,8 +55,8 @@ async def test_reranker_down_degrades_to_fusion_order(
 ) -> None:
     """NFR graceful degradation: TEI backend pointed at a dead port must not
     fail the request — fusion order + dense-cosine threshold come back."""
-    monkeypatch.setenv("RAGHUB_RERANK_BACKEND", "tei")
-    monkeypatch.setenv("RAGHUB_RERANK_URL", "http://127.0.0.1:9")  # nothing listens
+    monkeypatch.setenv("RAGZ_RERANK_BACKEND", "tei")
+    monkeypatch.setenv("RAGZ_RERANK_URL", "http://127.0.0.1:9")  # nothing listens
     get_settings.cache_clear()
     get_reranker.cache_clear()
     try:

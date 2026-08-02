@@ -7,14 +7,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.ingest import (
+from ragz.modules.documents.ingest import (
     run_enrichment_backfill,
     run_enrichment_backfill_for_workspace,
 )
-from raghub.modules.documents.models import Document, IngestJob
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.models.models import Model
-from raghub.modules.quotas.models import UsageRecord
+from ragz.modules.documents.models import Document, IngestJob
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.models.models import Model
+from ragz.modules.quotas.models import UsageRecord
 from tests.modules.documents.test_ingest import (
     _ENRICH_RESPONSE,
     _patch_utility_completer,

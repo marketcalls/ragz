@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 
 export type Theme = 'light' | 'dark';
 
-const KEY = 'raghub-theme';
+const KEY = 'ragz-theme';
 
 export function storeTheme(theme: Theme): void {
   localStorage.setItem(KEY, theme);

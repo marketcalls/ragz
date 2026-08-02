@@ -1,9 +1,9 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import ConflictError
-from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.models import Organization
+from ragz.core.errors import ConflictError
+from ragz.modules.tenancy import service as tenancy_service
+from ragz.modules.tenancy.models import Organization
 
 
 async def test_set_org_sso_domains_rejects_domain_claimed_by_other_org(

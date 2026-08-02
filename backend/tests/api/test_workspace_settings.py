@@ -4,8 +4,8 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.models.models import Model
+from ragz.modules.auth.models import User
+from ragz.modules.models.models import Model
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -256,7 +256,7 @@ async def test_patch_atomicity_with_mixed_valid_invalid_fields(
 def captured_backfill(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
     calls: list[UUID] = []
     monkeypatch.setattr(
-        "raghub.api.routes.workspaces.enqueue_enrichment_backfill", calls.append
+        "ragz.api.routes.workspaces.enqueue_enrichment_backfill", calls.append
     )
     return calls
 

@@ -5,9 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.documents.models import Document, IngestJob
-from raghub.modules.tenancy.models import Organization, Workspace
+from ragz.modules.auth.models import User
+from ragz.modules.documents.models import Document, IngestJob
+from ragz.modules.tenancy.models import Organization, Workspace
 
 
 async def _seed(session: AsyncSession) -> tuple[Organization, Workspace, User]:

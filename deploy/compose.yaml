@@ -1,17 +1,17 @@
-name: raghub
+name: ragz
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: raghub
-      POSTGRES_PASSWORD: raghub
-      POSTGRES_DB: raghub
+      POSTGRES_USER: ragz
+      POSTGRES_PASSWORD: ragz
+      POSTGRES_DB: ragz
     ports: ["127.0.0.1:55432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-litellm.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raghub"]
+      test: ["CMD-SHELL", "pg_isready -U ragz"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -40,8 +40,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: raghub       # dev-only credentials — override in prod env
-      MINIO_ROOT_PASSWORD: raghub123
+      MINIO_ROOT_USER: ragz       # dev-only credentials — override in prod env
+      MINIO_ROOT_PASSWORD: ragz123
     ports: ["127.0.0.1:59000:9000", "127.0.0.1:59001:9001"]
     volumes: [miniodata:/data]
     healthcheck:
@@ -89,10 +89,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-raghub-dev-master}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-ragz-dev-master}
       # encrypts provider keys at rest in litellm's DB — CHANGE IN PROD along with LITELLM_MASTER_KEY
-      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-raghub-dev-salt}
-      DATABASE_URL: postgresql://raghub:raghub@postgres:5432/litellm
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-ragz-dev-salt}
+      DATABASE_URL: postgresql://ragz:ragz@postgres:5432/litellm
       STORE_MODEL_IN_DB: "True"
     ports: ["127.0.0.1:54000:4000"]
     healthcheck:

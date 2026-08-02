@@ -6,16 +6,16 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.db import naive_utc
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.chat.models import Chat, Message
-from raghub.modules.models.models import Model
-from raghub.modules.quotas.models import UserQuota
-from raghub.modules.quotas.service import record_usage
-from raghub.modules.secrets import service as secrets_service
-from raghub.modules.tenancy.models import Organization, Workspace
+from ragz.core.config import Settings
+from ragz.core.db import naive_utc
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.chat.models import Chat, Message
+from ragz.modules.models.models import Model
+from ragz.modules.quotas.models import UserQuota
+from ragz.modules.quotas.service import record_usage
+from ragz.modules.secrets import service as secrets_service
+from ragz.modules.tenancy.models import Organization, Workspace
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -247,7 +247,7 @@ async def test_usage_summary_includes_eval_trend(
     """Task 12 (Plan J, §6): the dashboard's single summary call also carries
     the latest EvalRun per workspace in the org, newest-first, with the
     workspace name attached (not a bare id)."""
-    from raghub.modules.evals.models import EvalRun
+    from ragz.modules.evals.models import EvalRun
 
     ws = Workspace(org_id=seeded_user.org_id, name="EvalTrendWS")
     session.add(ws)

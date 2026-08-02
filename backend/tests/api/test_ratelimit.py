@@ -5,10 +5,10 @@ import httpx
 import pytest
 from redis.asyncio import Redis
 
-from raghub.core import ratelimit as ratelimit_module
-from raghub.core.errors import RateLimitExceeded
-from raghub.core.ratelimit import check_rate_limit
-from raghub.modules.auth.models import User
+from ragz.core import ratelimit as ratelimit_module
+from ragz.core.errors import RateLimitExceeded
+from ragz.core.ratelimit import check_rate_limit
+from ragz.modules.auth.models import User
 
 
 async def test_check_rate_limit_blocks_then_window_resets(redis_client: Redis) -> None:

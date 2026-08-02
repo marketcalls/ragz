@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.db import build_engine
+from ragz.core.db import build_engine
 
 
 async def test_roundtrip(session: AsyncSession) -> None:

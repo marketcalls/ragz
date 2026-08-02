@@ -3,11 +3,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.errors import ConflictError
-from raghub.modules.models import service
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.tenancy.context import TenantContext
+from ragz.core.config import Settings, get_settings
+from ragz.core.errors import ConflictError
+from ragz.modules.models import service
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.tenancy.context import TenantContext
 
 
 @pytest.fixture
@@ -19,12 +19,12 @@ def ctx() -> TenantContext:
 
 
 async def test_create_embedding_model_computes_collection_name(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, test_settings: Settings
 ) -> None:
     model = await service.create_model(
         session, ctx, litellm_model_name="text-embedding-3-small",
         display_name="OpenAI Small", provider_kind="openai", base_url=None,
-        api_key="sk-test", settings=get_settings(), modality="embedding", dimension=1536,
+        api_key="sk-test", settings=test_settings, modality="embedding", dimension=1536,
     )
     assert model.collection_name == f"chunks_{model.id.hex}"
     assert model.dimension == 1536

@@ -2,10 +2,10 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.auth.models import User
-from raghub.modules.documents.models import Document
-from raghub.modules.tenancy.models import WorkspaceMember
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.auth.models import User
+from ragz.modules.documents.models import Document
+from ragz.modules.tenancy.models import WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -41,8 +41,8 @@ async def test_approve_cross_org_is_404(
 ) -> None:
     """An admin from a DIFFERENT org must get the same 404 as "not found" --
     existence of another org's document must never leak (RBAC-5 posture)."""
-    from raghub.modules.auth.passwords import hash_password
-    from raghub.modules.tenancy.models import Organization
+    from ragz.modules.auth.passwords import hash_password
+    from ragz.modules.tenancy.models import Organization
 
     other = Organization(name="OtherOrg")
     session.add(other)

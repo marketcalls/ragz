@@ -5,9 +5,9 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import UpstreamError
-from raghub.modules.auth.models import User
-from raghub.modules.chat.agent import (
+from ragz.core.errors import UpstreamError
+from ragz.modules.auth.models import User
+from ragz.modules.chat.agent import (
     AgentGathered,
     AgentStep,
     PlannerAction,
@@ -17,12 +17,12 @@ from raghub.modules.chat.agent import (
     planner_system_prompt,
     run_agent_gather,
 )
-from raghub.modules.chat.llm import LLMCompletion, LLMToolCall, LLMUsage
-from raghub.modules.documents.metadata import list_fields
-from raghub.modules.models.models import Model
-from raghub.modules.retrieval.client import COLLECTION
-from raghub.modules.retrieval.service import RetrievedChunk
-from raghub.modules.tenancy.context import TenantContext
+from ragz.modules.chat.llm import LLMCompletion, LLMToolCall, LLMUsage
+from ragz.modules.documents.metadata import list_fields
+from ragz.modules.models.models import Model
+from ragz.modules.retrieval.client import COLLECTION
+from ragz.modules.retrieval.service import RetrievedChunk
+from ragz.modules.tenancy.context import TenantContext
 from tests.conftest import FakeChunkReader, FakeCompleter, FakeRetriever
 
 _ALL = ("search", "search_by_metadata", "get_document", "web_search", "answer")

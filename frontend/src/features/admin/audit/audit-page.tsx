@@ -21,7 +21,7 @@ export function AuditPage() {
 
   const exportCsv = () =>
     downloadCsv(
-      `raghub-audit-${new Date().toISOString().slice(0, 10)}.csv`,
+      `ragz-audit-${new Date().toISOString().slice(0, 10)}.csv`,
       toCsv(
         events.map((e) => ({
           created_at: e.created_at, action: e.action, actor_id: e.actor_id,

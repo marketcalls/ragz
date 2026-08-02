@@ -15,8 +15,8 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.models import RoleTemplate, WorkspaceMember
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import RoleTemplate, WorkspaceMember
 from tests.api.test_chat_stream import auth, make_model_and_chat
 
 # chat_client/fake_streamer live in test_chat_stream; pytest only shares fixtures
@@ -28,9 +28,9 @@ pytest_plugins = ["tests.api.test_chat_stream"]
 @pytest.fixture
 def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # type: ignore[type-arg]
     calls: dict[str, list] = {"ingest": [], "delete": []}  # type: ignore[type-arg]
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_ingest",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_ingest",
                         lambda doc_id, size: calls["ingest"].append((doc_id, size)))
-    monkeypatch.setattr("raghub.api.routes.documents.enqueue_delete",
+    monkeypatch.setattr("ragz.api.routes.documents.enqueue_delete",
                         lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
     return calls
 

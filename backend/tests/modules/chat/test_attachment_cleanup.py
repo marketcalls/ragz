@@ -2,14 +2,14 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.chat.models import Chat, ChatAttachment
-from raghub.modules.tenancy.models import Organization, Workspace
+from ragz.modules.auth.models import User
+from ragz.modules.chat.models import Chat, ChatAttachment
+from ragz.modules.tenancy.models import Organization, Workspace
 
 
 async def test_list_stale_attachments_only_returns_past_24h(session: AsyncSession) -> None:
-    from raghub.core.db import naive_utc
-    from raghub.modules.chat.service import list_stale_attachments
+    from ragz.core.db import naive_utc
+    from ragz.modules.chat.service import list_stale_attachments
 
     # ChatAttachment.chat_id FKs to chats.id (and Chat itself FKs to
     # organizations/workspaces/users), so the brief's bare uuid4() chat_ids

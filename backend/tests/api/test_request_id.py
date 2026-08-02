@@ -31,7 +31,7 @@ async def test_inbound_request_id_with_control_bytes_is_sanitized(
     """Control/high bytes and whitespace must never reach the echoed header --
     h11 can raise on invalid header bytes (self-inflicted 500), and unsanitized
     bytes must not be bound into contextvars either."""
-    from raghub.core import middleware as mw
+    from ragz.core import middleware as mw
 
     bound: dict[str, object] = {}
     orig_bind = mw.bind_contextvars

@@ -3,12 +3,12 @@
 Requires the compose stack (postgres/redis/litellm) up and migrations applied.
 Run from backend/:  uv run python ../deploy/loadtest/seed.py
 
-Deviation from the D2 brief: seeded emails use ``@loadtest-raghub.com``
+Deviation from the D2 brief: seeded emails use ``@loadtest-ragz.com``
 rather than ``@loadtest.local``. The ``.local`` TLD is a special-use domain
 that pydantic's ``EmailStr`` (email-validator) rejects outright, and
 ``/api/v1/auth/login`` validates its body against ``LoginRequest.email:
 EmailStr`` - a ``.local`` seed account can never log in. Verified directly:
-``EmailStr`` accepts ``lt-000@loadtest-raghub.com`` and rejects
+``EmailStr`` accepts ``lt-000@loadtest-ragz.com`` and rejects
 ``lt-000@loadtest.local`` with "special-use or reserved name".
 
 Review round 1 fix: also mints one long-lived access token per seeded user
@@ -31,19 +31,19 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from raghub.core.app_settings import get_or_create_signing_key
-from raghub.core.config import get_settings
-from raghub.core.db import build_engine, build_session_factory
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.auth.tokens import issue_access_token
-from raghub.modules.models.models import Model
-from raghub.modules.models.sync import sync_models_to_litellm
-from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+from ragz.core.app_settings import get_or_create_signing_key
+from ragz.core.config import get_settings
+from ragz.core.db import build_engine, build_session_factory
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.auth.tokens import issue_access_token
+from ragz.modules.models.models import Model
+from ragz.modules.models.sync import sync_models_to_litellm
+from ragz.modules.tenancy.models import Organization, Workspace, WorkspaceMember
 
 USERS = 100
 PASSWORD = "loadtest-pw-1"  # noqa: S105 - throwaway local tenant
-EMAIL_DOMAIN = "loadtest-raghub.com"  # see module docstring: .local is rejected by EmailStr
+EMAIL_DOMAIN = "loadtest-ragz.com"  # see module docstring: .local is rejected by EmailStr
 TOKENS_PATH = Path(__file__).with_name(".tokens.json")
 # Long enough to outlast any acceptance run (default access tokens are 15 min);
 # this file is a throwaway local-loadtest artifact, never committed.

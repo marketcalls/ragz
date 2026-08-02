@@ -6,8 +6,8 @@ import type { ClientErrorOut } from '@/api/types';
 // GET /api/v1/superadmin/health (Task 8) returns a plain dict — FastAPI has
 // no response_model on that route, so there's no generated OpenAPI schema
 // component to alias in api/types.ts. Typed locally instead, mirroring the
-// exact shapes produced by backend/src/raghub/api/routes/superadmin_ops.py
-// and backend/src/raghub/modules/ops/health.py.
+// exact shapes produced by backend/src/ragz/api/routes/superadmin_ops.py
+// and backend/src/ragz/modules/ops/health.py.
 
 export interface QueueHealth {
   status: 'ok' | 'error';

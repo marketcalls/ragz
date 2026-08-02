@@ -1,11 +1,11 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization
-from raghub.modules.tenancy.service import (
+from ragz.core.errors import NotFoundError
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization
+from ragz.modules.tenancy.service import (
     add_group_member,
     create_group,
     delete_group,

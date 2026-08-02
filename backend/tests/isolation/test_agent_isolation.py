@@ -10,15 +10,15 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import raghub
-from raghub.modules.chat.agent import PlannerAction, execute_tool
-from raghub.modules.retrieval.client import COLLECTION
-from raghub.modules.retrieval.service import RetrievalChunkReader, retrieve
+import ragz
+from ragz.modules.chat.agent import PlannerAction, execute_tool
+from ragz.modules.retrieval.client import COLLECTION
+from ragz.modules.retrieval.service import RetrievalChunkReader, retrieve
 from tests.isolation.conftest import ingest_text, seed_same_org_two_workspaces
 
 
 def test_agent_and_web_modules_construct_no_qdrant_filters() -> None:
-    chat_dir = Path(raghub.__file__).parent / "modules" / "chat"
+    chat_dir = Path(ragz.__file__).parent / "modules" / "chat"
     for name in ("agent.py", "web.py"):
         src = (chat_dir / name).read_text(encoding="utf-8")
         assert "qdrant_client" not in src, f"{name} must not import qdrant"

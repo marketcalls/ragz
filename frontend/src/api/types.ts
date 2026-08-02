@@ -78,7 +78,7 @@ export type FolderDeletePreview = components['schemas']['FolderDeletePreview'];
 export type DocumentStatus = DocumentOut['status'];
 
 // --- SSE payloads (outside OpenAPI) ---
-// Mirrors backend/src/raghub/modules/chat/events.py — the authoritative wire
+// Mirrors backend/src/ragz/modules/chat/events.py — the authoritative wire
 // contract. `marker` is the [n] number cited in the answer text.
 
 export interface SourceRef {

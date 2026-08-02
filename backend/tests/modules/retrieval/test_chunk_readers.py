@@ -3,9 +3,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import WorkspaceAccessDenied
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.service import get_chunks_by_refs, list_document_chunks
+from ragz.core.errors import WorkspaceAccessDenied
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.retrieval.service import get_chunks_by_refs, list_document_chunks
 from tests.modules.retrieval.test_retrieve import seed_workspace, upsert_texts
 
 
@@ -91,7 +91,7 @@ async def test_get_chunks_by_refs_paginates_across_scroll_pages(
     needs 3 scroll round-trips, and request the very LAST chunk -- it must
     still resolve, proving the offset loop (like list_document_chunks's) is
     now in place."""
-    monkeypatch.setattr("raghub.modules.retrieval.service._SCROLL_PAGE", 2)
+    monkeypatch.setattr("ragz.modules.retrieval.service._SCROLL_PAGE", 2)
     ctx, ws = await seed_workspace(session, "refsPageOrg")
     texts = [f"chunk number {i}" for i in range(5)]
     doc_id = await upsert_texts(ctx, ws, texts)
@@ -106,7 +106,7 @@ async def test_get_chunks_by_refs_stops_scrolling_once_all_refs_found(
     """The pagination loop must stop as soon as every requested ref for a
     document has been seen, not scroll every remaining page unconditionally
     -- verified by counting the underlying scroll() calls."""
-    monkeypatch.setattr("raghub.modules.retrieval.service._SCROLL_PAGE", 2)
+    monkeypatch.setattr("ragz.modules.retrieval.service._SCROLL_PAGE", 2)
     ctx, ws = await seed_workspace(session, "refsEarlyStopOrg")
     texts = [f"chunk number {i}" for i in range(5)]
     # Sequential point ids: Qdrant scroll order is point-id order, so chunk 0 is

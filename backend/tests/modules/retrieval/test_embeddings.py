@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from raghub.modules.retrieval.embeddings import (
+from ragz.modules.retrieval.embeddings import (
     HashDenseEmbedder,
     LiteLLMEmbedder,
     TeiDenseEmbedder,
@@ -85,7 +85,7 @@ async def test_litellm_embedder_posts_and_parses_embeddings() -> None:
 
 
 async def test_litellm_embedder_non_200_raises_upstream_error() -> None:
-    from raghub.core.errors import UpstreamError
+    from ragz.core.errors import UpstreamError
 
     transport = httpx.MockTransport(lambda r: httpx.Response(500, text="boom"))
     embedder = LiteLLMEmbedder(

@@ -13,13 +13,13 @@ from datetime import timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.db import naive_utc
-from raghub.core.storage import ObjectStorage
-from raghub.modules.auth.models import User
-from raghub.modules.chat.models import Chat, ChatAttachment
-from raghub.modules.evals.models import GoldenQuery
-from raghub.modules.tenancy.models import Organization, Workspace
-from raghub.worker import tasks
+from ragz.core.db import naive_utc
+from ragz.core.storage import ObjectStorage
+from ragz.modules.auth.models import User
+from ragz.modules.chat.models import Chat, ChatAttachment
+from ragz.modules.evals.models import GoldenQuery
+from ragz.modules.tenancy.models import Organization, Workspace
+from ragz.worker import tasks
 
 
 async def test_run_all_workspaces_enqueues_only_workspaces_with_golden_queries(
@@ -40,7 +40,7 @@ async def test_run_all_workspaces_enqueues_only_workspaces_with_golden_queries(
 
     enqueued: list[tuple[object, str]] = []
     monkeypatch.setattr(
-        "raghub.worker.tasks.enqueue_eval_run",
+        "ragz.worker.tasks.enqueue_eval_run",
         lambda workspace_id, triggered_by: enqueued.append((workspace_id, triggered_by)),
     )
 
@@ -65,11 +65,11 @@ async def test_cleanup_stale_attachments_only_evicts_the_stale_attachments_vecto
     setup, test_ephemeral_collection.py's real-points upsert/search
     conventions, and this file's own asyncio.to_thread pattern for invoking
     a sync Celery task from an async test."""
-    from raghub.modules.documents.pipeline import Chunk
-    from raghub.modules.models import service as models_service
-    from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-    from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-    from raghub.modules.retrieval.service import (
+    from ragz.modules.documents.pipeline import Chunk
+    from ragz.modules.models import service as models_service
+    from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+    from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+    from ragz.modules.retrieval.service import (
         ensure_ephemeral_collection,
         search_ephemeral_attachments,
         upsert_ephemeral_chunks,

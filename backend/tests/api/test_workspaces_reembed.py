@@ -8,13 +8,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.db import naive_utc
-from raghub.modules.auth.models import User
-from raghub.modules.documents import ingest
-from raghub.modules.models.models import Model
-from raghub.modules.tenancy.models import Workspace
-from raghub.modules.tenancy.reembed_models import ReembedJob
+from ragz.core.config import get_settings
+from ragz.core.db import naive_utc
+from ragz.modules.auth.models import User
+from ragz.modules.documents import ingest
+from ragz.modules.models.models import Model
+from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.reembed_models import ReembedJob
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -53,7 +53,7 @@ async def _create_chat_model(session: AsyncSession, name: str = "chat-model") ->
 def captured_reembed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[UUID, UUID, UUID]]:
     calls: list[tuple[UUID, UUID, UUID]] = []
     monkeypatch.setattr(
-        "raghub.api.routes.workspaces.enqueue_reembed_workspace",
+        "ragz.api.routes.workspaces.enqueue_reembed_workspace",
         lambda workspace_id, job_id, new_embedding_model_id: calls.append(
             (workspace_id, job_id, new_embedding_model_id)
         ),
@@ -258,7 +258,7 @@ async def test_post_reembed_enqueue_failure_closes_job(
     def _boom(workspace_id: UUID, job_id: UUID, new_embedding_model_id: UUID) -> None:
         raise RuntimeError("celery broker unavailable")
 
-    monkeypatch.setattr("raghub.api.routes.workspaces.enqueue_reembed_workspace", _boom)
+    monkeypatch.setattr("ragz.api.routes.workspaces.enqueue_reembed_workspace", _boom)
 
     with pytest.raises(RuntimeError, match="celery broker unavailable"):
         await client.post(

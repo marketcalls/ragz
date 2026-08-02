@@ -4,10 +4,10 @@ from uuid import uuid4
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import list_pinned_documents
-from raghub.modules.tenancy.context import TenantContext
+from ragz.modules.auth.models import User
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import list_pinned_documents
+from ragz.modules.tenancy.context import TenantContext
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -33,8 +33,8 @@ async def test_pin_cross_org_is_404(
     client: httpx.AsyncClient, seeded_user: User, chat_env: dict[str, Any],
     session: AsyncSession,
 ) -> None:
-    from raghub.modules.auth.passwords import hash_password
-    from raghub.modules.tenancy.models import Organization
+    from ragz.modules.auth.passwords import hash_password
+    from ragz.modules.tenancy.models import Organization
 
     other = Organization(name="OtherOrg")
     session.add(other)

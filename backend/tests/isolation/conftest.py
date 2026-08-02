@@ -1,13 +1,13 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.retrieval.service import resolve_collection_name, update_document_current
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
+from ragz.modules.auth.models import User
+from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.retrieval.service import resolve_collection_name, update_document_current
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Group, Organization, UserGroup, Workspace, WorkspaceMember
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 

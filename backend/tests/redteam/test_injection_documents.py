@@ -8,9 +8,9 @@ Gated behind REDTEAM=1 - see tests/redteam/conftest.py.
 
 import pytest
 
-from raghub.modules.chat.prompting import PromptSource, build_messages, fit_sources
-from raghub.modules.documents.metadata import create_field, set_document_metadata
-from raghub.modules.retrieval.service import retrieve
+from ragz.modules.chat.prompting import PromptSource, build_messages, fit_sources
+from ragz.modules.documents.metadata import create_field, set_document_metadata
+from ragz.modules.retrieval.service import retrieve
 from tests.isolation.conftest import ingest_text
 
 from .conftest import REDTEAM_ENABLED

@@ -2,11 +2,11 @@ from uuid import uuid4
 
 from qdrant_client import models
 
-from raghub.modules.documents.pipeline import Chunk
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.retrieval.client import EPHEMERAL_COLLECTION, get_qdrant
-from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-from raghub.modules.retrieval.service import (
+from ragz.modules.documents.pipeline import Chunk
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.retrieval.client import EPHEMERAL_COLLECTION, get_qdrant
+from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from ragz.modules.retrieval.service import (
     _attachment_filter,
     delete_ephemeral_points,
     ensure_ephemeral_collection,
@@ -16,7 +16,7 @@ from raghub.modules.retrieval.service import (
 
 
 def _test_dense_embedder():
-    """DOC-10: get_dense_embedder is model-parameterized now; RAGHUB_EMBEDDING_BACKEND=hash
+    """DOC-10: get_dense_embedder is model-parameterized now; RAGZ_EMBEDDING_BACKEND=hash
     (stack_env) ignores these args and always returns the deterministic hash
     embedder -- the ephemeral store has no per-workspace model choice anyway
     (ensure_ephemeral_collection's own docstring), so LOCAL_EMBEDDING_MODEL_ID

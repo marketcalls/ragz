@@ -1,10 +1,10 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from raghub.bootstrap import bootstrap_superadmin
-from raghub.core.db import build_session_factory
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.models import Organization
+from ragz.bootstrap import bootstrap_superadmin
+from ragz.core.db import build_session_factory
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import Organization
 
 
 async def test_bootstrap_idempotent(engine: AsyncEngine) -> None:

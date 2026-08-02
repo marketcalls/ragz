@@ -5,9 +5,9 @@ from datetime import datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
-from raghub.modules.tenancy.models import Workspace
-from raghub.modules.tenancy.reembed_models import ReembedJob
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
+from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.reembed_models import ReembedJob
 
 
 @pytest.fixture

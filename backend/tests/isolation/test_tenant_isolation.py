@@ -11,13 +11,13 @@ import pytest
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import WorkspaceAccessDenied
-from raghub.modules.documents.ingest import run_delete
-from raghub.modules.documents.pipeline import Chunk, upsert_hq_points
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
-from raghub.modules.retrieval.service import (
+from ragz.core.errors import WorkspaceAccessDenied
+from ragz.modules.documents.ingest import run_delete
+from ragz.modules.documents.pipeline import Chunk, upsert_hq_points
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from ragz.modules.retrieval.service import (
     MetadataClause,
     _tenant_filter,
     get_chunks_by_refs,
@@ -32,7 +32,7 @@ from tests.isolation.conftest import (
 
 
 def _test_dense_embedder():
-    """DOC-10: get_dense_embedder is model-parameterized now; RAGHUB_EMBEDDING_BACKEND=hash
+    """DOC-10: get_dense_embedder is model-parameterized now; RAGZ_EMBEDDING_BACKEND=hash
     (set by the stack_env fixture) ignores these args and always returns the
     deterministic hash embedder, matching the seeded LOCAL_EMBEDDING_MODEL_ID row."""
     return get_dense_embedder(

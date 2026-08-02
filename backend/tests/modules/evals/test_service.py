@@ -3,12 +3,12 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.errors import NotFoundError, WorkspaceAccessDenied
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.evals import service
-from raghub.modules.evals.models import EvalRun
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Workspace
+from ragz.core.errors import NotFoundError, WorkspaceAccessDenied
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.evals import service
+from ragz.modules.evals.models import EvalRun
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Workspace
 
 
 async def test_create_and_list_golden_query(
@@ -72,7 +72,7 @@ async def test_delete_golden_query_rejects_sibling_workspace_non_member(
     same-org custom-role "user" who isn't a member of the query's OWNING
     workspace can't delete it just by guessing its UUID -- even though they
     ARE a member of some other workspace in the same org."""
-    from raghub.modules.tenancy.models import WorkspaceMember
+    from ragz.modules.tenancy.models import WorkspaceMember
 
     sibling_ws = Workspace(org_id=ctx.org_id, name="sibling-ws")
     session.add(sibling_ws)
@@ -82,7 +82,7 @@ async def test_delete_golden_query_rejects_sibling_workspace_non_member(
         session, ctx, sibling_ws.id, question="sibling question", expected_document_ids=[]
     )
 
-    from raghub.modules.auth.models import User
+    from ragz.modules.auth.models import User
 
     member_user = User(
         org_id=ctx.org_id, email="member-only-ws@acme.com", password_hash="x", role="user",  # noqa: S106

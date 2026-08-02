@@ -4,9 +4,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.audit.service import record_audit
-from raghub.modules.auth.models import User
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.audit.service import record_audit
+from ragz.modules.auth.models import User
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:

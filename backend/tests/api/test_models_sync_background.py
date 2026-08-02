@@ -5,11 +5,11 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from raghub.api.app import create_app
-from raghub.core.config import Settings, get_settings
-from raghub.core.db import build_session_factory
-from raghub.modules.auth.models import User
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.api.app import create_app
+from ragz.core.config import Settings, get_settings
+from ragz.core.db import build_session_factory
+from ragz.modules.auth.models import User
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 
 OPENAI_BODY = {
     "litellm_model_name": "gpt-4o-mini", "display_name": "GPT-4o mini",
@@ -98,7 +98,7 @@ async def test_model_create_survives_non_upstream_sync_failure(
     async def _boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("raghub.api.routes.models.sync_models_to_litellm", _boom)
+    monkeypatch.setattr("ragz.api.routes.models.sync_models_to_litellm", _boom)
 
     h = await auth(client, "root@platform.example")
     r = await client.post("/api/v1/admin/models", json=OPENAI_BODY, headers=h)

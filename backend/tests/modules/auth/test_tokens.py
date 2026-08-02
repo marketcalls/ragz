@@ -5,9 +5,9 @@ import jwt
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.app_settings import get_or_create_signing_key
-from raghub.core.errors import AuthenticationError
-from raghub.modules.auth.tokens import decode_access_token, issue_access_token
+from ragz.core.app_settings import get_or_create_signing_key
+from ragz.core.errors import AuthenticationError
+from ragz.modules.auth.tokens import decode_access_token, issue_access_token
 
 
 async def test_signing_key_persisted(session: AsyncSession) -> None:

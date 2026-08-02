@@ -6,14 +6,14 @@ demoted, or merely in-flight must never leak through retrieve().
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-from raghub.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch, upsert_points
-from raghub.modules.documents.service import create_from_upload, set_approved
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.retrieval.client import COLLECTION
-from raghub.modules.retrieval.embeddings import get_dense_embedder
-from raghub.modules.retrieval.service import ensure_collection, retrieve
+from ragz.core.config import get_settings
+from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch, upsert_points
+from ragz.modules.documents.service import create_from_upload, set_approved
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.retrieval.client import COLLECTION
+from ragz.modules.retrieval.embeddings import get_dense_embedder
+from ragz.modules.retrieval.service import ensure_collection, retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 

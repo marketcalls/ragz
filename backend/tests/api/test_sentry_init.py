@@ -1,4 +1,4 @@
-"""Sentry init is optional (Plan G Task 5): only fires when RAGHUB_SENTRY_DSN is
+"""Sentry init is optional (Plan G Task 5): only fires when RAGZ_SENTRY_DSN is
 set, and a missing sentry-sdk dependency must degrade to a warning, never a
 startup crash. sentry-sdk is an optional ``observability`` extra, so these
 tests fake the module in sys.modules rather than depending on it being
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from raghub.core.config import get_settings
+from ragz.core.config import get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -23,12 +23,12 @@ def _clear_settings_cache() -> None:
 
 
 def test_sentry_init_called_with_dsn_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RAGHUB_SENTRY_DSN", "https://public@fake.example/1")
-    monkeypatch.setenv("RAGHUB_ENVIRONMENT", "staging")
+    monkeypatch.setenv("RAGZ_SENTRY_DSN", "https://public@fake.example/1")
+    monkeypatch.setenv("RAGZ_ENVIRONMENT", "staging")
     fake_sentry_sdk = SimpleNamespace(init=MagicMock())
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
 
-    from raghub.api.app import create_app
+    from ragz.api.app import create_app
 
     create_app()
 
@@ -39,11 +39,11 @@ def test_sentry_init_called_with_dsn_and_environment(monkeypatch: pytest.MonkeyP
 
 
 def test_sentry_init_missing_package_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RAGHUB_SENTRY_DSN", "https://public@fake.example/1")
+    monkeypatch.setenv("RAGZ_SENTRY_DSN", "https://public@fake.example/1")
     # A module mapped to None in sys.modules forces `import sentry_sdk` to raise
     # ImportError, simulating the optional dependency not being installed.
     monkeypatch.setitem(sys.modules, "sentry_sdk", None)
 
-    from raghub.api.app import create_app
+    from ragz.api.app import create_app
 
     create_app()  # must not raise

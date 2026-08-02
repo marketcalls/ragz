@@ -17,7 +17,7 @@ and standardize on naive-UTC values; (B) migrate all columns to timestamptz now;
 
 Option A. All persisted datetimes are naive UTC:
 
-- Writes go through `raghub.core.db.naive_utc()` —
+- Writes go through `ragz.core.db.naive_utc()` —
   `datetime.now(UTC).replace(tzinfo=None)` — the single write-path idiom (the
   `UUIDPk.created_at` default uses the same expression).
 - Reads that must be compared against aware datetimes re-attach UTC:

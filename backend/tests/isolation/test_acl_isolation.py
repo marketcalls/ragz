@@ -7,9 +7,9 @@ pipeline and queries with the restricted document's exact secret as the lure.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.service import set_document_acl
-from raghub.modules.retrieval.client import COLLECTION
-from raghub.modules.retrieval.service import retrieve
+from ragz.modules.documents.service import set_document_acl
+from ragz.modules.retrieval.client import COLLECTION
+from ragz.modules.retrieval.service import retrieve
 from tests.isolation.conftest import ingest_text, seed_acl_workspace
 
 RESTRICTED = "finance secret: the acquisition price is 4400"
@@ -62,8 +62,8 @@ async def test_superadmin_bypasses_acl(
     """Superadmin also bypasses ACL, same as admin. Like test_admin_bypasses_acl
     but with role="superadmin". The superadmin ctx carries NO groups, so a pass
     here proves the bypass comes from the role check in retrieve()."""
-    from raghub.modules.auth.models import User
-    from raghub.modules.tenancy.context import TenantContext
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.context import TenantContext
 
     ctx_in, ctx_out, ctx_admin, ws, _, restricted, _ = await _seed(session)
     # Create a superadmin user (groupless)
@@ -107,7 +107,7 @@ async def test_chunk_readers_respect_acl(
     (list_document_chunks) and citation backfill (get_chunks_by_refs) must not
     hand a restricted document's chunks to a non-member — even via a chunk_ref
     the outsider legitimately holds from before the doc was restricted."""
-    from raghub.modules.retrieval.service import get_chunks_by_refs, list_document_chunks
+    from ragz.modules.retrieval.service import get_chunks_by_refs, list_document_chunks
 
     ctx_in, ctx_out, _, ws, _, restricted, _ = await _seed(session)
     assert (

@@ -1,6 +1,6 @@
 """Red-team tier scaffolding (Phase 3 Plan J, Task 13): off by default.
 
-Gated exactly like `RAGHUB_TEST_OCR` (tests/integration/test_ocr_e2e.py, J-C16):
+Gated exactly like `RAGZ_TEST_OCR` (tests/integration/test_ocr_e2e.py, J-C16):
 REDTEAM_ENABLED is read once at import time, and every red-team test module
 applies `pytestmark = pytest.mark.skipif(not REDTEAM_ENABLED, ...)` so the
 whole tier is SKIPPED (not run, not failed) in the default `pytest tests`
@@ -15,10 +15,10 @@ from dataclasses import dataclass
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization, Workspace, WorkspaceMember
 
 REDTEAM_ENABLED = bool(os.environ.get("REDTEAM"))
 
@@ -56,8 +56,8 @@ class RedteamEnv:
 
 @pytest.fixture
 async def redteam_env(session: AsyncSession, qdrant_collection: None) -> RedteamEnv:
-    """Depends on qdrant_collection (-> stack_env) so RAGHUB_DATABASE_URL/
-    RAGHUB_QDRANT_URL/RAGHUB_MINIO_* point at the test containers BEFORE any
+    """Depends on qdrant_collection (-> stack_env) so RAGZ_DATABASE_URL/
+    RAGZ_QDRANT_URL/RAGZ_MINIO_* point at the test containers BEFORE any
     probe calls ingest_text - without it, documents/ingest.py's pipeline
     stages (each opening their own session via ambient settings) silently
     connect to a different database than the one `session` just committed

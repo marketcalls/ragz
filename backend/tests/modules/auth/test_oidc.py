@@ -2,10 +2,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.app_settings import get_app_setting
-from raghub.core.config import Settings
-from raghub.modules.audit.models import AuditEvent
-from raghub.modules.auth.oidc import (
+from ragz.core.app_settings import get_app_setting
+from ragz.core.config import Settings
+from ragz.modules.audit.models import AuditEvent
+from ragz.modules.auth.oidc import (
     OIDC_CLIENT_ID_KEY,
     OIDC_ISSUER_KEY,
     get_sso_config,
@@ -17,11 +17,11 @@ async def test_set_sso_config_persists_issuer_client_id_and_secret_presence(
     session: AsyncSession, test_settings: Settings
 ) -> None:
     config = await set_sso_config(
-        session, actor_id=None, issuer="https://idp.example.com", client_id="raghub",
+        session, actor_id=None, issuer="https://idp.example.com", client_id="ragz",
         client_secret="s3cret-value", settings=test_settings,  # noqa: S106
     )
     assert config.issuer == "https://idp.example.com"
-    assert config.client_id == "raghub"
+    assert config.client_id == "ragz"
     assert config.client_secret_set is True
 
     reloaded = await get_sso_config(session)
@@ -40,11 +40,11 @@ async def test_set_sso_config_rolls_back_atomically_on_secret_failure(
     async def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("secrets backend unavailable")
 
-    monkeypatch.setattr("raghub.modules.auth.oidc.secrets_service.set_secret", boom)
+    monkeypatch.setattr("ragz.modules.auth.oidc.secrets_service.set_secret", boom)
 
     with pytest.raises(RuntimeError, match="secrets backend unavailable"):
         await set_sso_config(
-            session, actor_id=None, issuer="https://idp.example.com", client_id="raghub",
+            session, actor_id=None, issuer="https://idp.example.com", client_id="ragz",
             client_secret="s3cret-value", settings=test_settings,  # noqa: S106
         )
 

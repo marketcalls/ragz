@@ -10,20 +10,20 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import get_settings
-from raghub.core.db import naive_utc
-from raghub.core.errors import NotFoundError
-from raghub.modules.auth.models import User
-from raghub.modules.documents import ingest
-from raghub.modules.documents.models import Document
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.models import service as models_service
-from raghub.modules.models.models import Model
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization, Workspace
-from raghub.modules.tenancy.reembed_models import ReembedJob
+from ragz.core.config import get_settings
+from ragz.core.db import naive_utc
+from ragz.core.errors import NotFoundError
+from ragz.modules.auth.models import User
+from ragz.modules.documents import ingest
+from ragz.modules.documents.models import Document
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.models import service as models_service
+from ragz.modules.models.models import Model
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.tenancy import service as tenancy_service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization, Workspace
+from ragz.modules.tenancy.reembed_models import ReembedJob
 
 TEXT = b"The flux capacitor requires 1.21 gigawatts.\n\nInvoice 0231 covers plutonium."
 
@@ -53,7 +53,7 @@ async def ctx(session: AsyncSession) -> TenantContext:
 async def embedding_model_fixture(session: AsyncSession, ctx: TenantContext) -> Model:
     """A second embedding model to re-embed INTO. dimension=settings.embedding_dim
     (not an arbitrary 1536 like test_embedding_model_lock.py's fixture) --
-    RAGHUB_EMBEDDING_BACKEND=hash always produces settings.embedding_dim-sized
+    RAGZ_EMBEDDING_BACKEND=hash always produces settings.embedding_dim-sized
     vectors regardless of which model is "selected" (get_dense_embedder's
     test-only override), so the new collection's declared vector size must
     match that or upsert_points would hit a genuine Qdrant dimension

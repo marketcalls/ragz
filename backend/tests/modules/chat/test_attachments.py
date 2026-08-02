@@ -5,20 +5,20 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from raghub.modules.auth.models import User
-from raghub.modules.chat.models import Chat, ChatAttachment
-from raghub.modules.tenancy.models import Organization, Workspace
-from raghub.worker import tasks
+from ragz.modules.auth.models import User
+from ragz.modules.chat.models import Chat, ChatAttachment
+from ragz.modules.tenancy.models import Organization, Workspace
+from ragz.worker import tasks
 
 
 def test_extract_text_from_plain_document(monkeypatch) -> None:
-    from raghub.modules.chat.attachments import extract_text
+    from ragz.modules.chat.attachments import extract_text
     text = extract_text(b"Hello attachment world", "notes.txt")
     assert "Hello attachment world" in text
 
 
 @pytest.mark.skipif(
-    not os.environ.get("RAGHUB_TEST_OCR"), reason="set RAGHUB_TEST_OCR=1 to run OCR e2e"
+    not os.environ.get("RAGZ_TEST_OCR"), reason="set RAGZ_TEST_OCR=1 to run OCR e2e"
 )
 def test_extract_text_from_image_runs_ocr_by_default(tmp_path) -> None:
     # Uses a real tiny PNG with rendered text — generate with PIL in the test
@@ -30,7 +30,7 @@ def test_extract_text_from_image_runs_ocr_by_default(tmp_path) -> None:
 
     from PIL import Image, ImageDraw
 
-    from raghub.modules.chat.attachments import extract_text
+    from ragz.modules.chat.attachments import extract_text
     img = Image.new("RGB", (300, 80), color="white")
     draw = ImageDraw.Draw(img)
     draw.text((10, 10), "ATTACHMENT TEST", fill="black")

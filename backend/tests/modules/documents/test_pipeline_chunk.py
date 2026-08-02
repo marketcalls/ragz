@@ -1,4 +1,4 @@
-from raghub.modules.documents.pipeline import Chunk, PageBlock, chunk_blocks
+from ragz.modules.documents.pipeline import Chunk, PageBlock, chunk_blocks
 
 
 def blk(text: str, page: int = 1, kind: str = "text") -> PageBlock:

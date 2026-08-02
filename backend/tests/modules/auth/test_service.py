@@ -5,12 +5,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.errors import AuthenticationError
-from raghub.modules.auth.models import RefreshToken, User
-from raghub.modules.auth.passwords import hash_password
-from raghub.modules.auth.service import login, login_oidc, logout, rotate_refresh
-from raghub.modules.tenancy.models import Organization
+from ragz.core.config import Settings
+from ragz.core.errors import AuthenticationError
+from ragz.modules.auth.models import RefreshToken, User
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.auth.service import login, login_oidc, logout, rotate_refresh
+from ragz.modules.tenancy.models import Organization
 
 SETTINGS = Settings(_env_file=None)
 # Grace disabled: reuse of a rotated token is an instant theft signal.

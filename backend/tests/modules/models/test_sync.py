@@ -5,14 +5,14 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import raghub
-from raghub.core.config import Settings
-from raghub.core.errors import UpstreamError
-from raghub.modules.auth.models import User
-from raghub.modules.models.service import create_model, list_models, update_model
-from raghub.modules.models.sync import sync_models_to_litellm
-from raghub.modules.secrets.crypto import ensure_kek
-from raghub.modules.tenancy.context import TenantContext
+import ragz
+from ragz.core.config import Settings
+from ragz.core.errors import UpstreamError
+from ragz.modules.auth.models import User
+from ragz.modules.models.service import create_model, list_models, update_model
+from ragz.modules.models.sync import sync_models_to_litellm
+from ragz.modules.secrets.crypto import ensure_kek
+from ragz.modules.tenancy.context import TenantContext
 
 
 @pytest.fixture
@@ -195,7 +195,7 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
     models/keys.py: per-user LiteLLM virtual keys — outbound gateway auth.
     chat/web.py: Tavily web-search key (Phase 3 D7) — same decrypt-in-memory,
     use-immediately pattern; the ONLY allowlist change in Phase 3."""
-    src_root = Path(raghub.__file__).parent
+    src_root = Path(ragz.__file__).parent
     allowed = {
         src_root / "modules" / "secrets" / "service.py",
         src_root / "modules" / "models" / "sync.py",

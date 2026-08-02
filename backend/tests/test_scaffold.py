@@ -1,5 +1,5 @@
-import raghub
+import ragz
 
 
 def test_package_importable() -> None:
-    assert raghub is not None
+    assert ragz is not None

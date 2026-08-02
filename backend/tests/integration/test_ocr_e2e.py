@@ -1,6 +1,6 @@
 """Real EasyOCR pass over a generated image-only PDF.
 
-Gated behind RAGHUB_TEST_OCR=1: the first run downloads EasyOCR's detection +
+Gated behind RAGZ_TEST_OCR=1: the first run downloads EasyOCR's detection +
 recognition models (~90 MB) to ~/.EasyOCR — too heavy for the default suite.
 CI runs it in the nightly job; the live smoke (Task 15) covers it end-to-end.
 """
@@ -10,10 +10,10 @@ import os
 
 import pytest
 
-from raghub.modules.documents.pipeline import parse_bytes
+from ragz.modules.documents.pipeline import parse_bytes
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("RAGHUB_TEST_OCR"), reason="set RAGHUB_TEST_OCR=1 to run OCR e2e"
+    not os.environ.get("RAGZ_TEST_OCR"), reason="set RAGZ_TEST_OCR=1 to run OCR e2e"
 )
 
 

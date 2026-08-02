@@ -1,5 +1,5 @@
-# RagHub, Product Requirements Document
-## RagHub: Self-Hosted Agentic RAG Platform for Business
+# Ragz, Product Requirements Document
+## Ragz: Self-Hosted Agentic RAG Platform for Business
 
 **Version:** 1.0 draft
 **Date:** July 2026
@@ -11,7 +11,7 @@
 ## 1. Product Overview
 
 ### 1.1 One-line summary
-RagHub is a self-hostable, multi-tenant Agentic RAG platform that lets a business chat with its private documents (up to hundreds of GB) using any LLM provider or fully local models, with enterprise-grade admin controls, citations, and professional output rendering.
+Ragz is a self-hostable, multi-tenant Agentic RAG platform that lets a business chat with its private documents (up to hundreds of GB) using any LLM provider or fully local models, with enterprise-grade admin controls, citations, and professional output rendering.
 
 ### 1.2 Problem statement
 Businesses want AI over their internal knowledge but face four blockers: data cannot leave their infrastructure, no single LLM vendor can be a hard dependency, off-the-shelf tools (AnythingLLM, OpenWebUI) lack enterprise controls and break down at large corpus sizes, and building from scratch requires deep retrieval expertise. This product resolves all four: self-hosted, model-agnostic via LiteLLM, built for 100GB-500GB+ corpora with agentic retrieval, and shipped with the RBAC, audit, and compliance features businesses actually procure against.

@@ -4,10 +4,10 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.core.config import Settings
-from raghub.modules.auth.models import User
-from raghub.modules.chat.service import NO_ANSWER_TEXT
-from raghub.modules.retrieval.service import RetrievalResult, RetrievedChunk
+from ragz.core.config import Settings
+from ragz.modules.auth.models import User
+from ragz.modules.chat.service import NO_ANSWER_TEXT
+from ragz.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from tests.api.test_chat_budget_override import make_client
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
 from tests.conftest import FakeChunkReader, FakeStreamer, _stub_litellm_handler  # noqa: F401

@@ -21,3 +21,9 @@ backend/data/
 # Loadtest pre-provisioned tokens — throwaway local artifact, never commit
 deploy/loadtest/.tokens.json
 backend/celerybeat-schedule*
+
+# local scratch / unrelated (not part of Ragz)
+anything-llm/
+openui/
+.claude/
+backend/*.dev.log

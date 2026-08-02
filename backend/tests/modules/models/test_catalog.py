@@ -6,10 +6,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.core.db import naive_utc
-from raghub.modules.models.catalog import ModelCatalogEntry, refresh_catalog
-from raghub.modules.secrets.crypto import ensure_kek
+from ragz.core.config import Settings
+from ragz.core.db import naive_utc
+from ragz.modules.models.catalog import ModelCatalogEntry, refresh_catalog
+from ragz.modules.secrets.crypto import ensure_kek
 
 TWO_MODEL_JSON = {
     "gpt-4o-mini": {

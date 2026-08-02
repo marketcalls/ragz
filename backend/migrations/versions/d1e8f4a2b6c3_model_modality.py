@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-from raghub.core.config import get_settings
+from ragz.core.config import get_settings
 
 # revision identifiers, used by Alembic.
 revision: str = 'd1e8f4a2b6c3'
@@ -32,9 +32,9 @@ def upgrade() -> None:
 
     # Seed the built-in local embedding model, preserving the EXACT dimension
     # this deployment's existing "chunks_bge_m3" collection was already
-    # created with (RAGHUB_EMBEDDING_DIM at migration time) -- a hardcoded
+    # created with (RAGZ_EMBEDDING_DIM at migration time) -- a hardcoded
     # 1024 here would silently mismatch a deployment running a smaller/larger
-    # dimension (e.g. this dev environment runs RAGHUB_EMBEDDING_DIM=384) and
+    # dimension (e.g. this dev environment runs RAGZ_EMBEDDING_DIM=384) and
     # break every retrieval call once ensure_collection starts validating
     # dimension against the row (Task 3). collection_name is the LITERAL
     # existing constant, not a derived name -- this row must resolve to the

@@ -1,5 +1,5 @@
-from raghub.worker.celery_app import celery_app
-from raghub.worker.tasks import build_ingest_chain, select_queue
+from ragz.worker.celery_app import celery_app
+from ragz.worker.tasks import build_ingest_chain, select_queue
 
 
 def test_celery_config() -> None:
@@ -23,6 +23,6 @@ def test_ingest_chain_structure() -> None:
 
 def test_tasks_module_included_for_standalone_worker() -> None:
     """A real `celery -A ...celery_app worker` must import tasks.py (smoke regression)."""
-    from raghub.worker.celery_app import celery_app
+    from ragz.worker.celery_app import celery_app
 
-    assert "raghub.worker.tasks" in celery_app.conf.include
+    assert "ragz.worker.tasks" in celery_app.conf.include

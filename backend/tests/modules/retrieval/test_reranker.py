@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from raghub.modules.retrieval.rerank import (
+from ragz.modules.retrieval.rerank import (
     LexicalReranker,
     RerankUnavailable,
     TeiReranker,
@@ -75,9 +75,9 @@ async def test_lexical_reranker_is_deterministic_overlap() -> None:
 
 
 async def test_get_reranker_selects_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    from raghub.core.config import get_settings
+    from ragz.core.config import get_settings
 
-    monkeypatch.setenv("RAGHUB_RERANK_BACKEND", "lexical")
+    monkeypatch.setenv("RAGZ_RERANK_BACKEND", "lexical")
     get_settings.cache_clear()
     get_reranker.cache_clear()
     assert isinstance(get_reranker(), LexicalReranker)

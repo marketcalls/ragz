@@ -1,4 +1,4 @@
-# RagHub Frontend
+# Ragz Frontend
 
 React 18 + Vite + TypeScript strict + Tailwind (token-driven) + TanStack Query.
 
@@ -35,7 +35,7 @@ React 18 + Vite + TypeScript strict + Tailwind (token-driven) + TanStack Query.
 Full compose stack + backend + worker + `pnpm dev` running, then:
 
 ```bash
-E2E=1 E2E_EMAIL=root@raghub.internal E2E_PASSWORD=changeme12345 \
+E2E=1 E2E_EMAIL=root@ragz.internal E2E_PASSWORD=changeme12345 \
 E2E_OPENAI_API_KEY=sk-... pnpm e2e
 ```
 

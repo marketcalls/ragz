@@ -1,7 +1,7 @@
 import pytest
 
-import raghub.modules.chat.prompting as prompting
-from raghub.modules.chat.prompting import (
+import ragz.modules.chat.prompting as prompting
+from ragz.modules.chat.prompting import (
     CANNONBALL_MARKER,
     cannonball,
     count_tokens,

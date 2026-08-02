@@ -1,8 +1,8 @@
 import httpx
 from redis.asyncio import Redis
 
-from raghub.api.routes.client_errors import _KEY
-from raghub.modules.auth.models import User
+from ragz.api.routes.client_errors import _KEY
+from ragz.modules.auth.models import User
 
 
 async def test_post_and_superadmin_read(

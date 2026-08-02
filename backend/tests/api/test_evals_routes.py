@@ -8,8 +8,8 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.models import RoleTemplate, WorkspaceMember
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import RoleTemplate, WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -83,7 +83,7 @@ async def test_golden_query_routes_require_configure_permission(
 async def test_trigger_and_list_eval_runs(evals_client, ws_id, h_admin, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     enqueued: list[str] = []
     monkeypatch.setattr(
-        "raghub.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
+        "ragz.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
     )
     r = await evals_client.post(f"/api/v1/workspaces/{ws_id}/evals/run", headers=h_admin)
     assert r.status_code == 202 and enqueued == ["manual"]
@@ -108,7 +108,7 @@ async def test_trigger_eval_run_rejects_cross_org_workspace(
     belongs to a different org, by guessing/observing its UUID. Mirrors
     test_workspaces.py's test_add_member_rejects_cross_org / test_document_approve.py's
     test_approve_cross_org_is_404 second-org fixture pattern."""
-    from raghub.modules.tenancy.models import Organization, Workspace
+    from ragz.modules.tenancy.models import Organization, Workspace
 
     rival_org = Organization(name="Rival")
     session.add(rival_org)
@@ -119,7 +119,7 @@ async def test_trigger_eval_run_rejects_cross_org_workspace(
 
     enqueued: list[str] = []
     monkeypatch.setattr(
-        "raghub.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
+        "ragz.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
     )
     r = await evals_client.post(f"/api/v1/workspaces/{rival_ws.id}/evals/run", headers=h_admin)
     # get_workspace_checked raises WorkspaceAccessDenied (403) uniformly for

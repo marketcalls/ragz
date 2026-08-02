@@ -2,8 +2,8 @@
 {summary, keywords[], hypothetical_questions[]}. The excerpt is DATA inside
 a <data> block (iron rule 5); output is lenient-parsed JSON, never executed."""
 
-from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.documents.enrichment import ChunkEnrichment, enrich_chunk
+from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+from ragz.modules.documents.enrichment import ChunkEnrichment, enrich_chunk
 
 
 class _FakeCompleter:

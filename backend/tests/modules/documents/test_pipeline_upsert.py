@@ -4,21 +4,21 @@ from uuid import uuid4, uuid5
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.documents.pipeline import (
+from ragz.modules.documents.pipeline import (
     _CHUNK_NAMESPACE,
     _HQ_NAMESPACE,
     Chunk,
     upsert_hq_points,
     upsert_points,
 )
-from raghub.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
-from raghub.modules.retrieval.client import COLLECTION, get_qdrant
-from raghub.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.retrieval.client import COLLECTION, get_qdrant
+from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
 def _test_dense_embedder():
-    """DOC-10: get_dense_embedder is model-parameterized now; RAGHUB_EMBEDDING_BACKEND=hash
+    """DOC-10: get_dense_embedder is model-parameterized now; RAGZ_EMBEDDING_BACKEND=hash
     (set by the stack_env fixture) ignores these args and always returns the
     deterministic hash embedder, so the exact values only need to match the
     seeded LOCAL_EMBEDDING_MODEL_ID row for readability, not correctness."""

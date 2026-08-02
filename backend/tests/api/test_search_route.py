@@ -1,6 +1,6 @@
 import httpx
 
-from raghub.modules.auth.models import User
+from ragz.modules.auth.models import User
 from tests.api.test_documents_routes import auth, make_workspace
 from tests.modules.retrieval.test_retrieve import upsert_texts
 
@@ -21,8 +21,8 @@ async def test_search_returns_seeded_chunk(
 ) -> None:
     from sqlalchemy import select
 
-    from raghub.modules.tenancy.context import TenantContext
-    from raghub.modules.tenancy.models import Workspace
+    from ragz.modules.tenancy.context import TenantContext
+    from ragz.modules.tenancy.models import Workspace
 
     h = await auth(client, "a@acme.com")
     ws_id = await make_workspace(client, h)
@@ -53,13 +53,13 @@ async def test_search_with_metadata_filter_excludes_non_matching_doc(
 ) -> None:
     from sqlalchemy import select
 
-    from raghub.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
-    from raghub.modules.documents.metadata import list_fields, set_document_metadata
-    from raghub.modules.documents.service import create_from_upload
-    from raghub.modules.retrieval.client import COLLECTION
-    from raghub.modules.retrieval.service import update_document_current
-    from raghub.modules.tenancy.context import TenantContext
-    from raghub.modules.tenancy.models import Workspace
+    from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
+    from ragz.modules.documents.metadata import list_fields, set_document_metadata
+    from ragz.modules.documents.service import create_from_upload
+    from ragz.modules.retrieval.client import COLLECTION
+    from ragz.modules.retrieval.service import update_document_current
+    from ragz.modules.tenancy.context import TenantContext
+    from ragz.modules.tenancy.models import Workspace
 
     h = await auth(client, "a@acme.com")
     ws_id = await make_workspace(client, h)

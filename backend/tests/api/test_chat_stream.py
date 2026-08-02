@@ -9,17 +9,17 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.api.app import create_app
-from raghub.core.config import Settings, get_settings
-from raghub.core.db import build_session_factory
-from raghub.core.errors import UpstreamError
-from raghub.modules.auth.models import User
-from raghub.modules.chat.llm import LLMCompletion, LLMUsage
-from raghub.modules.chat.models import Chat, Citation, Message
-from raghub.modules.chat.service import NO_ANSWER_TEXT
-from raghub.modules.models.models import Model
-from raghub.modules.quotas.models import UsageRecord
-from raghub.modules.retrieval.service import RetrievedChunk
+from ragz.api.app import create_app
+from ragz.core.config import Settings, get_settings
+from ragz.core.db import build_session_factory
+from ragz.core.errors import UpstreamError
+from ragz.modules.auth.models import User
+from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+from ragz.modules.chat.models import Chat, Citation, Message
+from ragz.modules.chat.service import NO_ANSWER_TEXT
+from ragz.modules.models.models import Model
+from ragz.modules.quotas.models import UsageRecord
+from ragz.modules.retrieval.service import RetrievedChunk
 from tests.conftest import (
     FakeChunkReader,
     FakeCompleter,
@@ -430,7 +430,7 @@ async def test_small_talk_skips_retrieval(
     # No sources -> no data blocks in the prompt sent to the LLM, and a
     # short conversational system prompt instead of the retrieval one.
     sent = fake_streamer.calls[0]["messages"]
-    assert sent[0]["content"].startswith("You are RagHub, the assistant for this document")  # type: ignore[index]
+    assert sent[0]["content"].startswith("You are Ragz, the assistant for this document")  # type: ignore[index]
     assert "<data" not in sent[-1]["content"]  # type: ignore[index]
     assert sent[-1]["content"] == "Hi"  # type: ignore[index]
 
@@ -449,7 +449,7 @@ async def test_runtime_error_mid_stream_yields_generic_message_and_closes(
     session: AsyncSession, seeded_user: User, seeded_superadmin: User,
 ) -> None:
     """RuntimeError mid-stream yields generic error message and terminates cleanly."""
-    from raghub.modules.chat.llm import LLMDelta
+    from ragz.modules.chat.llm import LLMDelta
 
     class MidStreamFailingStreamer:
         async def stream(  # type: ignore[no-untyped-def]
@@ -573,7 +573,7 @@ async def test_document_answer_enqueues_audit(
     must NOT (covered by the sibling test below)."""
     enqueued: list[str] = []
     monkeypatch.setattr(
-        "raghub.api.routes.chats.enqueue_audit_message", lambda mid: enqueued.append(str(mid))
+        "ragz.api.routes.chats.enqueue_audit_message", lambda mid: enqueued.append(str(mid))
     )
     app = create_app(
         session_factory=build_session_factory(engine),
@@ -608,7 +608,7 @@ async def test_no_answer_does_not_enqueue_audit(
     audit)."""
     enqueued: list[str] = []
     monkeypatch.setattr(
-        "raghub.api.routes.chats.enqueue_audit_message", lambda mid: enqueued.append(str(mid))
+        "ragz.api.routes.chats.enqueue_audit_message", lambda mid: enqueued.append(str(mid))
     )
     app = create_app(
         session_factory=build_session_factory(engine),

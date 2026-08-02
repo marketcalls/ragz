@@ -10,10 +10,10 @@ import httpx
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.context import TenantContext, get_tenant_context, require_permission
-from raghub.modules.tenancy.models import RoleTemplate
-from raghub.modules.tenancy.permissions import DEFAULT_USER_PERMISSIONS, PERMISSIONS
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_permission
+from ragz.modules.tenancy.models import RoleTemplate
+from ragz.modules.tenancy.permissions import DEFAULT_USER_PERMISSIONS, PERMISSIONS
 
 
 def wire_probe(app: FastAPI) -> None:

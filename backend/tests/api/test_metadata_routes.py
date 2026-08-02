@@ -1,8 +1,8 @@
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.models import WorkspaceMember
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:

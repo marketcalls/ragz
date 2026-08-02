@@ -1,4 +1,4 @@
-# RagHub load-test harness (D2)
+# Ragz load-test harness (D2)
 
 ## One-time setup
 1. `docker compose -f deploy/compose.yaml up -d` (postgres, redis, litellm required; ml profile NOT needed — the mock model answers without a provider)
@@ -6,9 +6,9 @@
 3. `uv run python ../deploy/loadtest/seed.py` — seeds the tenant/users AND mints
    one long-lived access token per user into `deploy/loadtest/.tokens.json`
    (gitignored; re-run any time to refresh it, e.g. before each acceptance run).
-4. Start the app: `uv run uvicorn --factory raghub.api.app:create_app --port 8000`
+4. Start the app: `uv run uvicorn --factory ragz.api.app:create_app --port 8000`
 5. Start a worker (only needed for the upload scenario):
-   `uv run celery -A raghub.worker.celery_app:celery_app worker -Q interactive,default -l warning`
+   `uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default -l warning`
 
 ## Acceptance run (100 concurrent SSE chats, D2 gate)
 Procedure: seed (writes `.tokens.json`) → locust.
@@ -46,7 +46,7 @@ second) is a last-resort workaround, not the default path.
 
 ## Baseline procedure
 Run the acceptance command 3x after a 30s warm run; keep the middle result.
-Re-run after any change to pool sizes (RAGHUB_DB_POOL_SIZE etc.), worker
+Re-run after any change to pool sizes (RAGZ_DB_POOL_SIZE etc.), worker
 counts, or the chat hot path, and compare p50/p95/rps. The retrieval-path
 scenario requires indexed documents + the `ml` compose profile and is a
 manual variation (change the message content to a real question).

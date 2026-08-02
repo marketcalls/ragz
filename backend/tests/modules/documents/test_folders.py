@@ -3,15 +3,15 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.core.db import build_session_factory
-from raghub.core.errors import ConflictError, NotFoundError
-from raghub.modules.auth.models import User
-from raghub.modules.documents import folders as folders_service
-from raghub.modules.documents.models import Folder
-from raghub.modules.documents.service import create_from_upload
-from raghub.modules.tenancy import service as tenancy_service
-from raghub.modules.tenancy.context import TenantContext
-from raghub.modules.tenancy.models import Organization
+from ragz.core.db import build_session_factory
+from ragz.core.errors import ConflictError, NotFoundError
+from ragz.modules.auth.models import User
+from ragz.modules.documents import folders as folders_service
+from ragz.modules.documents.models import Folder
+from ragz.modules.documents.service import create_from_upload
+from ragz.modules.tenancy import service as tenancy_service
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Organization
 
 
 @pytest.fixture
@@ -152,7 +152,7 @@ async def test_get_folder_checked_rejects_cross_workspace_parent(
 
 
 async def test_delete_folder_cascades_to_subfolders_and_documents(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     ws = await tenancy_service.create_workspace(session, ctx, "test-ws")
     parent = await folders_service.create_folder(
@@ -183,7 +183,7 @@ async def test_delete_folder_cascades_to_subfolders_and_documents(
 
 
 async def test_count_subtree_matches_delete_folder_document_count(
-    session: AsyncSession, ctx: TenantContext
+    session: AsyncSession, ctx: TenantContext, stack_env: None
 ) -> None:
     """count_subtree is a preview: it must report the exact same counts a
     subsequent delete_folder call would act on, across a multi-level subtree

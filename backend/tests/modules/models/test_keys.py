@@ -1,11 +1,11 @@
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raghub.core.config import Settings
-from raghub.modules.auth.models import User
-from raghub.modules.models.keys import get_or_create_user_virtual_key, update_user_budget
-from raghub.modules.secrets import service as secrets_service
-from raghub.modules.tenancy.models import Organization
+from ragz.core.config import Settings
+from ragz.modules.auth.models import User
+from ragz.modules.models.keys import get_or_create_user_virtual_key, update_user_budget
+from ragz.modules.secrets import service as secrets_service
+from ragz.modules.tenancy.models import Organization
 
 
 async def _user(session: AsyncSession) -> User:
@@ -44,7 +44,7 @@ async def test_generate_once_then_reuse(
     import json
 
     body = json.loads(calls[0].content)
-    assert body["key_alias"] == f"raghub-user-{user.id}"
+    assert body["key_alias"] == f"ragz-user-{user.id}"
     assert body["budget_duration"] == "30d"
     assert body["max_budget"] == 5.0  # 1M tokens at the default $5/1M mirror rate
 

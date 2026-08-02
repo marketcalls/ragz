@@ -1,8 +1,8 @@
-# RagHub — AI Session Rules
+# Ragz — AI Session Rules
 
-RagHub is a self-hosted, multi-tenant Agentic RAG platform (FastAPI + React + Qdrant + LiteLLM + Postgres). AGPL-3.0, fully open source.
+Ragz is a self-hosted, multi-tenant Agentic RAG platform (FastAPI + React + Qdrant + LiteLLM + Postgres). AGPL-3.0, fully open source.
 
-**Source of truth:** `docs/superpowers/specs/2026-07-18-raghub-engineering-foundation-design.md` (the Foundation). Product requirements: `docs/prd.md`. This file is distilled from the Foundation — if they disagree, the Foundation wins; fix this file in the same commit.
+**Source of truth:** `docs/superpowers/specs/2026-07-18-ragz-engineering-foundation-design.md` (the Foundation). Product requirements: `docs/prd.md`. This file is distilled from the Foundation — if they disagree, the Foundation wins; fix this file in the same commit.
 
 ## The Five Iron Security Rules
 
@@ -16,7 +16,7 @@ Review bar: OWASP ASVS L2 + OWASP LLM Top 10.
 
 ## Module Map
 
-| Module (`backend/src/raghub/modules/`) | Owns |
+| Module (`backend/src/ragz/modules/`) | Owns |
 |---|---|
 | `auth` | identity, sessions, API keys, (later) SSO |
 | `tenancy` | orgs, workspaces, groups, membership, `TenantContext` |
@@ -51,7 +51,7 @@ Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.
 
 ## Error Handling & Observability
 
-Typed exceptions per module → one global `application/problem+json` handler; no internal details in responses. `request_id`/`org_id`/`user_id` bound in structlog and propagated to workers. Prometheus metrics `raghub_<module>_<metric>`; per-stage RAG latency histograms; OpenTelemetry tracing; `/healthz` + `/readyz` on both processes. Degradation contract: reranker down → fusion order; LLM error → fallback chain; Redis down → quotas fail closed, caches fail open.
+Typed exceptions per module → one global `application/problem+json` handler; no internal details in responses. `request_id`/`org_id`/`user_id` bound in structlog and propagated to workers. Prometheus metrics `ragz_<module>_<metric>`; per-stage RAG latency histograms; OpenTelemetry tracing; `/healthz` + `/readyz` on both processes. Degradation contract: reranker down → fusion order; LLM error → fallback chain; Redis down → quotas fail closed, caches fail open.
 
 ## Depth Pointers (Foundation sections)
 

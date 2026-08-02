@@ -13,11 +13,11 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from raghub.api.app import create_app
-from raghub.core.config import Settings, get_settings
-from raghub.core.db import build_session_factory
-from raghub.modules.auth.models import User
-from raghub.modules.tenancy.models import Organization
+from ragz.api.app import create_app
+from ragz.core.config import Settings, get_settings
+from ragz.core.db import build_session_factory
+from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import Organization
 
 ISSUER = "https://idp.example.com"
 KEY = JsonWebKey.generate_key("RSA", 2048, is_private=True)
@@ -48,7 +48,7 @@ def _idp_handler(request: httpx.Request) -> httpx.Response:
         id_token = jwt.encode(
             {"alg": "RS256"},
             {"iss": _nonce_box.get("iss_override", ISSUER),
-             "aud": _nonce_box.get("aud_override", "raghub"), "sub": "idp-user-1",
+             "aud": _nonce_box.get("aud_override", "ragz"), "sub": "idp-user-1",
              "email": _nonce_box.get("email_override", "New.Hire@acme.com"),
              "email_verified": True,
              "nonce": _nonce_box["nonce"], "iat": now, "exp": now + 300},
@@ -66,12 +66,12 @@ async def sso_client(
     org = Organization(name="Acme", sso_domains=["acme.com"])
     session.add(org)
     await session.commit()
-    from raghub.core.app_settings import set_app_setting
-    from raghub.modules.auth.oidc import OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY, OIDC_SECRET_NAME
-    from raghub.modules.secrets import service as secrets_service
+    from ragz.core.app_settings import set_app_setting
+    from ragz.modules.auth.oidc import OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY, OIDC_SECRET_NAME
+    from ragz.modules.secrets import service as secrets_service
 
     await set_app_setting(session, OIDC_ISSUER_KEY, ISSUER)
-    await set_app_setting(session, OIDC_CLIENT_ID_KEY, "raghub")
+    await set_app_setting(session, OIDC_CLIENT_ID_KEY, "ragz")
     await secrets_service.set_secret(session, actor_id=None, name=OIDC_SECRET_NAME,
                                      value="cs-1", settings=test_settings)
 
