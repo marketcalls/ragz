@@ -41,7 +41,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ragz       # dev-only credentials — override in prod env
-      MINIO_ROOT_PASSWORD: ragz123
+      MINIO_ROOT_PASSWORD: ragz-dev-123
     ports: ["127.0.0.1:59000:9000", "127.0.0.1:59001:9001"]
     volumes: [miniodata:/data]
     healthcheck:

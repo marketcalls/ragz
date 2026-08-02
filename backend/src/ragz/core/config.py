@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:56333"
     minio_endpoint: str = "http://localhost:59000"
     minio_access_key: str = "ragz"
-    minio_secret_key: str = "ragz123"  # noqa: S105 (dev-only default; prod overrides via env)
+    minio_secret_key: str = "ragz-dev-123"  # noqa: S105 (dev-only default; prod overrides via env)
     minio_bucket: str = "ragz-documents"
     tei_url: str = "http://localhost:58080"
     embedding_backend: str = "tei"  # "tei" | "hash" (hash = deterministic, test/dev only)
