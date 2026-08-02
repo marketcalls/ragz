@@ -35,8 +35,12 @@ class TeiDenseEmbedder:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
+        # Generous read timeout: on CPU-only TEI a full 32-input bge-m3 batch can
+        # take 30-60s (high queue_time), and a timeout mid-ingest forces the whole
+        # reindex task to retry from batch 1. Query-time embeds send a single input
+        # and return in well under a second, so the large ceiling never bites them.
         async with httpx.AsyncClient(
-            base_url=self._base_url, timeout=60.0, transport=self._transport
+            base_url=self._base_url, timeout=180.0, transport=self._transport
         ) as client:
             for i in range(0, len(texts), self._batch_size):
                 batch = texts[i : i + self._batch_size]

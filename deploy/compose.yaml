@@ -56,7 +56,7 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
     platform: linux/amd64  # no arm64 build published; runs under emulation on Apple Silicon
     profiles: ["ml"]  # not required for CI/dev without ML; tests use the hash backend
-    command: --model-id BAAI/bge-m3 --max-batch-tokens 4096 --auto-truncate --max-client-batch-size 8
+    command: --model-id BAAI/bge-m3 --max-batch-tokens 4096 --auto-truncate --max-client-batch-size 32
     ports: ["127.0.0.1:58080:80"]
     volumes: [teidata:/data]
     healthcheck:
