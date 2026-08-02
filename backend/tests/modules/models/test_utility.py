@@ -16,11 +16,12 @@ import re
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import ragz.modules as modules_pkg
 from ragz.core.config import Settings
+from ragz.core.errors import ConflictError
 from ragz.modules.auth.models import User
 from ragz.modules.models import service
 from ragz.modules.models.models import Model
@@ -115,6 +116,48 @@ async def test_unsetting_only_clears_itself(
         session, ctx, b.id, display_name=None, base_url=None, enabled=None,
         api_key=None, settings=settings, is_utility=False,
     )
+    assert await get_utility_model(session) is None
+
+
+async def test_embedding_model_cannot_be_designated_utility(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """A utility model serves chat COMPLETIONS; an embedding model can't. The
+    service must reject the designation at the source (else every chat fails
+    with a provider 'not allowed to sample from this model' gateway error)."""
+    ctx = super_ctx(seeded_user)
+    emb = await service.create_model(
+        session, ctx, litellm_model_name="text-embedding-3-large",
+        display_name="Text Embedding 3 Large", provider_kind="openai",
+        base_url=None, api_key=None, settings=settings,
+        modality="embedding", dimension=3072,
+    )
+    with pytest.raises(ConflictError):
+        await service.update_model(
+            session, ctx, emb.id, display_name=None, base_url=None, enabled=None,
+            api_key=None, settings=settings, is_utility=True,
+        )
+
+
+async def test_resolver_ignores_embedding_model_flagged_utility(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    """Defense-in-depth: even if a row is somehow left with is_utility=true on
+    an embedding model (the exact production mis-designation this guards), the
+    resolver must treat it as 'no utility model' rather than routing chat
+    completions to an embedding deployment."""
+    ctx = super_ctx(seeded_user)
+    emb = await service.create_model(
+        session, ctx, litellm_model_name="text-embedding-3-large",
+        display_name="Text Embedding 3 Large", provider_kind="openai",
+        base_url=None, api_key=None, settings=settings,
+        modality="embedding", dimension=3072,
+    )
+    # bypass the service guard to reproduce the bad DB state directly
+    await session.execute(
+        update(Model).where(Model.id == emb.id).values(is_utility=True)
+    )
+    await session.flush()
     assert await get_utility_model(session) is None
 
 

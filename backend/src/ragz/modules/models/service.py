@@ -168,6 +168,13 @@ async def update_model(
         model.supports_vision = supports_vision
     if is_utility is not None:
         if is_utility:
+            # The utility model powers chat-COMPLETION calls (Auditor/Gatekeeper/
+            # escalation/enrichment). An embedding model can never serve those —
+            # the provider rejects it ("not allowed to sample from this model")
+            # and every chat fails with a generic gateway error. Reject at the
+            # source so the bad designation can't be created.
+            if model.modality != "chat":
+                raise ConflictError("only a chat model can be the utility model")
             # "exactly one" (design D5): clear every OTHER row in the same
             # transaction before setting this one, so two concurrent PATCHes
             # can never both land True — last committer wins, cleanly.
