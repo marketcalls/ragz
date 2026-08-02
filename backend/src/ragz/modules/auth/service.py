@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -26,7 +27,13 @@ class TokenPair:
     refresh_token: str
 
 
-def _hash(raw: str) -> str:
+def _hash(raw: str, pepper: str = "") -> str:
+    # Peppered when a server-side pepper is configured (see
+    # Settings.api_key_pepper), else bare SHA-256 for backward compatibility
+    # with hashes minted before the pepper existed. Both compare in constant
+    # time inside hexdigest equality via the DB unique-index lookup.
+    if pepper:
+        return hmac.new(pepper.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -41,7 +48,7 @@ async def _issue_pair(
         RefreshToken(
             user_id=user.id,
             family_id=family_id,
-            token_hash=_hash(raw_refresh),
+            token_hash=_hash(raw_refresh, settings.api_key_pepper),
             expires_at=expires_at,
         )
     )
@@ -73,7 +80,7 @@ async def rotate_refresh(
     row = (
         await session.execute(
             select(RefreshToken)
-            .where(RefreshToken.token_hash == _hash(raw_refresh))
+            .where(RefreshToken.token_hash == _hash(raw_refresh, settings.api_key_pepper))
             .with_for_update()
         )
     ).scalar_one_or_none()
@@ -137,17 +144,20 @@ async def rotate_refresh(
     return await _issue_pair(session, user, row.family_id, settings)
 
 
-async def logout(session: AsyncSession, *, raw_refresh: str) -> None:
+async def logout(
+    session: AsyncSession, *, raw_refresh: str, settings: Settings
+) -> None:
     await session.execute(
         update(RefreshToken)
-        .where(RefreshToken.token_hash == _hash(raw_refresh))
+        .where(RefreshToken.token_hash == _hash(raw_refresh, settings.api_key_pepper))
         .values(revoked_at=naive_utc())
     )
     await session.commit()
 
 
 async def create_invitation(
-    session: AsyncSession, ctx: TenantContext, *, email: str, role: str, ttl_hours: int = 72
+    session: AsyncSession, ctx: TenantContext, *, email: str, role: str,
+    settings: Settings, ttl_hours: int = 72,
 ) -> str:
     existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if existing is not None:
@@ -155,7 +165,8 @@ async def create_invitation(
     raw = secrets.token_urlsafe(32)
     expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(tzinfo=None)
     invitation = Invitation(
-        org_id=ctx.org_id, email=email, role=role, token_hash=_hash(raw),
+        org_id=ctx.org_id, email=email, role=role,
+        token_hash=_hash(raw, settings.api_key_pepper),
         expires_at=expires_at,
     )
     session.add(invitation)
@@ -167,9 +178,15 @@ async def create_invitation(
     return raw
 
 
-async def accept_invitation(session: AsyncSession, *, raw_token: str, password: str) -> User:
+async def accept_invitation(
+    session: AsyncSession, *, raw_token: str, password: str, settings: Settings
+) -> User:
     inv = (
-        await session.execute(select(Invitation).where(Invitation.token_hash == _hash(raw_token)))
+        await session.execute(
+            select(Invitation).where(
+                Invitation.token_hash == _hash(raw_token, settings.api_key_pepper)
+            )
+        )
     ).scalar_one_or_none()
     now = datetime.now(UTC)
     if inv is None or inv.accepted_at is not None or inv.expires_at.replace(tzinfo=UTC) < now:

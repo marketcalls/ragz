@@ -64,18 +64,21 @@ async def refresh(
 
 @router.post("/logout", status_code=204)
 async def logout(
-    response: Response, session: SessionDep, refresh_token: RefreshCookie = None
+    response: Response, session: SessionDep, settings: SettingsDep,
+    refresh_token: RefreshCookie = None,
 ) -> None:
     if refresh_token:
-        await service.logout(session, raw_refresh=refresh_token)
+        await service.logout(session, raw_refresh=refresh_token, settings=settings)
     response.delete_cookie("refresh_token", path="/api/v1/auth")
 
 
 @router.post("/invitations", status_code=201, response_model=InvitationOut)
 async def create_invitation(
-    body: InvitationCreate, session: SessionDep, ctx: AdminDep
+    body: InvitationCreate, session: SessionDep, ctx: AdminDep, settings: SettingsDep
 ) -> InvitationOut:
-    raw = await service.create_invitation(session, ctx, email=body.email, role=body.role)
+    raw = await service.create_invitation(
+        session, ctx, email=body.email, role=body.role, settings=settings
+    )
     return InvitationOut(invite_token=raw)
 
 
@@ -84,6 +87,10 @@ async def create_invitation(
     status_code=201,
     dependencies=[Depends(rate_limit("invitation_accept", limit=10, window_seconds=60))],
 )
-async def accept_invitation(body: InvitationAccept, session: SessionDep) -> dict[str, str]:
-    user = await service.accept_invitation(session, raw_token=body.token, password=body.password)
+async def accept_invitation(
+    body: InvitationAccept, session: SessionDep, settings: SettingsDep
+) -> dict[str, str]:
+    user = await service.accept_invitation(
+        session, raw_token=body.token, password=body.password, settings=settings
+    )
     return {"email": user.email}

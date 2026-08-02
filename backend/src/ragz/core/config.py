@@ -12,6 +12,14 @@ class Settings(BaseSettings):
     kek_file: str = "./data/ragz_kek"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
+    # Server-side pepper (HMAC key) for opaque bearer-token hashes: refresh
+    # tokens and invitation tokens. Empty = plain SHA-256 (backward compatible);
+    # set it and those tokens are stored as HMAC-SHA256(pepper, token) so a
+    # read-only DB leak can't verify or forge a token hash without this
+    # out-of-DB secret. Iron rule 3 sanctions it as bootstrap-class config
+    # (like the KEK source), NOT a stored secret. Rotating it invalidates all
+    # live sessions and pending invitations (users re-login) — expected.
+    api_key_pepper: str = ""
     # Concurrent tabs race on the same refresh cookie: the loser presents an
     # already-rotated token. Reuse within this window (with a live successor in
     # the family) reissues instead of tripping theft detection; reuse outside
