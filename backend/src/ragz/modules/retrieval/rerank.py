@@ -5,6 +5,11 @@ The Reranker Protocol is the test seam; TeiReranker is the only HTTP client
 deterministic dev/test backend, playing the same role HashDenseEmbedder plays
 for dense embeddings: "relevance" reduces to lexical overlap, so tests are
 scoped accordingly and true ranking quality is validated in the live smoke.
+
+Iron rule 3 note: sanctioned caller of secrets._get_secret_decrypted — the
+Cohere API key is decrypted in memory for exactly one outbound rerank call
+and never returned, logged, or persisted. Named in the allowlist test
+(tests/modules/models/test_sync.py).
 """
 
 import re

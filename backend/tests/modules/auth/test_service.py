@@ -132,7 +132,7 @@ async def test_logout_revoked_token_gets_no_grace(session: AsyncSession) -> None
     pair = await login(
         session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
     )
-    await logout(session, raw_refresh=pair.refresh_token)
+    await logout(session, raw_refresh=pair.refresh_token, settings=SETTINGS)
     with pytest.raises(AuthenticationError, match="invalid refresh token"):
         await rotate_refresh(session, raw_refresh=pair.refresh_token, settings=SETTINGS)
 
@@ -181,6 +181,6 @@ async def test_logout_revokes(session: AsyncSession) -> None:
     pair = await login(
         session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
     )
-    await logout(session, raw_refresh=pair.refresh_token)
+    await logout(session, raw_refresh=pair.refresh_token, settings=SETTINGS)
     with pytest.raises(AuthenticationError):
         await rotate_refresh(session, raw_refresh=pair.refresh_token, settings=SETTINGS)

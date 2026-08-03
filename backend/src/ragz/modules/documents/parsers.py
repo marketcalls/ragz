@@ -56,7 +56,7 @@ class LlamaParseParser:
                 res = await client.get(f"/job/{job_id}/result/json")
                 res.raise_for_status()
                 pages = res.json().get("pages", [])
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
             raise IngestFailure("LlamaParse request failed") from exc
         blocks = [
             PageBlock(page=int(pg.get("page", i + 1)),
