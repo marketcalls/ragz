@@ -34,16 +34,27 @@ export function SettingsPage() {
     }
   }, [settings.data]);
 
+  // Keys are only cleared once the PUT actually succeeds — a failed save
+  // (e.g. wrong key) keeps the just-typed value in the field instead of
+  // silently discarding it, per review feedback.
+  useEffect(() => {
+    if (update.isSuccess) {
+      setLlamaKey('');
+      setCohereKey('');
+    }
+  }, [update.isSuccess]);
+
   function onSave() {
     update.mutate({
       document_parser: parser,
       rerank_provider: rerank,
-      cohere_rerank_model: cohereModel,
+      // Only sent when Cohere is the selected reranker — matches the spec
+      // intent (cohere_rerank_model is a Cohere-only knob) and avoids
+      // clobbering a stored choice while previewing the local-reranker path.
+      ...(rerank === 'cohere' ? { cohere_rerank_model: cohereModel } : {}),
       ...(llamaKey ? { llamaparse_api_key: llamaKey } : {}),
       ...(cohereKey ? { cohere_api_key: cohereKey } : {}),
     });
-    setLlamaKey('');
-    setCohereKey('');
   }
 
   return (

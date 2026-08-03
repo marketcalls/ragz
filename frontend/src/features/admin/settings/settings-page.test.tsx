@@ -72,6 +72,30 @@ test('submitting sends a PUT with the new reranker and key', async () => {
   );
 });
 
+test('saving with the default Local reranker omits cohere_rerank_model from the PUT body', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(putSpy).toHaveBeenCalledTimes(1);
+  const body = putSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+  expect(body.rerank_provider).toBe('local');
+  expect(body.cohere_rerank_model).toBeUndefined();
+});
+
+test('leaving a key field blank on save omits it from the PUT body', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.selectOptions(screen.getByLabelText(/reranker/i), 'cohere');
+  // Cohere is selected but no key is typed — the field stays blank.
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(putSpy).toHaveBeenCalledTimes(1);
+  const body = putSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+  expect(body.cohere_api_key).toBeUndefined();
+  expect(body.llamaparse_api_key).toBeUndefined();
+});
+
 test('shows an error message and retry button when the settings query fails', async () => {
   const refetch = vi.fn();
   useProviderSettings.mockReturnValue({
