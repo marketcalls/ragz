@@ -194,7 +194,9 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
     a security review event, not a refactor.
     models/keys.py: per-user LiteLLM virtual keys — outbound gateway auth.
     chat/web.py: Tavily web-search key (Phase 3 D7) — same decrypt-in-memory,
-    use-immediately pattern; the ONLY allowlist change in Phase 3."""
+    use-immediately pattern; the ONLY allowlist change in Phase 3.
+    retrieval/rerank.py: Cohere reranker key — decrypt-in-memory, use-immediately
+    outbound rerank call."""
     src_root = Path(ragz.__file__).parent
     allowed = {
         src_root / "modules" / "secrets" / "service.py",
@@ -202,6 +204,7 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
         src_root / "modules" / "auth" / "oidc.py",
         src_root / "modules" / "models" / "keys.py",
         src_root / "modules" / "chat" / "web.py",
+        src_root / "modules" / "retrieval" / "rerank.py",
     }
     offenders = [
         str(p)

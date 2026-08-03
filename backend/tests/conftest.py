@@ -24,7 +24,6 @@ from ragz.modules.documents.models import Document
 from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID, Model
 from ragz.modules.retrieval.client import get_qdrant
 from ragz.modules.retrieval.embeddings import get_dense_embedder
-from ragz.modules.retrieval.rerank import get_reranker
 from ragz.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from ragz.modules.secrets.crypto import ensure_kek
 from ragz.modules.tenancy.models import Organization, Workspace, WorkspaceMember
@@ -60,7 +59,6 @@ def _clear_caches() -> None:
     get_settings.cache_clear()
     get_qdrant.cache_clear()  # also drops the client's httpx pool between event loops
     get_dense_embedder.cache_clear()
-    get_reranker.cache_clear()
 
 
 @pytest.fixture(scope="session")

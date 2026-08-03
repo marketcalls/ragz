@@ -2,7 +2,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
-from ragz.modules.retrieval.rerank import get_reranker
 from ragz.modules.retrieval.service import retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace, upsert_texts
 
@@ -58,7 +57,6 @@ async def test_reranker_down_degrades_to_fusion_order(
     monkeypatch.setenv("RAGZ_RERANK_BACKEND", "tei")
     monkeypatch.setenv("RAGZ_RERANK_URL", "http://127.0.0.1:9")  # nothing listens
     get_settings.cache_clear()
-    get_reranker.cache_clear()
     try:
         ctx, ws = await seed_workspace(session, "rerankDownOrg", rerank_enabled=True, top_k=1)
         # A second doc that out-ranks the target on the sparse channel while
@@ -77,4 +75,3 @@ async def test_reranker_down_degrades_to_fusion_order(
         assert result.chunks[0].score != 1.0  # fusion/RRF score, not a lexical 1.0
     finally:
         get_settings.cache_clear()
-        get_reranker.cache_clear()

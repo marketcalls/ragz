@@ -5,7 +5,6 @@ from ragz.modules.retrieval.rerank import (
     LexicalReranker,
     RerankUnavailable,
     TeiReranker,
-    get_reranker,
 )
 
 
@@ -73,13 +72,6 @@ async def test_lexical_reranker_is_deterministic_overlap() -> None:
     assert scores == [1.0, 0.0, 0.0]
     assert await r.rerank("", ["anything"]) == [0.0]
 
-
-async def test_get_reranker_selects_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ragz.core.config import get_settings
-
-    monkeypatch.setenv("RAGZ_RERANK_BACKEND", "lexical")
-    get_settings.cache_clear()
-    get_reranker.cache_clear()
-    assert isinstance(get_reranker(), LexicalReranker)
-    get_settings.cache_clear()
-    get_reranker.cache_clear()
+# get_reranker's backend-selection resolver logic is now DB-aware (async,
+# session/settings-dependent) and is covered in test_rerank.py's
+# test_resolver_* tests instead of here.

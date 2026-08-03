@@ -502,7 +502,8 @@ async def retrieve(
 
     if ws.rerank_enabled:
         try:
-            scores = await get_reranker().rerank(query, [c.text for c in candidates])
+            reranker = await get_reranker(session, get_settings())
+            scores = await reranker.rerank(query, [c.text for c in candidates])
         except RerankUnavailable as exc:
             structlog.get_logger().warning(
                 "reranker_unavailable_falling_back",
