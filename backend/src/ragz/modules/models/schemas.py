@@ -114,3 +114,21 @@ class ModelPublic(BaseModel):
     supports_vision: bool
 
     model_config = {"from_attributes": True}
+
+
+class ProviderSettingsOut(BaseModel):
+    document_parser: str
+    rerank_provider: str
+    cohere_rerank_model: str
+    llamaparse_key_set: bool
+    cohere_key_set: bool
+
+
+class ProviderSettingsUpdate(BaseModel):
+    document_parser: Literal["docling", "llamaparse"] | None = None
+    rerank_provider: Literal["local", "cohere"] | None = None
+    cohere_rerank_model: Literal["rerank-v4.0-fast", "rerank-v4.0-pro"] | None = None
+    # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has
+    # no key fields, only *_key_set booleans).
+    llamaparse_api_key: str | None = None
+    cohere_api_key: str | None = None
