@@ -74,6 +74,12 @@ export type FolderOut = components['schemas']['FolderOut'];
 // counts for a folder's subtree, fetched to back the delete confirmation
 // dialog before the actual (irreversible) DELETE call.
 export type FolderDeletePreview = components['schemas']['FolderDeletePreview'];
+// GET/PUT /api/v1/admin/settings (Tasks 2-3, pluggable parser + reranker):
+// superadmin-only document-parser + reranker-provider selection. `*_key_set`
+// booleans report whether an encrypted key already exists — the keys
+// themselves are write-only and never appear in ProviderSettingsOut.
+export type ProviderSettingsOut = components['schemas']['ProviderSettingsOut'];
+export type ProviderSettingsUpdate = components['schemas']['ProviderSettingsUpdate'];
 
 export type DocumentStatus = DocumentOut['status'];
 

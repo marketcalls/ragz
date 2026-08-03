@@ -712,6 +712,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings Route */
+        get: operations["get_settings_route_api_v1_admin_settings_get"];
+        /** Put Settings Route */
+        put: operations["put_settings_route_api_v1_admin_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/audit": {
         parameters: {
             query?: never;
@@ -2167,6 +2185,32 @@ export interface components {
             name: string;
             /** Tokens */
             tokens: number;
+        };
+        /** ProviderSettingsOut */
+        ProviderSettingsOut: {
+            /** Document Parser */
+            document_parser: string;
+            /** Rerank Provider */
+            rerank_provider: string;
+            /** Cohere Rerank Model */
+            cohere_rerank_model: string;
+            /** Llamaparse Key Set */
+            llamaparse_key_set: boolean;
+            /** Cohere Key Set */
+            cohere_key_set: boolean;
+        };
+        /** ProviderSettingsUpdate */
+        ProviderSettingsUpdate: {
+            /** Document Parser */
+            document_parser?: ("docling" | "llamaparse") | null;
+            /** Rerank Provider */
+            rerank_provider?: ("local" | "cohere") | null;
+            /** Cohere Rerank Model */
+            cohere_rerank_model?: ("rerank-v4.0-fast" | "rerank-v4.0-pro") | null;
+            /** Llamaparse Api Key */
+            llamaparse_api_key?: string | null;
+            /** Cohere Api Key */
+            cohere_api_key?: string | null;
         };
         /** ReembedJobOut */
         ReembedJobOut: {
@@ -4044,6 +4088,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SecretOut"][];
+                };
+            };
+        };
+    };
+    get_settings_route_api_v1_admin_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderSettingsOut"];
+                };
+            };
+        };
+    };
+    put_settings_route_api_v1_admin_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderSettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

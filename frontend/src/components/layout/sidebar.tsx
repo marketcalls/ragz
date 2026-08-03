@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   MessageSquare,
   ScrollText,
+  Settings,
   Settings2,
   ShieldCheck,
   Users,
@@ -71,6 +72,9 @@ export function Sidebar() {
         ) : null}
         {claims?.role === 'superadmin' ? (
           <SideLink to="/admin/models" label="Models" icon={<Settings2 className="h-4 w-4" aria-hidden />} />
+        ) : null}
+        {claims?.role === 'superadmin' ? (
+          <SideLink to="/admin/settings" label="Settings" icon={<Settings className="h-4 w-4" aria-hidden />} />
         ) : null}
         {claims?.role === 'superadmin' ? (
           <SideLink to="/admin/audit" label="Audit" icon={<ScrollText className="h-4 w-4" aria-hidden />} />
