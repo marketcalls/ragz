@@ -196,7 +196,9 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
     chat/web.py: Tavily web-search key (Phase 3 D7) — same decrypt-in-memory,
     use-immediately pattern; the ONLY allowlist change in Phase 3.
     retrieval/rerank.py: Cohere reranker key — decrypt-in-memory, use-immediately
-    outbound rerank call."""
+    outbound rerank call.
+    documents/parsers.py: LlamaParse key — decrypt-in-memory for one outbound
+    parse call."""
     src_root = Path(ragz.__file__).parent
     allowed = {
         src_root / "modules" / "secrets" / "service.py",
@@ -205,6 +207,7 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
         src_root / "modules" / "models" / "keys.py",
         src_root / "modules" / "chat" / "web.py",
         src_root / "modules" / "retrieval" / "rerank.py",
+        src_root / "modules" / "documents" / "parsers.py",
     }
     offenders = [
         str(p)

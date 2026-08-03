@@ -2,7 +2,6 @@
 stages. Called from Celery via asyncio.run (ADR-0001), so each runner owns its
 engine lifecycle instead of sharing a loop-bound pool."""
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -23,13 +22,13 @@ from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter
 from ragz.modules.documents import service as documents_service
 from ragz.modules.documents.enrichment import enrich_chunk
 from ragz.modules.documents.models import Document, IngestJob
+from ragz.modules.documents.parsers import parse_document
 from ragz.modules.documents.pipeline import (
     Chunk,
     IngestFailure,
     PageBlock,
     chunk_blocks,
     embed_batch,
-    parse_bytes,
     upsert_hq_points,
     upsert_points,
 )
@@ -104,10 +103,8 @@ async def run_parse(document_id: UUID) -> None:
         try:
             data = await storage.get(doc.storage_key)
             settings = get_settings()
-            blocks = await asyncio.to_thread(
-                parse_bytes, data, doc.filename,
-                ocr_enabled=settings.ocr_enabled,
-                ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+            blocks = await parse_document(
+                session, settings, data=data, filename=doc.filename
             )
         except IngestFailure as exc:
             await _fail(session, doc, job, str(exc))
