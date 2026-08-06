@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   FileText,
   KeyRound,
   LayoutDashboard,
@@ -83,6 +84,9 @@ export function Sidebar() {
             label="API Keys"
             icon={<KeyRound className="h-4 w-4" aria-hidden />}
           />
+        ) : null}
+        {claims?.role === 'superadmin' ? (
+          <SideLink to="/admin/bots" label="Bots" icon={<Bot className="h-4 w-4" aria-hidden />} />
         ) : null}
         {claims?.role === 'superadmin' ? (
           <SideLink to="/admin/audit" label="Audit" icon={<ScrollText className="h-4 w-4" aria-hidden />} />

@@ -89,6 +89,14 @@ export type ApiKeyOut = components['schemas']['ApiKeyOut'];
 // beyond the mutation's own transient result -- see api-keys/queries.ts.
 export type ApiKeyCreatedOut = components['schemas']['ApiKeyCreatedOut'];
 
+// GET/POST/PATCH /api/v1/admin/bots (Task 8): chat-platform bot integrations
+// (Telegram/Discord/Slack). No credential field -- iron rule 3: `token`/
+// `signing_secret` cross the boundary only on BotIntegrationCreate (the
+// superadmin's own paste), never back out. `webhook_url` is derived
+// server-side from `webhook_id` + platform for pasting into the platform's
+// own webhook settings.
+export type BotIntegrationOut = components['schemas']['BotIntegrationOut'];
+
 export type DocumentStatus = DocumentOut['status'];
 
 // --- SSE payloads (outside OpenAPI) ---
