@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import type { ApiKeyCreatedOut, ApiKeyOut } from '@/api/types';
@@ -125,14 +125,34 @@ test('opening Generate and submitting calls POST, then shows the raw key exactly
   expect(screen.queryAllByText(created.api_key)).toHaveLength(0);
 });
 
-test('clicking Revoke calls DELETE for that key', async () => {
+test('clicking Revoke opens a confirm dialog naming the key; confirming calls DELETE', async () => {
   const user = userEvent.setup();
   render(<ApiKeysPage />);
 
   await user.click(screen.getByRole('button', { name: /revoke ci bot/i }));
+  expect(revokeMutate).not.toHaveBeenCalled();
+  // The confirm dialog names the key and warns of immediate breakage.
+  const dialog = within(screen.getByRole('dialog'));
+  expect(dialog.getByText(/ci bot/i)).toBeInTheDocument();
+  expect(dialog.getByText(/stop working immediately/i)).toBeInTheDocument();
+
+  // The row's own button is named "Revoke CI bot" (via aria-label); the
+  // dialog's danger confirm button is the only one accessibly named exactly
+  // "Revoke", so this can't accidentally re-click the row button.
+  await user.click(screen.getByRole('button', { name: 'Revoke' }));
 
   expect(revokeMutate).toHaveBeenCalledTimes(1);
   expect(revokeMutate).toHaveBeenCalledWith('k1', expect.anything());
+});
+
+test('clicking Revoke then Cancel does not call DELETE', async () => {
+  const user = userEvent.setup();
+  render(<ApiKeysPage />);
+
+  await user.click(screen.getByRole('button', { name: /revoke ci bot/i }));
+  await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+  expect(revokeMutate).not.toHaveBeenCalled();
 });
 
 test('shows an error message and retry button when the list query fails', async () => {

@@ -44,6 +44,11 @@ export function ApiKeysPage() {
   const [userId, setUserId] = useState('');
   const [workspaceId, setWorkspaceId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  // Revocation is instant (breaks any integration using the key right now)
+  // and isn't cheaply undoable (a new key means redistributing a new
+  // secret) -- confirm before firing the DELETE, mirroring models-page.tsx's
+  // "Remove model" confirm dialog.
+  const [revoking, setRevoking] = useState<ApiKeyOut | null>(null);
 
   const userEmailById = useMemo(
     () => new Map((users.data ?? []).map((u): [string, string] => [u.id, u.email])),
@@ -73,10 +78,6 @@ export function ApiKeysPage() {
       workspace_id: workspaceId,
       ...(expiresAt ? { expires_at: new Date(expiresAt).toISOString() } : {}),
     });
-  };
-
-  const onRevoke = (key: ApiKeyOut): void => {
-    revokeKey.mutate(key.id, { onError: (err) => toast.error(err.message) });
   };
 
   return (
@@ -134,7 +135,7 @@ export function ApiKeysPage() {
                             size="sm"
                             aria-label={`Revoke ${key.name}`}
                             disabled={revokeKey.isPending}
-                            onClick={() => onRevoke(key)}
+                            onClick={() => setRevoking(key)}
                           >
                             Revoke
                           </Button>
@@ -256,6 +257,29 @@ export function ApiKeysPage() {
               </DialogFooter>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={revoking !== null} onOpenChange={(o) => !o && setRevoking(null)}>
+        <DialogContent
+          title="Revoke API key"
+          description={`"${revoking?.name ?? ''}" (${revoking?.prefix ?? ''}) will stop working immediately -- any app using it will start getting 401s. This can't be undone; a replacement key must be generated and redistributed.`}
+        >
+          <DialogFooter>
+            <Button onClick={() => setRevoking(null)}>Cancel</Button>
+            <Button
+              variant="danger"
+              disabled={revokeKey.isPending}
+              onClick={() => {
+                if (revoking) {
+                  revokeKey.mutate(revoking.id, { onError: (err) => toast.error(err.message) });
+                }
+                setRevoking(null);
+              }}
+            >
+              Revoke
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
