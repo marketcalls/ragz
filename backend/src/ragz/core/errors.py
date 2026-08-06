@@ -29,6 +29,11 @@ class ConflictError(RagzError):
     title = "Conflict"
 
 
+class BadRequestError(RagzError):
+    status_code = 400
+    title = "Bad request"
+
+
 class RateLimitExceeded(RagzError):
     status_code = 429
     title = "Too many requests"
