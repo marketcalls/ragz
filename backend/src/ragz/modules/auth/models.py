@@ -40,3 +40,22 @@ class Invitation(UUIDPk, Base):
     token_hash: Mapped[str] = mapped_column(unique=True)
     expires_at: Mapped[datetime]
     accepted_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class ApiKey(UUIDPk, Base):
+    """Superadmin-controlled external-API key, bound to a (user, workspace)
+    pair (iron rule 3: only prefix + peppered hash are stored; see
+    auth.api_keys_service for generate/resolve)."""
+
+    __tablename__ = "api_keys"
+
+    prefix: Mapped[str] = mapped_column(index=True)
+    key_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    name: Mapped[str]
+    org_id: Mapped[UUID] = mapped_column(index=True)
+    user_id: Mapped[UUID]
+    workspace_id: Mapped[UUID]
+    created_by: Mapped[UUID]
+    expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_used_at: Mapped[datetime | None] = mapped_column(default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(default=None)
