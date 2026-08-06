@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -41,3 +42,30 @@ class UserOut(BaseModel):
 class UserPatch(BaseModel):
     active: bool | None = None
     role: Literal["admin", "user"] | None = None
+
+
+class ApiKeyCreate(BaseModel):
+    name: str
+    user_id: UUID
+    workspace_id: UUID
+    expires_at: datetime | None = None
+
+
+class ApiKeyOut(BaseModel):  # masked: NO key/hash (iron rule 3)
+    id: UUID
+    name: str
+    prefix: str
+    org_id: UUID
+    user_id: UUID
+    workspace_id: UUID
+    created_by: UUID
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ApiKeyCreatedOut(ApiKeyOut):
+    api_key: str  # the raw key -- present ONLY on the create response

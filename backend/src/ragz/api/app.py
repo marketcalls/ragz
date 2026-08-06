@@ -15,6 +15,7 @@ from ragz.api.routes.admin_feedback import router as admin_feedback_router
 from ragz.api.routes.admin_roles import router as admin_roles_router
 from ragz.api.routes.admin_secrets import router as admin_secrets_router
 from ragz.api.routes.admin_sso import router as admin_sso_router
+from ragz.api.routes.api_keys import router as api_keys_router
 from ragz.api.routes.auth import router as auth_router
 from ragz.api.routes.chats import router as chats_router
 from ragz.api.routes.client_errors import router as client_errors_router
@@ -154,6 +155,7 @@ def create_app(
     app.include_router(admin_secrets_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(admin_audit_router, prefix="/api/v1")
+    app.include_router(api_keys_router, prefix="/api/v1")
     app.include_router(admin_feedback_router, prefix="/api/v1")
     app.include_router(admin_sso_router, prefix="/api/v1")
     app.include_router(admin_roles_router, prefix="/api/v1")
