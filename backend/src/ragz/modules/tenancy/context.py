@@ -35,6 +35,46 @@ class TenantContext:
 _bearer = HTTPBearer(auto_error=False)
 
 
+async def build_context_for_user(
+    session: AsyncSession, user: User, *, workspace_ids: frozenset[UUID] | None = None
+) -> TenantContext:
+    """Turns a loaded `User` into a `TenantContext`. `workspace_ids`, when given,
+    is used VERBATIM instead of the user's full membership set -- the
+    key-narrowing hook that lets an API key scope a request to a single
+    workspace (see `api_key_context` in `api/routes/external.py`)."""
+    ws_ids = (
+        workspace_ids
+        if workspace_ids is not None
+        else frozenset(
+            (
+                await session.execute(
+                    select(WorkspaceMember.workspace_id).where(
+                        WorkspaceMember.user_id == user.id
+                    )
+                )
+            ).scalars().all()
+        )
+    )
+    group_ids = frozenset(
+        (
+            await session.execute(
+                select(UserGroup.group_id).where(UserGroup.user_id == user.id)
+            )
+        ).scalars().all()
+    )
+    if user.role in ("admin", "superadmin"):
+        perms = PERMISSIONS
+    elif user.custom_role_id is not None:
+        template = await session.get(RoleTemplate, user.custom_role_id)
+        perms = frozenset(template.permissions) if template else DEFAULT_USER_PERMISSIONS
+    else:
+        perms = DEFAULT_USER_PERMISSIONS
+    return TenantContext(
+        user_id=user.id, org_id=user.org_id, role=user.role,
+        workspace_ids=ws_ids, group_ids=group_ids, permissions=perms,
+    )
+
+
 async def get_tenant_context(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -47,27 +87,7 @@ async def get_tenant_context(
     user = result.scalar_one_or_none()
     if user is None or not user.active:
         raise AuthenticationError("unknown or inactive user")
-    ws_ids = (
-        await session.execute(
-            select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
-        )
-    ).scalars().all()
-    group_ids = (
-        await session.execute(
-            select(UserGroup.group_id).where(UserGroup.user_id == user.id)
-        )
-    ).scalars().all()
-    if user.role in ("admin", "superadmin"):
-        perms = PERMISSIONS
-    elif user.custom_role_id is not None:
-        template = await session.get(RoleTemplate, user.custom_role_id)
-        perms = frozenset(template.permissions) if template else DEFAULT_USER_PERMISSIONS
-    else:
-        perms = DEFAULT_USER_PERMISSIONS
-    return TenantContext(
-        user_id=user.id, org_id=user.org_id, role=user.role,
-        workspace_ids=frozenset(ws_ids), group_ids=frozenset(group_ids), permissions=perms,
-    )
+    return await build_context_for_user(session, user)
 
 
 def require_role(*roles: str) -> Callable[..., Awaitable[TenantContext]]:
