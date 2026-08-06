@@ -80,6 +80,14 @@ export type FolderDeletePreview = components['schemas']['FolderDeletePreview'];
 // themselves are write-only and never appear in ProviderSettingsOut.
 export type ProviderSettingsOut = components['schemas']['ProviderSettingsOut'];
 export type ProviderSettingsUpdate = components['schemas']['ProviderSettingsUpdate'];
+// GET /api/v1/admin/api-keys (Task 6): masked listing -- NO api_key/key_hash
+// field (iron rule 3). acl/tenant scoping for the external API path lives
+// entirely server-side via the key's user_id + workspace_id.
+export type ApiKeyOut = components['schemas']['ApiKeyOut'];
+// POST /api/v1/admin/api-keys response: ApiKeyOut plus the raw `api_key`,
+// present ONLY on this one response. Never persisted to any query cache
+// beyond the mutation's own transient result -- see api-keys/queries.ts.
+export type ApiKeyCreatedOut = components['schemas']['ApiKeyCreatedOut'];
 
 export type DocumentStatus = DocumentOut['status'];
 
