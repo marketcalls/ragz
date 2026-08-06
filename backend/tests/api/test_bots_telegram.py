@@ -76,16 +76,30 @@ def outbound() -> OutboundRecorder:
 
 
 @pytest.fixture
-async def telegram_client(
-    engine: AsyncEngine, redis_client, outbound: OutboundRecorder, telegram_env
-) -> httpx.AsyncClient:
+def retriever(telegram_env) -> FakeRetriever:
+    # Hoisted (rather than built inline in telegram_client) so 401 tests can
+    # assert `retriever.calls == []` directly -- proving NO relay/LLM work
+    # ran at all, not merely that the outbound send wasn't reached.
     _integration, doc = telegram_env
+    return FakeRetriever(doc.id)
+
+
+@pytest.fixture
+def streamer() -> FakeStreamer:
+    return FakeStreamer()
+
+
+@pytest.fixture
+async def telegram_client(
+    engine: AsyncEngine, redis_client, outbound: OutboundRecorder,
+    retriever: FakeRetriever, streamer: FakeStreamer,
+) -> httpx.AsyncClient:
     app = create_app(
         session_factory=build_session_factory(engine),
         redis_client=redis_client,
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
-        retriever=FakeRetriever(doc.id),
-        llm_streamer=FakeStreamer(),
+        retriever=retriever,
+        llm_streamer=streamer,
         bot_outbound_transport=outbound.transport,
     )
     app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
@@ -120,7 +134,8 @@ async def test_valid_signature_returns_200_and_calls_outbound(
 
 
 async def test_tampered_signature_returns_401_with_no_outbound_or_llm_call(
-    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+    retriever: FakeRetriever, streamer: FakeStreamer,
 ) -> None:
     integration, _doc = telegram_env
     r = await telegram_client.post(
@@ -132,17 +147,22 @@ async def test_tampered_signature_returns_401_with_no_outbound_or_llm_call(
         },
     )
     assert r.status_code == 401
+    assert retriever.calls == []
+    assert streamer.calls == []
     assert outbound.calls == []
 
 
 async def test_missing_signature_returns_401(
-    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+    retriever: FakeRetriever, streamer: FakeStreamer,
 ) -> None:
     integration, _doc = telegram_env
     r = await telegram_client.post(
         f"/external/bots/telegram/{integration.webhook_id}", content=_update_body("x"),
     )
     assert r.status_code == 401
+    assert retriever.calls == []
+    assert streamer.calls == []
     assert outbound.calls == []
 
 
