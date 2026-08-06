@@ -208,6 +208,7 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
         src_root / "modules" / "chat" / "web.py",
         src_root / "modules" / "retrieval" / "rerank.py",
         src_root / "modules" / "documents" / "parsers.py",
+        src_root / "modules" / "bots" / "service.py",
     }
     offenders = [
         str(p)
