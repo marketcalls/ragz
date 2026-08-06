@@ -17,6 +17,7 @@ from ragz.api.routes.admin_secrets import router as admin_secrets_router
 from ragz.api.routes.admin_sso import router as admin_sso_router
 from ragz.api.routes.api_keys import router as api_keys_router
 from ragz.api.routes.auth import router as auth_router
+from ragz.api.routes.bots import router as bots_router
 from ragz.api.routes.chats import router as chats_router
 from ragz.api.routes.client_errors import router as client_errors_router
 from ragz.api.routes.documents import router as documents_router
@@ -75,6 +76,7 @@ def create_app(
     oidc_transport: httpx.AsyncBaseTransport | None = None,
     llm_completer: LLMCompleter | None = None,
     web_searcher: WebSearcher | None = None,
+    bot_outbound_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     configure_logging()
     app = FastAPI(
@@ -105,6 +107,10 @@ def create_app(
     # None here means "construct a real TavilySearcher at the route" (chats.py) --
     # tests inject a fake directly; production leaves this None.
     app.state.web_searcher = web_searcher
+    # None here means "make real outbound HTTP calls to Telegram/Slack/
+    # Discord" -- tests inject a MockTransport so bot replies never hit the
+    # network (mirrors litellm_transport/oidc_transport).
+    app.state.bot_outbound_transport = bot_outbound_transport
 
     @app.exception_handler(RagzError)
     async def handle_ragz_error(request: Request, exc: RagzError) -> JSONResponse:
@@ -166,6 +172,7 @@ def create_app(
     app.include_router(client_errors_router, prefix="/api/v1")
     app.include_router(superadmin_ops_router, prefix="/api/v1")
     app.include_router(external_router, prefix="/external/v1")
+    app.include_router(bots_router, prefix="/external/bots")
 
     app.add_middleware(RequestIDMiddleware)
 
