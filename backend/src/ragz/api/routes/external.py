@@ -23,6 +23,7 @@ from ragz.api.routes import chats
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import AuthenticationError, NotFoundError
 from ragz.core.ratelimit import check_rate_limit
+from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.api_keys_service import resolve_api_key
 from ragz.modules.auth.models import User
 from ragz.modules.chat import service
@@ -57,6 +58,13 @@ async def api_key_context(
     ).scalar_one_or_none()
     if user is None or not user.active:
         raise AuthenticationError("invalid API key")
+    # Stashed for external_chat's audit event (design spec, Observability):
+    # ApiKeyDep's return type is TenantContext, which has no room for the
+    # key id, and every other caller of build_context_for_user (the regular
+    # JWT path) has no key at all -- request.state is per-request scratch
+    # space that doesn't touch that shared return type. Only the key's id
+    # (a UUID), never the raw key.
+    request.state.api_key_id = principal.key_id
     return await build_context_for_user(
         session, user, workspace_ids=frozenset({principal.workspace_id})
     )
@@ -144,6 +152,18 @@ async def external_chat(
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
     ))
+    # Design spec, Observability: every external call gets an audit event
+    # (only reached once collect_reply returns without raising, i.e. after a
+    # successful answer -- an `error` SSE frame becomes an UpstreamError
+    # inside collect_reply and skips this entirely, matching "audit AFTER a
+    # successful answer"). record_audit's target_id has no separate
+    # metadata field, so the key id (never the raw key) rides along in
+    # target_id as "<workspace_id>:<key_id>".
+    await record_audit(
+        session, org_id=ctx.org_id, actor_id=ctx.user_id, action="external.chat",
+        target_type="workspace", target_id=f"{workspace_id}:{request.state.api_key_id}",
+    )
+    await session.commit()
     return ExternalChatResponse(
         answer=collected.answer,
         citations=[

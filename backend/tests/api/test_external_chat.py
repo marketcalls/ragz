@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from ragz.api.app import create_app
 from ragz.core.config import Settings, get_settings
 from ragz.core.db import build_session_factory
+from ragz.modules.audit.models import AuditEvent
 from ragz.modules.auth.api_keys_service import generate_api_key
 from ragz.modules.auth.models import User
 from ragz.modules.chat.models import Chat, Message
@@ -185,3 +186,36 @@ async def test_external_chat_admin_key_cannot_reach_other_workspace_conversation
 
     after = (await session.execute(count_stmt)).scalar_one()
     assert after == before  # no user/assistant turn was appended to B's chat
+
+
+async def test_external_chat_emits_audit_event_without_the_raw_key(
+    external_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, test_settings: Settings,
+) -> None:
+    """Design spec, Observability: every external call gets an `external.chat`
+    audit event (actor = the key's user, target = the key's workspace, key
+    id along for the ride in target_id) -- and never the raw key itself."""
+    raw = await _make_key(external_client, chat_env, session, seeded_user, test_settings)
+
+    r = await external_client.post(
+        "/external/v1/chat", json={"question": "what was revenue?"},
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert r.status_code == 200, r.text
+
+    events = (
+        await session.execute(select(AuditEvent).where(AuditEvent.action == "external.chat"))
+    ).scalars().all()
+    assert len(events) == 1
+    event = events[0]
+    assert event.org_id == seeded_user.org_id
+    assert event.actor_id == seeded_user.id
+    assert event.target_type == "workspace"
+    assert event.target_id.startswith(f"{chat_env['workspace'].id}:")
+    key_id_part = event.target_id.split(":", 1)[1]
+    UUID(key_id_part)  # the key id, well-formed -- not a raw "ragz_sk_..." key
+
+    # Never the raw key, anywhere on the row.
+    assert raw not in event.target_id
+    assert raw not in event.action
+    assert raw not in event.target_type
