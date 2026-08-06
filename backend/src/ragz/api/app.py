@@ -21,6 +21,7 @@ from ragz.api.routes.chats import router as chats_router
 from ragz.api.routes.client_errors import router as client_errors_router
 from ragz.api.routes.documents import router as documents_router
 from ragz.api.routes.evals import router as evals_router
+from ragz.api.routes.external import router as external_router
 from ragz.api.routes.groups import router as groups_router
 from ragz.api.routes.health import router as health_router
 from ragz.api.routes.models import router as models_router
@@ -164,6 +165,7 @@ def create_app(
     app.include_router(usage_router, prefix="/api/v1")
     app.include_router(client_errors_router, prefix="/api/v1")
     app.include_router(superadmin_ops_router, prefix="/api/v1")
+    app.include_router(external_router, prefix="/external/v1")
 
     app.add_middleware(RequestIDMiddleware)
 

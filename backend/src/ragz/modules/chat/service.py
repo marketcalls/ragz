@@ -499,6 +499,27 @@ async def add_message(
     return msg
 
 
+async def add_user_message(
+    session: AsyncSession,
+    ctx: TenantContext,
+    chat: Chat,
+    content: str,
+    *,
+    parent_message_id: UUID | None = None,
+    explicit: bool = False,
+) -> Message:
+    """Shared parent-resolution + persist for a new user turn (Task 4, DOC-9's
+    sibling: factored out of `chats.py::send_message`'s inline block so
+    `/external/v1/chat` doesn't duplicate it). Defaults (`parent_message_id`
+    unset, `explicit=False`) match the external route's simpler contract --
+    no edit/branch concept, always append to the active leaf. `send_message`
+    passes its own body fields through unchanged, so its behavior is
+    byte-identical to before this refactor."""
+    messages = await list_messages(session, chat.id)
+    parent = resolve_parent(messages, parent_message_id, explicit=explicit)
+    return await add_message(session, ctx, chat, role=ROLE_USER, content=content, parent=parent)
+
+
 NO_ANSWER_TEXT = (
     "I couldn't find anything in this workspace's documents that answers that. "
     "The closest sources are shown, but none scored above the workspace's "
@@ -1730,3 +1751,49 @@ async def stream_reply(
                 completion_tokens=count_tokens(partial, model_hint),
             )
         raise
+
+
+@dataclass
+class CollectedAnswer:
+    """Non-streaming distillation of `stream_reply`'s SSE frames (Task 4):
+    everything `/external/v1/chat` needs for one JSON body."""
+
+    answer: str
+    citations: list[CitationRef]
+    no_answer: bool
+    grounding: str
+
+
+async def collect_reply(events: AsyncIterator[SSEEvent]) -> CollectedAnswer:
+    """Non-streaming adapter: drains `stream_reply`'s SSE events into one
+    answer. Adds no retrieval/LLM logic of its own -- reads the exact same
+    frame fields `chats.py::_encoded` and the frontend's SSE handler read
+    (`token.delta`, `citations.citations`, `done.no_answer`/`done.grounding`).
+
+    An `error` frame (yielded by `stream_reply`'s own UpstreamError/generic
+    exception handlers, see above) is re-raised as `UpstreamError` instead of
+    being silently folded into a "successful" 200 with an empty/partial
+    answer -- the external API has no partial-stream concept, so a failed
+    generation must surface as an HTTP error, matching what the streaming
+    chat UI would show its user (an error frame, not a done frame).
+    `asyncio.CancelledError`/`GeneratorExit` (client-abort path) aren't SSE
+    events at all -- they propagate through this `async for` like any other
+    exception, same as they would through `_encoded`.
+    """
+    parts: list[str] = []
+    citations: list[CitationRef] = []
+    no_answer = False
+    grounding = "documents"
+    async for ev in events:
+        if ev.event == "token":
+            parts.append(str(ev.data["delta"]))
+        elif ev.event == "citations":
+            raw_citations = ev.data["citations"]
+            if isinstance(raw_citations, list):
+                citations = [CitationRef(**c) for c in raw_citations if isinstance(c, dict)]
+        elif ev.event == "done":
+            no_answer = bool(ev.data["no_answer"])
+            grounding = str(ev.data["grounding"])
+        elif ev.event == "error":
+            raise UpstreamError(str(ev.data["detail"]))
+    return CollectedAnswer("".join(parts), citations, no_answer, grounding)

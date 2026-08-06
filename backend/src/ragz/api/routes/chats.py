@@ -222,13 +222,10 @@ async def send_message(
             )
             if source is not None:
                 attachment_sources.append(source)
-    messages = await service.list_messages(session, chat.id)
-    parent = service.resolve_parent(
-        messages, body.parent_message_id,
+    user_msg = await service.add_user_message(
+        session, ctx, chat, body.content,
+        parent_message_id=body.parent_message_id,
         explicit="parent_message_id" in body.model_fields_set,
-    )
-    user_msg = await service.add_message(
-        session, ctx, chat, role=service.ROLE_USER, content=body.content, parent=parent
     )
     streamer = await _streamer(request, session, settings, ctx)
     completer: LLMCompleter | None = request.app.state.llm_completer
