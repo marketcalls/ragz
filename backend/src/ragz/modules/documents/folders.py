@@ -250,8 +250,12 @@ async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UU
     Folder docstring): every document anywhere in this folder's subtree goes
     through the EXACT SAME delete path DELETE /documents/{id} already uses
     (flip status='deleting', enqueue_delete -- Qdrant points, MinIO blob,
-    Postgres row, audit entry, all async via Celery). Only once every
-    document's status has flipped are the Folder rows themselves removed:
+    Postgres row, audit entry, all async via Celery) -- INCLUDING
+    get_document_checked's per-document ACL rule (RBAC-01 fix), preflighted
+    against the whole subtree atomically before any row is mutated: if even
+    one collected document fails the check, the entire delete is refused and
+    nothing changes. Only once every document's status has flipped are the
+    Folder rows themselves removed:
     Document.folder_id is ondelete=SET NULL, so a document still
     mid-async-deletion never blocks the folder row's removal -- it just loses
     its (soon irrelevant) folder reference. Folder->Folder cascade
@@ -280,6 +284,18 @@ async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UU
             )
         ).scalars()
     )
+    # RBAC-01 (release blocker): the cascade must not delete a document the
+    # caller could not delete individually via DELETE /documents/{id} (which
+    # calls get_document_checked). Preflighted atomically, BEFORE any
+    # mutation below -- a local import avoids a real circular import
+    # (documents/service.py already imports this module at module scope for
+    # create_from_upload's folder_id validation).
+    from ragz.modules.documents.service import user_can_access_document
+
+    if any(not user_can_access_document(ctx, doc) for doc in docs):
+        # Non-enumerating: a member must not learn a restricted doc exists
+        # here, same error as get_folder_checked's own workspace gate.
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
     for doc in docs:
         doc.status = "deleting"
     await session.commit()

@@ -106,6 +106,19 @@ async def list_documents(
     return list((await session.execute(stmt)).scalars())
 
 
+def user_can_access_document(ctx: TenantContext, doc: Document) -> bool:
+    """The allow-rule get_document_checked enforces, in-memory (for callers
+    that already hold the Document rows, e.g. folder cascade delete --
+    folders.py's delete_folder). Admin/superadmin bypass; a `user` needs
+    workspace membership AND (unrestricted doc OR an ACL-group
+    intersection)."""
+    if ctx.role != "user":
+        return True
+    if doc.workspace_id not in ctx.workspace_ids:
+        return False
+    return doc.acl_group_ids is None or bool(set(doc.acl_group_ids) & ctx.group_ids)
+
+
 async def get_document_checked(
     session: AsyncSession, ctx: TenantContext, document_id: UUID
 ) -> Document:
@@ -116,15 +129,10 @@ async def get_document_checked(
     ).scalar_one_or_none()
     if doc is None:
         raise NotFoundError("document not found")
-    if ctx.role == "user" and doc.workspace_id not in ctx.workspace_ids:
-        raise WorkspaceAccessDenied("workspace not found or not accessible")
-    if (
-        ctx.role == "user"
-        and doc.acl_group_ids is not None
-        and not set(doc.acl_group_ids) & ctx.group_ids
-    ):
-        # Same non-leaking error as the workspace gate: restricted existence
-        # must be indistinguishable from absence (RBAC-5).
+    if not user_can_access_document(ctx, doc):
+        # Same non-leaking error whether the gate is workspace membership or
+        # ACL-group intersection: restricted existence must be
+        # indistinguishable from absence (RBAC-5).
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     return doc
 
