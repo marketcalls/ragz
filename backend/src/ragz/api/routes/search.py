@@ -8,16 +8,19 @@ from ragz.api.deps import get_session
 from ragz.modules.documents import metadata
 from ragz.modules.retrieval.schemas import ChunkOut, SearchRequest, SearchResponse
 from ragz.modules.retrieval.service import retrieve
-from ragz.modules.tenancy.context import TenantContext, get_tenant_context
+from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_action
 
 router = APIRouter(tags=["search"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
+# Task 5 (RBAC-03): direct search had no permission gate at all -- any
+# authenticated member could search regardless of role-template contents.
+SearchDep = Annotated[TenantContext, Depends(require_action("search.execute"))]
 
 
 @router.post("/workspaces/{workspace_id}/search", response_model=SearchResponse)
 async def search_workspace(
-    workspace_id: UUID, body: SearchRequest, session: SessionDep, ctx: CtxDep
+    workspace_id: UUID, body: SearchRequest, session: SessionDep, ctx: SearchDep
 ) -> SearchResponse:
     clauses = (
         await metadata.build_clauses(session, ctx, workspace_id, body.metadata)

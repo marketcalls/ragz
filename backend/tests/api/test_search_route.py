@@ -1,8 +1,35 @@
+from uuid import UUID
+
 import httpx
 
 from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import WorkspaceMember
 from tests.api.test_documents_routes import auth, make_workspace
+from tests.api.test_permissions_routes import make_templated_member
 from tests.modules.retrieval.test_retrieve import upsert_texts
+
+
+async def test_default_member_can_search(
+    client: httpx.AsyncClient, seeded_user: User, session, qdrant_collection: None  # type: ignore[no-untyped-def]
+) -> None:
+    # RBAC-03: the new require_action("search.execute") gate must NOT regress a
+    # plain role="user" member (no custom role -> DEFAULT_USER_PERMISSIONS, which
+    # still includes search.execute). Proves the POSITIVE default-member path for
+    # /search, complementing test_search_requires_search_execute_permission's 403
+    # case for a narrow custom role that omits the action. Empty workspace -> a
+    # real 200 no-answer, so success is decided by the gate, not by seeded data.
+    h_admin = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h_admin)
+    member = User(org_id=seeded_user.org_id, email="searcher@acme.com",
+                  password_hash=seeded_user.password_hash, role="user")
+    session.add(member)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=UUID(ws_id), user_id=member.id))
+    await session.commit()
+    h_member = await auth(client, "searcher@acme.com")
+    r = await client.post(f"/api/v1/workspaces/{ws_id}/search",
+                          json={"query": "anything"}, headers=h_member)
+    assert r.status_code == 200
 
 
 async def test_search_empty_workspace_no_answer(
@@ -114,3 +141,24 @@ async def test_search_unknown_metadata_field_is_404_problem_json(
     )
     assert r.status_code == 404
     assert r.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_search_requires_search_execute_permission(
+    client: httpx.AsyncClient, seeded_user: User, session,  # type: ignore[no-untyped-def]
+) -> None:
+    # A custom role that carries NEITHER search.execute NOR documents.list --
+    # only an unrelated, harmless permission (chat.read) -- must be denied
+    # direct search access (RBAC-03: search.execute is now an explicit gate,
+    # not implicit for any authenticated member).
+    h_admin = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h_admin)
+    await make_templated_member(
+        session, seeded_user, email="narrow@acme.com", template_name="NoSearchOrList",
+        permissions=["chat.read"], workspace_id=ws_id,
+    )
+    h_narrow = await auth(client, "narrow@acme.com")
+
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/search", headers=h_narrow, json={"query": "test"}
+    )
+    assert r.status_code == 403

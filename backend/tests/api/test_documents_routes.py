@@ -1,8 +1,12 @@
+from uuid import UUID
+
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
+from ragz.modules.tenancy.models import WorkspaceMember
+from tests.api.test_permissions_routes import make_templated_member
 
 
 @pytest.fixture
@@ -83,6 +87,47 @@ async def test_non_member_user_gets_403(
     assert r.status_code == 403
     assert (await client.get(f"/api/v1/workspaces/{ws_id}/documents",
                              headers=h_user)).status_code == 403
+
+
+async def test_list_documents_requires_documents_list_permission(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+) -> None:
+    # A custom role that carries NEITHER documents.list NOR search.execute --
+    # only an unrelated, harmless permission (chat.read) -- must be denied
+    # the workspace document listing (RBAC-03: documents.list is now an
+    # explicit gate, not implicit for any authenticated member).
+    h_admin = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h_admin)
+    await make_templated_member(
+        session, seeded_user, email="narrow@acme.com", template_name="NoListOrSearch",
+        permissions=["chat.read"], workspace_id=ws_id,
+    )
+    h_narrow = await auth(client, "narrow@acme.com")
+
+    r = await client.get(f"/api/v1/workspaces/{ws_id}/documents", headers=h_narrow)
+    assert r.status_code == 403
+
+
+async def test_default_member_can_still_list_documents(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
+) -> None:
+    # A plain role="user" account with NO custom_role_id falls back to
+    # DEFAULT_USER_PERMISSIONS, which still includes documents.list -- the new
+    # require_action("documents.list") gate must not regress that
+    # non-destructive read floor. (The sibling positive case for search.execute
+    # is test_search_route.py::test_default_member_can_search.)
+    h_admin = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h_admin)
+    contributor = User(org_id=seeded_user.org_id, email="contributor@acme.com",
+                       password_hash=seeded_user.password_hash, role="user")
+    session.add(contributor)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=UUID(ws_id), user_id=contributor.id))
+    await session.commit()
+    h_contributor = await auth(client, "contributor@acme.com")
+
+    r = await client.get(f"/api/v1/workspaces/{ws_id}/documents", headers=h_contributor)
+    assert r.status_code == 200
 
 
 async def test_delete_unknown_document_404(

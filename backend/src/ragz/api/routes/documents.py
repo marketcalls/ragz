@@ -43,6 +43,9 @@ AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 UploadDep = Annotated[TenantContext, Depends(require_action("documents.upload"))]
 DeleteDep = Annotated[TenantContext, Depends(require_action("documents.delete"))]
 ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
+# Task 5 (RBAC-03): document listing had no permission gate at all -- any
+# authenticated member could list regardless of role-template contents.
+ListDep = Annotated[TenantContext, Depends(require_action("documents.list"))]
 
 
 def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
@@ -94,7 +97,7 @@ async def upload_document(
 
 @router.get("/workspaces/{workspace_id}/documents", response_model=list[DocumentOut])
 async def list_workspace_documents(
-    workspace_id: UUID, session: SessionDep, ctx: CtxDep,
+    workspace_id: UUID, session: SessionDep, ctx: ListDep,
     folder_id: UUID | None = None,
 ) -> list[DocumentOut]:
     docs = await service.list_documents(session, ctx, workspace_id, folder_id)
