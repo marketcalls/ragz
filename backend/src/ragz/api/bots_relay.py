@@ -38,8 +38,9 @@ async def answer_for_integration(
     if user is None or not user.active:
         raise NotFoundError("bot integration's user no longer active")
     # RBAC-02: revalidate the integration user's CURRENT workspace membership +
-    # chat.use on every inbound message, never trusting the workspace stored on
-    # the integration at creation. Raises AuthenticationError if revoked.
+    # chat.generate (the granular successor to chat.use, per RBAC-04) on every
+    # inbound message, never trusting the workspace stored on the integration at
+    # creation. Raises AuthenticationError if revoked.
     ctx = await build_verified_principal_context(
         session, user, workspace_id=integration.workspace_id
     )

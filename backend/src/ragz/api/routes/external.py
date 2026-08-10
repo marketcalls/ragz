@@ -72,8 +72,9 @@ async def api_key_context(
     # space that doesn't touch that shared return type. Only the key's id
     # (a UUID), never the raw key.
     request.state.api_key_id = principal.key_id
-    # RBAC-02: revalidate CURRENT membership + chat.use on every request rather
-    # than trusting the workspace the key captured at issuance.
+    # RBAC-02: revalidate CURRENT membership + chat.generate on every request
+    # (the granular successor to chat.use, per RBAC-04) rather than trusting the
+    # workspace the key captured at issuance.
     return await build_verified_principal_context(
         session, user, workspace_id=principal.workspace_id
     )
