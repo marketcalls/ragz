@@ -38,7 +38,7 @@ from ragz.modules.chat.schemas import CitationOut
 from ragz.modules.models import service as models_service
 from ragz.modules.quotas import service as quota_service
 from ragz.modules.tenancy import service as tenancy_service
-from ragz.modules.tenancy.context import TenantContext, build_context_for_user
+from ragz.modules.tenancy.context import TenantContext, build_verified_principal_context
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -72,8 +72,10 @@ async def api_key_context(
     # space that doesn't touch that shared return type. Only the key's id
     # (a UUID), never the raw key.
     request.state.api_key_id = principal.key_id
-    return await build_context_for_user(
-        session, user, workspace_ids=frozenset({principal.workspace_id})
+    # RBAC-02: revalidate CURRENT membership + chat.use on every request rather
+    # than trusting the workspace the key captured at issuance.
+    return await build_verified_principal_context(
+        session, user, workspace_id=principal.workspace_id
     )
 
 

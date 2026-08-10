@@ -25,7 +25,7 @@ from ragz.core.errors import NotFoundError
 from ragz.modules.auth.models import User
 from ragz.modules.bots import service as bots_service
 from ragz.modules.bots.models import BotIntegration
-from ragz.modules.tenancy.context import build_context_for_user
+from ragz.modules.tenancy.context import build_verified_principal_context
 
 
 async def answer_for_integration(
@@ -37,8 +37,11 @@ async def answer_for_integration(
     ).scalar_one_or_none()
     if user is None or not user.active:
         raise NotFoundError("bot integration's user no longer active")
-    ctx = await build_context_for_user(
-        session, user, workspace_ids=frozenset({integration.workspace_id})
+    # RBAC-02: revalidate the integration user's CURRENT workspace membership +
+    # chat.use on every inbound message, never trusting the workspace stored on
+    # the integration at creation. Raises AuthenticationError if revoked.
+    ctx = await build_verified_principal_context(
+        session, user, workspace_id=integration.workspace_id
     )
     existing_chat_id = await bots_service.get_mapped_chat_id(
         session, integration_id=integration.id, external_chat_id=external_chat_id

@@ -75,6 +75,32 @@ async def build_context_for_user(
     )
 
 
+async def build_verified_principal_context(
+    session: AsyncSession, user: User, *, workspace_id: UUID
+) -> TenantContext:
+    """RBAC-02 (audit release blocker): a service credential (API key / bot)
+    must be revalidated against CURRENT state on EVERY request, never trusting
+    the workspace captured at issuance. Requires the backing user to still be a
+    member of `workspace_id` AND to still hold `chat.use` (the same action a
+    human passes on the chat route); denies non-enumerating otherwise. Unlike
+    the raw `build_context_for_user` narrowing hook, this never injects a
+    stored workspace the user is no longer entitled to."""
+    member = (
+        await session.execute(
+            select(WorkspaceMember.workspace_id).where(
+                WorkspaceMember.user_id == user.id,
+                WorkspaceMember.workspace_id == workspace_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
+        raise AuthenticationError("invalid or revoked credential")
+    ctx = await build_context_for_user(session, user, workspace_ids=frozenset({workspace_id}))
+    if "chat.use" not in ctx.permissions and ctx.role != "superadmin":
+        raise AuthenticationError("invalid or revoked credential")
+    return ctx
+
+
 async def get_tenant_context(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     session: Annotated[AsyncSession, Depends(get_session)],
