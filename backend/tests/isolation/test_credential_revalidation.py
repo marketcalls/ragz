@@ -85,8 +85,9 @@ async def cred_env(session: AsyncSession, seeded_user: User) -> dict[str, object
     # build_verified_principal_context still requires it. Give both members the
     # migration-equivalent contributor role so the CONTROL cases answer (they
     # legitimately hold chat.use). The adversarial cases then revoke it the
-    # real way -- removing workspace membership, or _strip_chat_use reassigning
-    # a role WITHOUT chat.use -- so every deny assertion below stays intact.
+    # real way -- removing workspace membership, or _strip_chat_capability
+    # reassigning a role WITHOUT chat.generate -- so every deny assertion below
+    # stays intact.
     await assign_contributor_role(session, member_a, member_b)
     session.add_all([
         WorkspaceMember(workspace_id=ws.id, user_id=member_a.id),
@@ -249,13 +250,15 @@ async def test_membership_removal_denies_bot_but_not_sibling(
 
 
 # ---------------------------------------------------------------------------
-# chat.use stripped via a custom RoleTemplate -> denied (membership intact).
+# chat.generate stripped via a custom RoleTemplate -> denied (membership
+# intact).
 # ---------------------------------------------------------------------------
 
 
-async def _strip_chat_use(session: AsyncSession, user: User) -> None:
+async def _strip_chat_capability(session: AsyncSession, user: User) -> None:
     template = RoleTemplate(
-        name=f"no-chat-use-{uuid4()}", permissions=["documents.upload"],  # no "chat.use"
+        name=f"no-chat-capability-{uuid4()}",
+        permissions=["documents.upload"],  # no "chat.generate" (nor legacy "chat.use")
     )
     session.add(template)
     await session.flush()
@@ -269,7 +272,7 @@ async def test_chat_use_stripped_denies_key_but_not_sibling(
 ) -> None:
     member_a = cred_env["member_a"]
     assert isinstance(member_a, User)
-    await _strip_chat_use(session, member_a)
+    await _strip_chat_capability(session, member_a)
 
     r = await _ask_key(cred_client, cred_env["raw_key_a"])  # type: ignore[arg-type]
     assert r.status_code == 401, r.text
@@ -286,12 +289,48 @@ async def test_chat_use_stripped_denies_bot_but_not_sibling(
     bot_a = cred_env["bot_a"]
     bot_b = cred_env["bot_b"]
     assert isinstance(member_a, User)
-    await _strip_chat_use(session, member_a)
+    await _strip_chat_capability(session, member_a)
 
     r = await _ask_bot(cred_client, bot_a.id, "chat-a")  # type: ignore[union-attr]
     assert r.status_code == 401, r.text
 
     r_sibling = await _ask_bot(cred_client, bot_b.id, "chat-b")  # type: ignore[union-attr]
+    assert r_sibling.status_code == 200, r_sibling.text
+    assert r_sibling.json()["answer"]
+
+
+# ---------------------------------------------------------------------------
+# Discriminating case: a role granting the LEGACY "chat.use" flag but NOT the
+# renamed "chat.generate" action must still be denied. The earlier adversarial
+# cases above strip BOTH flags at once (RoleTemplate(permissions=
+# ["documents.upload"])), so they would still pass even if the revalidation
+# check had regressed back to testing "chat.use". This test isolates the two
+# flags to prove the gate checks "chat.generate" specifically.
+# ---------------------------------------------------------------------------
+
+
+async def test_key_denied_when_role_grants_legacy_chat_use_but_not_chat_generate(
+    cred_client: httpx.AsyncClient, cred_env: dict[str, object], session: AsyncSession,
+) -> None:
+    member_a = cred_env["member_a"]
+    assert isinstance(member_a, User)
+    template = RoleTemplate(
+        name=f"legacy-chat-use-only-{uuid4()}",
+        permissions=["chat.use", "documents.list"],  # legacy flag present, chat.generate absent
+    )
+    session.add(template)
+    await session.flush()
+    member_a.custom_role_id = template.id
+    session.add(member_a)
+    await session.commit()
+
+    r = await _ask_key(cred_client, cred_env["raw_key_a"])  # type: ignore[arg-type]
+    assert r.status_code == 401, r.text
+
+    # Control: member_b still holds chat.generate (via the Contributor role
+    # from cred_env) and keeps working -- proving the deny above is selective,
+    # not an accidental blanket outage.
+    r_sibling = await _ask_key(cred_client, cred_env["raw_key_b"])  # type: ignore[arg-type]
     assert r_sibling.status_code == 200, r_sibling.text
     assert r_sibling.json()["answer"]
 
