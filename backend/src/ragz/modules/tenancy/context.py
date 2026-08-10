@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
+import structlog
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
@@ -33,6 +34,8 @@ class TenantContext:
 
 
 _bearer = HTTPBearer(auto_error=False)
+
+_log = structlog.get_logger("ragz.tenancy")
 
 
 async def build_context_for_user(
@@ -66,7 +69,20 @@ async def build_context_for_user(
         perms = PERMISSIONS
     elif user.custom_role_id is not None:
         template = await session.get(RoleTemplate, user.custom_role_id)
-        perms = frozenset(template.permissions) if template else DEFAULT_USER_PERMISSIONS
+        if template is None:
+            # RBAC-04: a dangling role reference must fail CLOSED, never fall
+            # back to a broad default -- that would let deleting/corrupting a
+            # role SILENTLY increase access. The FK is ON DELETE SET NULL, so
+            # reaching this branch means a corrupted row or an out-of-band
+            # write; quarantine to zero permissions until an admin
+            # re-assigns a real role, and surface it loudly.
+            _log.error(
+                "tenancy.dangling_custom_role_id",
+                user_id=str(user.id), custom_role_id=str(user.custom_role_id),
+            )
+            perms = frozenset()
+        else:
+            perms = frozenset(template.permissions)
     else:
         perms = DEFAULT_USER_PERMISSIONS
     return TenantContext(
@@ -81,10 +97,12 @@ async def build_verified_principal_context(
     """RBAC-02 (audit release blocker): a service credential (API key / bot)
     must be revalidated against CURRENT state on EVERY request, never trusting
     the workspace captured at issuance. Requires the backing user to still be a
-    member of `workspace_id` AND to still hold `chat.use` (the same action a
-    human passes on the chat route); denies non-enumerating otherwise. Unlike
-    the raw `build_context_for_user` narrowing hook, this never injects a
-    stored workspace the user is no longer entitled to."""
+    member of `workspace_id` AND to still hold `chat.generate` (the same action
+    a human passes on the chat route -- the granular successor to the legacy
+    chat.use flag, which the deny-by-default change retired from the default);
+    denies non-enumerating otherwise. Unlike the raw `build_context_for_user`
+    narrowing hook, this never injects a stored workspace the user is no longer
+    entitled to."""
     member = (
         await session.execute(
             select(WorkspaceMember.workspace_id).where(
@@ -96,7 +114,7 @@ async def build_verified_principal_context(
     if member is None:
         raise AuthenticationError("invalid or revoked credential")
     ctx = await build_context_for_user(session, user, workspace_ids=frozenset({workspace_id}))
-    if "chat.use" not in ctx.permissions and ctx.role != "superadmin":
+    if "chat.generate" not in ctx.permissions and ctx.role != "superadmin":
         raise AuthenticationError("invalid or revoked credential")
     return ctx
 

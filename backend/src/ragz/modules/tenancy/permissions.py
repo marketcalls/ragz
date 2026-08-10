@@ -7,14 +7,12 @@ superset of the original 5-flag set (`documents.upload`, `documents.delete`,
 removed here, so every persisted `RoleTemplate` row stays valid.
 
 `DEFAULT_USER_PERMISSIONS` is the fallback for any "user"-tier account with
-no custom role assigned. Task 1 (this expansion) is a PURE ADDITION: it keeps
-every legacy flag a plain user already receives today (upload/delete/chat)
-so no existing gate weakens, while also exposing the new non-destructive
-read-ish actions those accounts implicitly rely on. RBAC-04 (a later task)
-is where the actual deny-by-default narrowing happens -- it removes the
-legacy destructive flags from this set once a forward migration has given
-every existing `role="user"` account an explicit "Contributor" role
-template, so nobody's capability regresses when the narrowing lands.
+no custom role assigned. RBAC-04 (this change) removed the legacy destructive
+trio (`documents.upload`, `documents.delete`, `chat.use`) from this set,
+leaving only the non-destructive read floor; existing users retain those
+powers via the "Contributor" role seeded and assigned to every existing
+`role="user"` account by the preceding forward migration, so nobody's
+capability regressed when the narrowing landed.
 """
 
 PERMISSIONS = frozenset({
@@ -46,17 +44,12 @@ PERMISSIONS = frozenset({
     "chat.use",
 })
 
-# RBAC-06 (this task): purely additive. The narrower non-destructive floor
-# (workspace.read, documents.list, documents.content.read, search.execute,
-# chat.read, chat.generate) is unioned with -- not substituted for -- the
-# three legacy flags a "user"-tier account with no custom role already
-# receives today, so this task changes nothing about who-can-do-what.
-# RBAC-04 removes the legacy trio below once its forward migration has
-# backfilled every existing role="user" account with an explicit
-# "Contributor" template.
+# RBAC-04 (deny-by-default): the non-destructive read floor a "user"-tier
+# account with no custom role receives. The legacy destructive trio
+# (documents.upload, documents.delete, chat.use) was REMOVED here -- those
+# are now explicit-grant-only, carried for existing users by the "Contributor"
+# role the preceding forward migration seeded and assigned.
 DEFAULT_USER_PERMISSIONS = frozenset({
     "workspace.read", "documents.list", "documents.content.read",
     "search.execute", "chat.read", "chat.generate",
-    # Legacy floor, preserved until RBAC-04's migration lands (see above).
-    "documents.upload", "documents.delete", "chat.use",
 })

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
 from ragz.modules.tenancy.models import WorkspaceMember
+from tests.conftest import assign_contributor_role
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -80,6 +81,12 @@ async def test_member_sets_document_metadata_values(
     session.add(plain)
     await session.flush()
     session.add(WorkspaceMember(workspace_id=ws.id, user_id=plain.id))
+    # RBAC-04: the metadata-value PUT is gated on documents.upload (UploadDep),
+    # which is no longer in the read-only default. This test's intent is that a
+    # workspace member with contributor rights CAN set metadata, so grant that
+    # capability explicitly (as the migration does), rather than relying on the
+    # retired broad default.
+    await assign_contributor_role(session, plain)
     await session.commit()
 
     h_admin = await auth(client, "a@acme.com")

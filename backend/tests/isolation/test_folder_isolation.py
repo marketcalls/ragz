@@ -22,6 +22,7 @@ from ragz.modules.tenancy import service as tenancy_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Organization, Workspace
 from tests.api.test_folders_routes import auth
+from tests.conftest import assign_contributor_role
 
 
 @pytest.fixture
@@ -112,6 +113,14 @@ async def test_cross_workspace_folder_access_denied_for_plain_member(
     member = User(org_id=seeded_user.org_id, email="member@acme.com",
                  password_hash=hash_password("pw123456"), role="user")  # noqa: S106
     session.add(member)
+    await session.flush()
+    # RBAC-04: the folder routes are gated on documents.upload/delete
+    # (UploadDep/DeleteDep), no longer in the read-only default. Grant the
+    # member full contributor rights so the cross-workspace 403s below are
+    # decided by the WORKSPACE-membership check (the isolation property under
+    # test) rather than by a missing permission -- and so the "not vacuous"
+    # own-workspace create at the end still succeeds.
+    await assign_contributor_role(session, member)
     await session.commit()
     r = await client.post(
         f"/api/v1/workspaces/{ws1_id}/members",

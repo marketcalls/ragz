@@ -127,7 +127,9 @@ async def test_require_permission_guard(
         return {"Authorization": f"Bearer {tok}"}
 
     assert (await client.get("/probe/requires-delete", headers=h(engineer_tok))).status_code == 403
-    assert (await client.get("/probe/requires-delete", headers=h(plain_tok))).status_code == 200
+    # RBAC-04 deny-by-default: a plain user with no custom role no longer holds
+    # documents.delete (it left DEFAULT_USER_PERMISSIONS), so the guard denies.
+    assert (await client.get("/probe/requires-delete", headers=h(plain_tok))).status_code == 403
     assert (await client.get("/probe/requires-delete", headers=h(admin_tok))).status_code == 200
     assert (await client.get("/probe/requires-delete", headers=h(super_tok))).status_code == 200
 
@@ -147,15 +149,17 @@ def test_new_action_catalog_covers_every_declared_domain() -> None:
         assert action in PERMISSIONS
 
 
-def test_default_user_permissions_stays_behavior_preserving_in_task_1() -> None:
-    """RBAC-06 (Task 1) is a pure catalog EXPANSION -- it must not change
-    who-can-do-what (that's RBAC-04/Task 3's deny-by-default narrowing).
-    DEFAULT_USER_PERMISSIONS therefore keeps every legacy flag a plain
-    "user"-tier account with no custom role already receives today
-    (documents.upload/delete, chat.use) AND additionally exposes the new
-    non-destructive read-ish actions those accounts implicitly rely on, so
-    Task 3 can narrow this set later without a second behavior change here.
-    """
-    legacy = {"documents.upload", "documents.delete", "chat.use"}
-    assert legacy <= DEFAULT_USER_PERMISSIONS
-    assert {"search.execute", "chat.read", "chat.generate"} <= DEFAULT_USER_PERMISSIONS
+def test_default_user_permissions_is_non_destructive() -> None:
+    """RBAC-04 deny-by-default: the fallback for a "user"-tier account with no
+    custom role is the NON-DESTRUCTIVE read/search/chat floor. The legacy
+    destructive/legacy flags (documents.upload, documents.delete, and the
+    retired chat.use) are NO LONGER in the default -- an account needs an
+    explicit role (e.g. the seeded "Contributor" that Task 4's migration
+    assigns to every pre-existing user) to upload/delete. The read floor is
+    still present so ordinary members can list/search/read/chat by default."""
+    destructive_or_legacy = {"documents.upload", "documents.delete", "chat.use"}
+    assert destructive_or_legacy.isdisjoint(DEFAULT_USER_PERMISSIONS)
+    assert {
+        "workspace.read", "documents.list", "documents.content.read",
+        "search.execute", "chat.read", "chat.generate",
+    } <= DEFAULT_USER_PERMISSIONS

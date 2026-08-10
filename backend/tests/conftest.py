@@ -26,7 +26,48 @@ from ragz.modules.retrieval.client import get_qdrant
 from ragz.modules.retrieval.embeddings import get_dense_embedder
 from ragz.modules.retrieval.service import RetrievalResult, RetrievedChunk
 from ragz.modules.secrets.crypto import ensure_kek
-from ragz.modules.tenancy.models import Organization, Workspace, WorkspaceMember
+from ragz.modules.tenancy.models import (
+    Organization,
+    RoleTemplate,
+    Workspace,
+    WorkspaceMember,
+)
+
+# RBAC-04: DEFAULT_USER_PERMISSIONS is now the non-destructive read floor.
+# In production, the forward migration (c78eddf6863e) seeds a "Contributor"
+# role carrying the old broad capability (upload/delete/chat) and assigns it
+# to every pre-existing role="user" account, so nobody regresses. Tests build
+# their schema via Base.metadata.create_all (migrations do NOT run), so any
+# test account meant to behave like a normal pre-RBAC-04 contributor must be
+# given this role EXPLICITLY -- exactly as the migration would. This list
+# mirrors the migration's _CONTRIBUTOR_PERMISSIONS verbatim.
+CONTRIBUTOR_PERMISSIONS = [
+    "workspace.read",
+    "documents.list", "documents.content.read", "documents.upload", "documents.delete",
+    "documents.move", "documents.pin", "search.execute", "chat.read", "chat.generate",
+    "chat.attachments.create", "chat.delete",
+    "chat.use",
+]
+
+
+async def assign_contributor_role(
+    session: AsyncSession, *users: User, name: str | None = None
+) -> RoleTemplate:
+    """Give each `users` account the migration-equivalent "Contributor" role
+    (upload/delete/chat). Mirrors what the RBAC-04 forward migration does for
+    every existing role="user" account; use it for any plain test user that
+    should behave like a normal contributor now that the fallback default is
+    read-only."""
+    template = RoleTemplate(
+        name=name or f"Contributor-{uuid4()}", permissions=list(CONTRIBUTOR_PERMISSIONS)
+    )
+    session.add(template)
+    await session.flush()
+    for user in users:
+        user.custom_role_id = template.id
+        session.add(user)
+    await session.flush()
+    return template
 
 
 @pytest.fixture(scope="session")

@@ -14,6 +14,7 @@ from ragz.modules.auth.models import User
 from ragz.modules.auth.passwords import hash_password
 from ragz.modules.tenancy.models import Organization
 from tests.api.test_chat_stream import auth, make_model_and_chat
+from tests.conftest import assign_contributor_role
 
 # chat_client/fake_streamer fixtures live in test_chat_stream; pytest only
 # shares fixtures across modules via conftest.py or an explicit plugin import.
@@ -79,6 +80,13 @@ async def test_same_org_users_have_private_chats(
     peer = User(org_id=seeded_user.org_id, email="peer@acme.com",
                 password_hash=hash_password("pw123456"), role="user")
     session.add(peer)
+    await session.flush()
+    # RBAC-04: give the peer full contributor rights (incl. chat.use) so the
+    # regenerate route clears the permission gate and the request is decided by
+    # the OWNERSHIP check -- which must still 404 (private chat). Without this
+    # the peer would 403 at the chat.use gate, masking the isolation property
+    # this test exists to prove (a same-org non-owner can't reach the chat).
+    await assign_contributor_role(session, peer)
     await session.commit()
     h_peer = await auth(chat_client, "peer@acme.com")
     assert (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h_peer)).status_code == 404

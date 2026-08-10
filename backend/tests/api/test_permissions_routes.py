@@ -88,14 +88,18 @@ async def test_engineer_uploads_but_cannot_delete(
     assert captured_enqueues["delete"] == []
 
 
-async def test_default_user_keeps_legacy_powers(
+async def test_default_user_is_non_destructive_and_explicit_role_restores(
     chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
     seeded_user: User, seeded_superadmin: User, stack_env: None,
     captured_enqueues: dict,  # type: ignore[type-arg]
 ) -> None:
-    """A plain role="user" account (no custom role template assigned) still
-    uploads, deletes, and chats exactly like pre-Plan-H -- DEFAULT_USER_PERMISSIONS
-    is the never-weaken floor for the "no template" case."""
+    """RBAC-04 deny-by-default: a plain role="user" account (no custom role)
+    keeps only the NON-DESTRUCTIVE floor -- it can open a chat and send
+    messages (chat.generate) -- but can NO LONGER upload or delete (those left
+    DEFAULT_USER_PERMISSIONS). An explicit role carrying documents.upload/
+    documents.delete restores exactly those, proving capability is now
+    grant-based, not ambient. (Before RBAC-04 the plain account had upload/
+    delete/chat ambiently; removing that ambient power is the whole point.)"""
     ws = chat_env["workspace"]
     plain = User(org_id=seeded_user.org_id, email="plain@acme.com",
                 password_hash=seeded_user.password_hash, role="user")
@@ -110,26 +114,41 @@ async def test_default_user_keeps_legacy_powers(
     # opens a throwaway chat; get_chat scopes by ctx.user_id too, so the chat
     # this test actually sends against must be opened by the plain user itself.
     await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h_admin)
+
+    # Non-destructive floor intact: the plain user can still open + send a chat.
     r_own_chat = await chat_client.post(
         "/api/v1/chats", json={"workspace_id": str(ws.id)}, headers=h_plain
     )
     assert r_own_chat.status_code == 201
     chat_id = r_own_chat.json()["id"]
-
-    r_upload = await chat_client.post(
-        f"/api/v1/workspaces/{ws.id}/documents", headers=h_plain,
-        files={"file": ("legacy.txt", b"legacy powers intact", "text/plain")},
-    )
-    assert r_upload.status_code == 201
-    doc_id = r_upload.json()["id"]
-
     r_send = await chat_client.post(
         f"/api/v1/chats/{chat_id}/messages", json={"content": "hi"}, headers=h_plain
     )
     assert r_send.status_code == 200
     assert r_send.headers["content-type"].startswith("text/event-stream")
 
-    r_delete = await chat_client.delete(f"/api/v1/documents/{doc_id}", headers=h_plain)
+    # Deny-by-default: no ambient upload for a role-less user.
+    r_upload_denied = await chat_client.post(
+        f"/api/v1/workspaces/{ws.id}/documents", headers=h_plain,
+        files={"file": ("nope.txt", b"no ambient upload", "text/plain")},
+    )
+    assert r_upload_denied.status_code == 403
+
+    # An explicit role restores upload + delete (grant-based capability).
+    await make_templated_member(
+        session, seeded_user, email="contrib@acme.com",
+        template_name="Contributor-test",
+        permissions=["documents.upload", "documents.delete", "chat.generate"],
+        workspace_id=str(ws.id),
+    )
+    h_contrib = await auth(chat_client, "contrib@acme.com")
+    r_upload = await chat_client.post(
+        f"/api/v1/workspaces/{ws.id}/documents", headers=h_contrib,
+        files={"file": ("ok.txt", b"granted upload", "text/plain")},
+    )
+    assert r_upload.status_code == 201
+    doc_id = r_upload.json()["id"]
+    r_delete = await chat_client.delete(f"/api/v1/documents/{doc_id}", headers=h_contrib)
     assert r_delete.status_code == 202
     assert len(captured_enqueues["delete"]) == 1
 
@@ -190,10 +209,13 @@ async def test_hse_manager_configures_workspace(
     assert r_admin.status_code == 200
 
 
-async def test_role_without_chat_use_blocked(
+async def test_role_without_chat_generate_blocked(
     chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
     seeded_user: User, seeded_superadmin: User,
 ) -> None:
+    # RBAC-04/RBAC-03: the chat send gate is now chat.generate (the granular
+    # successor to the retired chat.use flag). A custom role that grants some
+    # other action but not chat.generate is still blocked from sending.
     ws = chat_env["workspace"]
     h_admin = await auth(chat_client, "a@acme.com")
     chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h_admin)
@@ -208,4 +230,4 @@ async def test_role_without_chat_use_blocked(
         f"/api/v1/chats/{chat_id}/messages", json={"content": "hi"}, headers=h_restricted
     )
     assert r.status_code == 403
-    assert "requires permission chat.use" in r.json()["detail"]
+    assert "requires permission chat.generate" in r.json()["detail"]

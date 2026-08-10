@@ -48,7 +48,12 @@ from ragz.modules.documents.service import set_document_acl
 from ragz.modules.models.models import Model
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Workspace, WorkspaceMember
-from tests.conftest import FakeRetriever, FakeStreamer, _stub_litellm_handler
+from tests.conftest import (
+    FakeRetriever,
+    FakeStreamer,
+    _stub_litellm_handler,
+    assign_contributor_role,
+)
 from tests.isolation.conftest import ingest_text, seed_acl_workspace, seed_same_org_two_workspaces
 
 RESTRICTED = "finance secret: the acquisition price is 4400"
@@ -188,6 +193,17 @@ async def _mint_key(
         ws.default_model_id = model.id
         session.add(ws)
         await session.commit()
+    # RBAC-04: /external/v1/chat revalidates the key's backing user via
+    # build_verified_principal_context, which requires chat.use. These seed
+    # helpers create plain role="user" accounts that no longer hold chat.use by
+    # default, so grant them the migration-equivalent contributor role -- this
+    # lets the request AUTHENTICATE so the adversarial no-leak assertions below
+    # are actually exercised (rather than short-circuiting on a 401).
+    key_user = (
+        await session.execute(select(User).where(User.id == ctx.user_id))
+    ).scalar_one()
+    await assign_contributor_role(session, key_user)
+    await session.commit()
     _, raw = await generate_api_key(
         session, settings, actor_id=ctx.user_id, name="iso-test-key",
         user_id=ctx.user_id, workspace_id=ws.id, expires_at=expires_at,

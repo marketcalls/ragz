@@ -37,7 +37,12 @@ from ragz.modules.bots import service as bots_service
 from ragz.modules.documents.models import Document
 from ragz.modules.models.models import Model
 from ragz.modules.tenancy.models import RoleTemplate, Workspace, WorkspaceMember
-from tests.conftest import FakeRetriever, FakeStreamer, _stub_litellm_handler
+from tests.conftest import (
+    FakeRetriever,
+    FakeStreamer,
+    _stub_litellm_handler,
+    assign_contributor_role,
+)
 
 TELEGRAM_SECRET = "cred-revalidation-tg-secret"  # noqa: S105 -- test fixture value
 
@@ -76,6 +81,13 @@ async def cred_env(session: AsyncSession, seeded_user: User) -> dict[str, object
     )
     session.add_all([member_a, member_b])
     await session.flush()
+    # RBAC-04: chat.use is no longer in the read-only default, but
+    # build_verified_principal_context still requires it. Give both members the
+    # migration-equivalent contributor role so the CONTROL cases answer (they
+    # legitimately hold chat.use). The adversarial cases then revoke it the
+    # real way -- removing workspace membership, or _strip_chat_use reassigning
+    # a role WITHOUT chat.use -- so every deny assertion below stays intact.
+    await assign_contributor_role(session, member_a, member_b)
     session.add_all([
         WorkspaceMember(workspace_id=ws.id, user_id=member_a.id),
         WorkspaceMember(workspace_id=ws.id, user_id=member_b.id),
