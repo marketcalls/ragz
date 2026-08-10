@@ -167,13 +167,17 @@ async def _ask_bot(client: httpx.AsyncClient, integration_id: UUID, chat_id: str
 # ---------------------------------------------------------------------------
 
 
-async def test_control_key_answers(cred_client: httpx.AsyncClient, cred_env: dict[str, object]) -> None:
+async def test_control_key_answers(
+    cred_client: httpx.AsyncClient, cred_env: dict[str, object]
+) -> None:
     r = await _ask_key(cred_client, cred_env["raw_key_a"])  # type: ignore[arg-type]
     assert r.status_code == 200, r.text
     assert r.json()["answer"]
 
 
-async def test_control_bot_answers(cred_client: httpx.AsyncClient, cred_env: dict[str, object]) -> None:
+async def test_control_bot_answers(
+    cred_client: httpx.AsyncClient, cred_env: dict[str, object]
+) -> None:
     bot_a = cred_env["bot_a"]
     r = await _ask_bot(cred_client, bot_a.id, "chat-a")  # type: ignore[union-attr]
     assert r.status_code == 200, r.text
@@ -302,7 +306,9 @@ async def telegram_denial_client(
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
         retriever=FakeRetriever(document.id),
         llm_streamer=FakeStreamer(),
-        bot_outbound_transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True})),
+        bot_outbound_transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"ok": True})
+        ),
     )
     app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
     transport = httpx.ASGITransport(app=app)
