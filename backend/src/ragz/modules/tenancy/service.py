@@ -408,10 +408,13 @@ async def delete_role_template(
 async def assign_custom_role(
     session: AsyncSession, ctx: TenantContext, user_id: UUID, role_template_id: UUID | None
 ) -> User:
-    """AdminDep-gated (RBAC-2): target must be same-org and role == "user" --
-    assigning a custom role to an admin/superadmin is meaningless (they already
-    hold every permission), so that's a 409, not silently accepted. Cross-org
-    targets 404 (existence never leaks, matching _org_user elsewhere)."""
+    """AdminDep-gated (RBAC-2/RBAC-05): target must be same-org. Superadmin
+    targets are still rejected (platform-tier, out of this org-scoped
+    mechanism's reach) -- 404 so existence never leaks. 'user' AND 'admin'
+    tier targets are both allowed as of RBAC-05: an org admin now needs an
+    EXPLICIT template (e.g. Content Manager) for content-ACL bypass or audit
+    access, exactly like a 'user'-tier account needs one for upload/delete.
+    Cross-org targets 404 (existence never leaks, matching _org_user)."""
     user = (
         await session.execute(
             select(User).where(User.id == user_id, User.org_id == ctx.org_id)
@@ -419,8 +422,6 @@ async def assign_custom_role(
     ).scalar_one_or_none()
     if user is None or user.role == "superadmin":
         raise NotFoundError("user not found")
-    if user.role != "user":
-        raise ConflictError("custom roles apply to 'user'-tier accounts only")
     if role_template_id is not None:
         await _get_role_template(session, role_template_id)  # NotFoundError if unknown
     user.custom_role_id = role_template_id

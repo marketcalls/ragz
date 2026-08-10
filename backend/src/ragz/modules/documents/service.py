@@ -109,14 +109,24 @@ async def list_documents(
 def user_can_access_document(ctx: TenantContext, doc: Document) -> bool:
     """The allow-rule get_document_checked enforces, in-memory (for callers
     that already hold the Document rows, e.g. folder cascade delete --
-    folders.py's delete_folder). Admin/superadmin bypass; a `user` needs
-    workspace membership AND (unrestricted doc OR an ACL-group
-    intersection)."""
-    if ctx.role != "user":
+    folders.py's delete_folder).
+
+    RBAC-05: only an explicit documents.acl.bypass grant sees every restricted
+    document. A 'user'-tier caller needs workspace membership AND (unrestricted
+    OR an ACL-group intersection). admin/superadmin keep their existing
+    UNCONDITIONAL workspace-membership bypass (out of this finding's scope --
+    RBAC-05 targets the document-ACL bypass specifically, not general org-admin
+    workspace access) but now need the SAME ACL-group relationship as anyone
+    else for a RESTRICTED document, unless they hold documents.acl.bypass."""
+    if ctx.role == "user":
+        if doc.workspace_id not in ctx.workspace_ids:
+            return False
+        return doc.acl_group_ids is None or bool(set(doc.acl_group_ids) & ctx.group_ids)
+    if doc.acl_group_ids is None:
         return True
-    if doc.workspace_id not in ctx.workspace_ids:
-        return False
-    return doc.acl_group_ids is None or bool(set(doc.acl_group_ids) & ctx.group_ids)
+    return "documents.acl.bypass" in ctx.permissions or bool(
+        set(doc.acl_group_ids) & ctx.group_ids
+    )
 
 
 async def get_document_checked(

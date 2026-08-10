@@ -37,6 +37,11 @@ _bearer = HTTPBearer(auto_error=False)
 
 _log = structlog.get_logger("ragz.tenancy")
 
+# RBAC-05: permissions that are NEVER auto-granted, even to admin/superadmin --
+# they must come from an explicit role-template overlay (e.g. the seeded
+# "Content Manager" template). Task 10 EXTENDS this exact set; keep the name.
+_AUTOMATIC_CARVE_OUTS = frozenset({"documents.acl.bypass"})
+
 
 async def build_context_for_user(
     session: AsyncSession, user: User, *, workspace_ids: frozenset[UUID] | None = None
@@ -66,7 +71,23 @@ async def build_context_for_user(
         ).scalars().all()
     )
     if user.role in ("admin", "superadmin"):
-        perms = PERMISSIONS
+        # RBAC-05: admin/superadmin hold every permission EXCEPT the carve-outs
+        # (documents.acl.bypass), which are earned only via an explicit
+        # role-template overlay. A dangling custom_role_id for this tier just
+        # fails to grant the overlay (logged loudly) -- it does NOT deny-all
+        # like the user-tier branch below, because the admin base floor
+        # (PERMISSIONS minus the carve-outs) is already the least-destructive
+        # floor for this tier.
+        perms = PERMISSIONS - _AUTOMATIC_CARVE_OUTS
+        if user.custom_role_id is not None:
+            template = await session.get(RoleTemplate, user.custom_role_id)
+            if template is not None:
+                perms = perms | frozenset(template.permissions)
+            else:
+                _log.error(
+                    "tenancy.dangling_custom_role_id",
+                    user_id=str(user.id), custom_role_id=str(user.custom_role_id),
+                )
     elif user.custom_role_id is not None:
         template = await session.get(RoleTemplate, user.custom_role_id)
         if template is None:

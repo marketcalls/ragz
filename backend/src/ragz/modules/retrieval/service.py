@@ -105,9 +105,10 @@ def _tenant_filter(
     | `update_document_current()` | `None` | `False` | `None` |
     | `update_document_metadata()` | `None` | `False` | `None` |
 
-      * acl_group_ids: None -> no ACL clause. Sanctioned for admin+ retrieval
-        (RBAC-5 restricts users, not the admins who manage the library) and
-        for maintenance paths already scoped tenant+document. frozenset ->
+      * acl_group_ids: None -> no ACL clause. Sanctioned for a caller holding
+        the explicit documents.acl.bypass grant (RBAC-05: the bypass is
+        permission-gated, no longer automatic for admin/superadmin) and for
+        maintenance paths already scoped tenant+document. frozenset ->
         nested must-clause: acl_groups IS EMPTY (unrestricted; also matches
         every pre-Phase-2 point, ingested as []) OR intersects the caller's
         groups. An empty set emits IsEmpty only — fail closed, never
@@ -188,9 +189,14 @@ def _tenant_filter(
 
 
 def _ctx_acl(ctx: TenantContext) -> frozenset[UUID] | None:
-    """ACL posture for user-facing reads: admins bypass (documented RBAC-5
-    stance), everyone else carries their current group memberships."""
-    return None if ctx.role in ("admin", "superadmin") else ctx.group_ids
+    """ACL posture for user-facing reads (RBAC-05): only an explicit
+    documents.acl.bypass grant sees every restricted document regardless of
+    group membership. Everyone else -- including admin/superadmin WITHOUT that
+    grant -- carries their current group memberships, the same predicate a
+    'user'-tier caller already used. None => no ACL clause (full bypass); a
+    frozenset => filter to those groups (empty set fails closed to
+    unrestricted-only)."""
+    return None if "documents.acl.bypass" in ctx.permissions else ctx.group_ids
 
 
 _HEALED: set[str] = set()  # collections whose Plan H heal indexes have run this process

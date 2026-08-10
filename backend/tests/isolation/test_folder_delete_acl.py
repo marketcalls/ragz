@@ -122,8 +122,9 @@ async def test_group_member_can_delete_whole_subtree(
 async def test_admin_can_delete_whole_subtree(
     session: AsyncSession, stack_env: None,
 ) -> None:
-    """CONTROL: an admin (role bypass, not group membership -- ctx_admin
-    carries no groups) can also delete the entire subtree."""
+    """CONTROL: an admin holding the explicit documents.acl.bypass grant
+    (RBAC-05 -- ctx_admin carries the permission, not group membership) can
+    delete the entire subtree, restricted docs included."""
     _, _, ctx_admin, _ws, _finance, folder, restricted, unrestricted = (
         await _seed_folder_with_docs(session)
     )

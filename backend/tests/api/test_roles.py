@@ -133,9 +133,14 @@ async def test_admin_assigns_template_and_user_out_reflects_it(
     assert target["custom_role_id"] is None
 
 
-async def test_assigning_to_admin_is_409(
+async def test_assigning_to_admin_succeeds(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:
+    # RBAC-05: an admin-tier target is now a VALID custom-role assignee (an org
+    # admin needs an explicit template, e.g. Content Manager, for content-ACL
+    # bypass just like a plain user needs one for upload/delete). Superadmin
+    # targets are still rejected (covered in test_service.py). Clearing to None
+    # here returns 204.
     other_admin = User(
         org_id=seeded_user.org_id, email="a2@acme.com",
         password_hash=seeded_user.password_hash, role="admin",
@@ -148,7 +153,7 @@ async def test_assigning_to_admin_is_409(
         f"/api/v1/users/{other_admin.id}/custom-role", headers=admin_h,
         json={"role_template_id": None},
     )
-    assert r.status_code == 409
+    assert r.status_code == 204
 
 
 async def test_cross_org_assignment_is_404(

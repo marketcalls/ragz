@@ -34,13 +34,16 @@ async def login_token(client: httpx.AsyncClient, email: str, pw: str = "pw123456
     return str(r.json()["access_token"])
 
 
-async def test_admin_ctx_has_all_permissions(
+async def test_admin_ctx_has_all_permissions_except_acl_bypass(
     client: httpx.AsyncClient, seeded_user: User
 ) -> None:
     wire_probe(client._transport.app)  # type: ignore[attr-defined]
     tok = await login_token(client, "a@acme.com")
     r = await client.get("/probe/permissions", headers={"Authorization": f"Bearer {tok}"})
-    assert set(r.json()["permissions"]) == set(PERMISSIONS)
+    # RBAC-05: admin holds every permission EXCEPT the carve-out
+    # documents.acl.bypass, which is earned only via an explicit role-template
+    # overlay (the seeded "Content Manager"), never automatically by role.
+    assert set(r.json()["permissions"]) == set(PERMISSIONS) - {"documents.acl.bypass"}
 
 
 async def test_plain_user_has_exactly_default_permissions(

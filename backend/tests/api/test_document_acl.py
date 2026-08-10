@@ -4,12 +4,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.modules.auth.models import User
 from ragz.modules.documents.service import get_document_checked
 from ragz.modules.tenancy.context import TenantContext
-from ragz.modules.tenancy.models import Group, WorkspaceMember
+from ragz.modules.tenancy.models import Group, RoleTemplate, WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": "pw123456"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def grant_content_bypass(session: AsyncSession, user: User) -> None:
+    """RBAC-05: managing a RESTRICTED document's ACL loads it through
+    get_document_checked, which now requires the explicit documents.acl.bypass
+    grant even for an admin. Give the acting admin the seeded "Content Manager"
+    grant (bypass + acl.manage) the paired migration hands every existing
+    admin, so this models a real deployed admin."""
+    template = RoleTemplate(
+        name=f"cm-{user.id}",
+        permissions=["documents.acl.bypass", "documents.acl.manage"],
+    )
+    session.add(template)
+    await session.flush()
+    user.custom_role_id = template.id
+    await session.commit()
 
 
 async def test_set_and_clear_acl(
@@ -19,6 +35,7 @@ async def test_set_and_clear_acl(
     doc = chat_env["document"]
     group = Group(org_id=seeded_user.org_id, name="finance")
     session.add(group)
+    await grant_content_bypass(session, seeded_user)
     await session.commit()
 
     h = await auth(client, "a@acme.com")
@@ -103,9 +120,18 @@ async def test_restricted_document_direct_access_denied(
                            workspace_ids=frozenset({doc.workspace_id}),
                            group_ids=frozenset({group.id}))
     assert (await get_document_checked(session, member, doc.id)).id == doc.id
-    admin = TenantContext(user_id=seeded_user.id, org_id=seeded_user.org_id, role="admin",
-                          workspace_ids=frozenset())
-    assert (await get_document_checked(session, admin, doc.id)).id == doc.id
+    # RBAC-05: an admin WITHOUT the explicit documents.acl.bypass grant no
+    # longer auto-bypasses a restricted document's content ACL.
+    admin_no_bypass = TenantContext(
+        user_id=seeded_user.id, org_id=seeded_user.org_id, role="admin",
+        workspace_ids=frozenset())
+    with pytest.raises(WorkspaceAccessDenied):
+        await get_document_checked(session, admin_no_bypass, doc.id)
+    # An admin holding the grant (e.g. the seeded Content Manager template) does.
+    admin_bypass = TenantContext(
+        user_id=seeded_user.id, org_id=seeded_user.org_id, role="admin",
+        workspace_ids=frozenset(), permissions=frozenset({"documents.acl.bypass"}))
+    assert (await get_document_checked(session, admin_bypass, doc.id)).id == doc.id
 
 
 async def test_listing_blanks_acl_group_ids_for_plain_user_but_shows_admin(

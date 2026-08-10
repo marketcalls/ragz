@@ -67,7 +67,12 @@ async def seed_acl_workspace(
 ) -> tuple[TenantContext, TenantContext, TenantContext, Workspace, Group]:
     """ONE org, ONE workspace, both users members of it — so workspace filters
     alone can never explain a pass. insider is in group 'finance'; outsider is
-    not; admin has no groups at all (bypass must come from role, not data)."""
+    not; admin has no groups at all -- its ACL bypass must come purely from the
+    explicit documents.acl.bypass permission (RBAC-05), never from data. The
+    admin carries that permission because it models a real deployed admin
+    holding the seeded "Content Manager" grant, which the paired RBAC-05
+    migration gives every existing admin/superadmin -- library management
+    (set_document_acl, folder cascade delete of restricted docs) needs it."""
     org = Organization(name="aclOrg")
     session.add(org)
     await session.flush()
@@ -90,7 +95,8 @@ async def seed_acl_workspace(
     ctx_out = TenantContext(user_id=outsider.id, org_id=org.id, role="user",
                             workspace_ids=frozenset({ws.id}))
     ctx_admin = TenantContext(user_id=admin.id, org_id=org.id, role="admin",
-                              workspace_ids=frozenset())
+                              workspace_ids=frozenset(),
+                              permissions=frozenset({"documents.acl.bypass"}))
     return ctx_in, ctx_out, ctx_admin, ws, finance
 
 

@@ -45,37 +45,94 @@ async def test_group_member_retrieves_restricted_doc(
     assert restricted.id in {c.document_id for c in result.chunks}
 
 
-async def test_admin_bypasses_acl(
+_CONTENT_MANAGER_ID = "00000000-0000-0000-0000-000000000c03"
+
+
+async def test_admin_without_content_manager_cannot_read_restricted_document(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
-    """Documented RBAC-5 posture: admins manage the library and see all of it.
-    The admin ctx carries NO groups, so a pass here proves the bypass comes
-    from the role check in retrieve(), not from accidental group membership."""
-    _, _, ctx_admin, ws, _, restricted, _ = await _seed(session)
-    result = await retrieve(session, ctx_admin, ws.id, RESTRICTED, top_k=10)
+    """RBAC-05: an org admin with NO explicit documents.acl.bypass grant no
+    longer auto-bypasses the content ACL. The admin ctx (built through the
+    REAL build_context_for_user, custom_role_id=None) must carry a group
+    filter (_ctx_acl is NOT None), and the restricted doc must never surface
+    in retrieval -- while the unrestricted doc still does (not vacuous)."""
+    from sqlalchemy import select
+
+    from ragz.modules.auth.models import User
+    from ragz.modules.retrieval.service import _ctx_acl
+    from ragz.modules.tenancy.context import build_context_for_user
+
+    _, _, _, ws, _, restricted, open_doc = await _seed(session)
+    admin = (
+        await session.execute(select(User).where(User.email == "adm@aclorg.com"))
+    ).scalar_one()
+    assert admin.custom_role_id is None  # a fresh admin, no explicit grant
+    ctx = await build_context_for_user(session, admin)
+    assert _ctx_acl(ctx) is not None  # no longer an unconditional bypass
+    result = await retrieve(session, ctx, ws.id, RESTRICTED, top_k=10)
+    returned = {c.document_id for c in result.chunks}
+    assert restricted.id not in returned
+    assert open_doc.id in returned  # not a vacuous empty-result pass
+    assert all("4400" not in c.text for c in result.chunks)
+
+
+async def test_admin_with_content_manager_grant_still_bypasses_acl(
+    session: AsyncSession, qdrant_collection: None
+) -> None:
+    """RBAC-05: the explicit documents.acl.bypass grant (carried by the seeded
+    Content Manager template, fixed id ...c03) restores the old full-library
+    visibility -- _ctx_acl is None and the restricted doc is retrievable."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from ragz.modules.auth.models import User
+    from ragz.modules.retrieval.service import _ctx_acl
+    from ragz.modules.tenancy.context import build_context_for_user
+    from ragz.modules.tenancy.models import RoleTemplate
+
+    _, _, _, ws, _, restricted, _ = await _seed(session)
+    cm = RoleTemplate(
+        id=uuid.UUID(_CONTENT_MANAGER_ID),
+        name="Content Manager",
+        permissions=["documents.acl.bypass", "documents.list", "documents.content.read"],
+    )
+    session.add(cm)
+    await session.flush()
+    admin = (
+        await session.execute(select(User).where(User.email == "adm@aclorg.com"))
+    ).scalar_one()
+    admin.custom_role_id = cm.id
+    await session.flush()
+    ctx = await build_context_for_user(session, admin)
+    assert _ctx_acl(ctx) is None  # explicit grant restores the bypass
+    result = await retrieve(session, ctx, ws.id, RESTRICTED, top_k=10)
     assert restricted.id in {c.document_id for c in result.chunks}
 
 
-async def test_superadmin_bypasses_acl(
+async def test_superadmin_with_bypass_grant_bypasses_acl(
     session: AsyncSession, qdrant_collection: None
 ) -> None:
-    """Superadmin also bypasses ACL, same as admin. Like test_admin_bypasses_acl
-    but with role="superadmin". The superadmin ctx carries NO groups, so a pass
-    here proves the bypass comes from the role check in retrieve()."""
+    """RBAC-05: superadmin is NOT auto-bypassed either -- the content-ACL
+    bypass is now permission-gated for every tier. A superadmin carrying the
+    explicit documents.acl.bypass grant (which the paired migration gives
+    every existing superadmin) sees the restricted doc; the superadmin ctx
+    carries NO groups, so a pass here proves the bypass comes from the
+    permission, not accidental group membership."""
     from ragz.modules.auth.models import User
+    from ragz.modules.retrieval.service import _ctx_acl
     from ragz.modules.tenancy.context import TenantContext
 
-    ctx_in, ctx_out, ctx_admin, ws, _, restricted, _ = await _seed(session)
-    # Create a superadmin user (groupless)
+    _, _, ctx_admin, ws, _, restricted, _ = await _seed(session)
     superadmin = User(org_id=ctx_admin.org_id, email="superadm@aclorg.com",
                       password_hash="x", role="superadmin")  # noqa: S106
     session.add(superadmin)
     await session.flush()
-    # Superadmin doesn't need workspace membership; they bypass it
     ctx_superadmin = TenantContext(
         user_id=superadmin.id, org_id=ctx_admin.org_id, role="superadmin",
-        workspace_ids=frozenset()
+        workspace_ids=frozenset(), permissions=frozenset({"documents.acl.bypass"}),
     )
+    assert _ctx_acl(ctx_superadmin) is None
     result = await retrieve(session, ctx_superadmin, ws.id, RESTRICTED, top_k=10)
     assert restricted.id in {c.document_id for c in result.chunks}
 

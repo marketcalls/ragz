@@ -64,3 +64,53 @@ async def test_fallback_policy_change_does_not_trigger_eval_run(
     )
     await service.update_retrieval_settings(session, ctx, ws.id, {"fallback_policy": "decline"})
     assert enqueued == []
+
+
+async def test_assign_custom_role_now_allows_admin_target(session: AsyncSession) -> None:
+    """RBAC-05: an org admin is now a valid assign_custom_role target -- an
+    admin needs an EXPLICIT template (e.g. Content Manager) for content-ACL
+    bypass, exactly as a 'user'-tier account needs one for upload/delete.
+    Before this change an admin target 409'd."""
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization, RoleTemplate
+
+    org = Organization(name="assign-admin-target-org")
+    session.add(org)
+    await session.flush()
+    actor = User(org_id=org.id, email="actor@assign.example",
+                 password_hash="x", role="admin")  # noqa: S106
+    target = User(org_id=org.id, email="target@assign.example",
+                  password_hash="x", role="admin")  # noqa: S106
+    session.add_all([actor, target])
+    await session.flush()
+    template = RoleTemplate(name="cm-admin-target", permissions=["documents.acl.bypass"])
+    session.add(template)
+    await session.flush()
+    seeded_ctx = TenantContext(
+        user_id=actor.id, org_id=org.id, role="admin", workspace_ids=frozenset()
+    )
+    updated = await service.assign_custom_role(session, seeded_ctx, target.id, template.id)
+    assert updated.custom_role_id == template.id
+
+
+async def test_assign_custom_role_still_rejects_superadmin_target(session: AsyncSession) -> None:
+    """RBAC-05: a superadmin target is still rejected (platform-tier, out of
+    this org-scoped mechanism's reach) -- 404 so existence never leaks."""
+    from ragz.core.errors import NotFoundError
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization
+
+    org = Organization(name="assign-superadmin-target-org")
+    session.add(org)
+    await session.flush()
+    actor = User(org_id=org.id, email="actor2@assign.example",
+                 password_hash="x", role="admin")  # noqa: S106
+    superadmin = User(org_id=org.id, email="sa@assign.example",
+                      password_hash="x", role="superadmin")  # noqa: S106
+    session.add_all([actor, superadmin])
+    await session.flush()
+    seeded_ctx = TenantContext(
+        user_id=actor.id, org_id=org.id, role="admin", workspace_ids=frozenset()
+    )
+    with pytest.raises(NotFoundError):
+        await service.assign_custom_role(session, seeded_ctx, superadmin.id, None)
