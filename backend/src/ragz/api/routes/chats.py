@@ -55,6 +55,16 @@ SendCtxDep = Annotated[TenantContext, Depends(rate_limit_user("chat_send", 30, 6
 # omits it cannot. Added to the existing dependency list -- does not replace F's
 # quota deps or G's rate limit above.
 _ChatGenerateDep = Depends(require_action("chat.generate"))
+# RBAC-03 Task 6: the remaining granular chat gates -- read/update/delete/
+# feedback/attachments.create. Each is in the non-destructive default role's
+# permission set, so an ordinary member is unaffected; a custom role that
+# omits one of these is denied at the route boundary (dependencies=[...] on
+# the decorator), matching _ChatGenerateDep's own pattern above.
+_ChatReadDep = Depends(require_action("chat.read"))
+_ChatUpdateDep = Depends(require_action("chat.update"))
+_ChatDeleteDep = Depends(require_action("chat.delete"))
+_ChatFeedbackDep = Depends(require_action("chat.feedback"))
+_ChatAttachDep = Depends(require_action("chat.attachments.create"))
 
 _SSE_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
 
@@ -160,7 +170,7 @@ async def create_chat(body: ChatCreate, session: SessionDep, ctx: CtxDep) -> Cha
     return _chat_out(chat)
 
 
-@router.get("/chats", response_model=list[ChatOut])
+@router.get("/chats", response_model=list[ChatOut], dependencies=[_ChatReadDep])
 async def list_chats(
     session: SessionDep, ctx: CtxDep, workspace_id: UUID | None = None
 ) -> list[ChatOut]:
@@ -169,19 +179,19 @@ async def list_chats(
     ]
 
 
-@router.get("/chats/{chat_id}", response_model=ChatTreeOut)
+@router.get("/chats/{chat_id}", response_model=ChatTreeOut, dependencies=[_ChatReadDep])
 async def get_chat_tree(chat_id: UUID, session: SessionDep, ctx: CtxDep) -> ChatTreeOut:
     return await service.get_chat_tree(session, ctx, chat_id)
 
 
-@router.patch("/chats/{chat_id}", response_model=ChatOut)
+@router.patch("/chats/{chat_id}", response_model=ChatOut, dependencies=[_ChatUpdateDep])
 async def rename_chat(
     chat_id: UUID, body: ChatPatch, session: SessionDep, ctx: CtxDep
 ) -> ChatOut:
     return _chat_out(await service.rename_chat(session, ctx, chat_id, body.title))
 
 
-@router.delete("/chats/{chat_id}", status_code=204)
+@router.delete("/chats/{chat_id}", status_code=204, dependencies=[_ChatDeleteDep])
 async def delete_chat(chat_id: UUID, session: SessionDep, ctx: CtxDep) -> None:
     await service.delete_chat(session, ctx, chat_id)
 
@@ -280,7 +290,10 @@ async def regenerate(
     ))
 
 
-@router.put("/messages/{message_id}/feedback", response_model=FeedbackOut)
+@router.put(
+    "/messages/{message_id}/feedback", response_model=FeedbackOut,
+    dependencies=[_ChatFeedbackDep],
+)
 async def set_feedback(
     message_id: UUID, body: MessageFeedbackIn, session: SessionDep, ctx: CtxDep,
 ) -> FeedbackOut:
@@ -290,13 +303,16 @@ async def set_feedback(
     return FeedbackOut.model_validate(fb)
 
 
-@router.delete("/messages/{message_id}/feedback", status_code=204)
+@router.delete(
+    "/messages/{message_id}/feedback", status_code=204, dependencies=[_ChatFeedbackDep],
+)
 async def clear_feedback(message_id: UUID, session: SessionDep, ctx: CtxDep) -> None:
     await service.clear_message_feedback(session, ctx, message_id)
 
 
 @router.post(
     "/chats/{chat_id}/attachments", status_code=201, response_model=AttachmentOut,
+    dependencies=[_ChatAttachDep],
 )
 async def upload_attachment(
     chat_id: UUID, session: SessionDep, settings: SettingsDep, ctx: CtxDep,

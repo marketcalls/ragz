@@ -144,6 +144,13 @@ async def get_chat(session: AsyncSession, ctx: TenantContext, chat_id: UUID) -> 
     ).scalar_one_or_none()
     if chat is None:
         raise NotFoundError("chat not found")
+    # RBAC-03: a chat's workspace membership can be revoked after the chat
+    # was created (offboarding); re-check on every read so historical chat
+    # access ends immediately, same posture as documents/workspaces -- never
+    # rely on the chat's own existence to imply current access. Mirrors
+    # tenancy.service.get_workspace_checked's own membership rule.
+    if ctx.role == "user" and chat.workspace_id not in ctx.workspace_ids:
+        raise NotFoundError("chat not found")
     return chat
 
 

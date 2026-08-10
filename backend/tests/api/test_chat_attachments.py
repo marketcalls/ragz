@@ -4,6 +4,7 @@ chat route (iron rule 1/2)."""
 
 import asyncio
 import base64
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -18,6 +19,7 @@ from ragz.modules.auth.passwords import hash_password
 from ragz.modules.tenancy.models import Organization
 from ragz.worker import tasks
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
+from tests.api.test_permissions_routes import make_templated_member
 from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_litellm_handler
 
 # chat_client/chat_env fixtures live in test_chat_stream; pytest only shares
@@ -61,6 +63,27 @@ async def test_upload_attachment_creates_row_and_stores_blob(
     assert body["kind"] == "document"
     assert body["filename"] == "notes.txt"
     assert body["status"] == "queued"
+
+
+async def test_upload_attachment_requires_chat_attachments_create(
+    chat_client: httpx.AsyncClient, chat_env: dict, session: AsyncSession,
+    seeded_user: User, stack_env: None,
+) -> None:
+    """RBAC-03: a custom role holding chat.read/chat.generate but not
+    chat.attachments.create cannot upload -- the gate fires before the route
+    body runs, so this holds even for a chat_id that doesn't exist."""
+    await make_templated_member(
+        session, seeded_user, email="narrow-attach@acme.com", template_name="NoAttachCreate",
+        permissions=["documents.list", "documents.content.read", "chat.read", "chat.generate"],
+        workspace_id=str(chat_env["workspace"].id),
+    )
+    h = await auth(chat_client, "narrow-attach@acme.com")
+    r = await chat_client.post(
+        f"/api/v1/chats/{uuid4()}/attachments",
+        headers=h,
+        files={"file": ("a.txt", b"hello", "text/plain")},
+    )
+    assert r.status_code == 403
 
 
 async def test_upload_attachment_rejects_other_chats_chat(

@@ -1,11 +1,14 @@
 from typing import Any
+from uuid import uuid4
 
 import httpx
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
 from ragz.modules.tenancy.models import Workspace, WorkspaceMember
 from tests.api.test_chat_stream import auth, make_model_and_chat
+from tests.api.test_permissions_routes import make_templated_member
 
 # chat_client/fake_streamer fixtures live in test_chat_stream; pytest only
 # shares fixtures across modules via conftest.py or an explicit plugin import.
@@ -128,6 +131,59 @@ async def test_message_feedback_round_trip_and_appears_in_chat_tree(
     tree2 = (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).json()
     msg2 = next(m for m in tree2["messages"][0]["children"] if m["id"] == message_id)
     assert msg2["feedback"] is None
+
+
+async def test_list_chats_requires_chat_read(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User,
+) -> None:
+    """RBAC-03: a custom role that omits chat.read cannot list chats or read
+    a chat tree -- the dependency gate fires before the handler runs, so this
+    holds even for a chat_id that doesn't exist."""
+    await make_templated_member(
+        session, seeded_user, email="narrow-read@acme.com", template_name="NoChatRead",
+        permissions=["documents.list", "documents.content.read"],
+        workspace_id=str(chat_env["workspace"].id),
+    )
+    h = await auth(chat_client, "narrow-read@acme.com")
+    r = await chat_client.get("/api/v1/chats", headers=h)
+    assert r.status_code == 403
+
+    r2 = await chat_client.get(f"/api/v1/chats/{uuid4()}", headers=h)
+    assert r2.status_code == 403
+
+
+async def test_get_chat_denies_after_membership_removed(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User,
+) -> None:
+    """RBAC-03 offboarding property: a chat created while the caller was a
+    workspace member becomes unreadable (non-enumerating 404, not 403) the
+    moment their WorkspaceMember row is removed -- get_chat re-checks
+    membership on every read, it doesn't trust the chat's own existence."""
+    member = await make_templated_member(
+        session, seeded_user, email="offboarded@acme.com", template_name="ChatMember",
+        permissions=["chat.generate", "chat.read"],
+        workspace_id=str(chat_env["workspace"].id),
+    )
+    h = await auth(chat_client, "offboarded@acme.com")
+    r = await chat_client.post(
+        "/api/v1/chats", json={"workspace_id": str(chat_env["workspace"].id)}, headers=h
+    )
+    assert r.status_code == 201
+    chat_id = r.json()["id"]
+    assert (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).status_code == 200
+
+    await session.execute(
+        delete(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == chat_env["workspace"].id,
+            WorkspaceMember.user_id == member.id,
+        )
+    )
+    await session.commit()
+
+    r2 = await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)
+    assert r2.status_code == 404
 
 
 async def test_send_rate_limited_per_user(
