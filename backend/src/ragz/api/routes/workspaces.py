@@ -13,7 +13,7 @@ from ragz.modules.tenancy import service
 from ragz.modules.tenancy.context import (
     TenantContext,
     get_tenant_context,
-    require_permission,
+    require_action,
     require_role,
 )
 from ragz.modules.tenancy.reembed_models import ReembedJob
@@ -34,7 +34,7 @@ CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): PATCH (settings) is workspace configuration, distinct from
 # org administration (POST /workspaces, POST .../members stay AdminDep).
-ConfigureDep = Annotated[TenantContext, Depends(require_permission("workspace.configure"))]
+ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
 
 
 @router.post("", status_code=201, response_model=WorkspaceOut)

@@ -7,12 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.api.deps import get_session
 from ragz.modules.evals import service
 from ragz.modules.evals.schemas import EvalRunOut, GoldenQueryCreate, GoldenQueryOut
-from ragz.modules.tenancy.context import TenantContext, require_permission
+from ragz.modules.tenancy.context import TenantContext, require_action
 from ragz.worker.tasks import enqueue_eval_run
 
 router = APIRouter(tags=["evals"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-ConfigureDep = Annotated[TenantContext, Depends(require_permission("workspace.configure"))]
+ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
 
 
 @router.get("/workspaces/{workspace_id}/golden-queries", response_model=list[GoldenQueryOut])

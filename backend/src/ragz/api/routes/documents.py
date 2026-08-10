@@ -28,7 +28,7 @@ from ragz.modules.documents.schemas import (
 from ragz.modules.tenancy.context import (
     TenantContext,
     get_tenant_context,
-    require_permission,
+    require_action,
     require_role,
 )
 from ragz.worker.tasks import enqueue_delete, enqueue_ingest, enqueue_reindex
@@ -40,9 +40,9 @@ AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): granular guards layered ON TOP of (not instead of) the
 # workspace-membership/ACL checks inside the service layer -- get_workspace_checked
 # etc. still run unconditionally.
-UploadDep = Annotated[TenantContext, Depends(require_permission("documents.upload"))]
-DeleteDep = Annotated[TenantContext, Depends(require_permission("documents.delete"))]
-ConfigureDep = Annotated[TenantContext, Depends(require_permission("workspace.configure"))]
+UploadDep = Annotated[TenantContext, Depends(require_action("documents.upload"))]
+DeleteDep = Annotated[TenantContext, Depends(require_action("documents.delete"))]
+ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
 
 
 def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:

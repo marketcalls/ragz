@@ -37,7 +37,7 @@ from ragz.modules.tenancy.context import (
     TenantContext,
     get_tenant_context,
     rate_limit_user,
-    require_permission,
+    require_action,
 )
 from ragz.modules.tenancy.models import Workspace
 from ragz.worker.tasks import enqueue_attachment_processing, enqueue_audit_message
@@ -50,7 +50,7 @@ CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 SendCtxDep = Annotated[TenantContext, Depends(rate_limit_user("chat_send", 30, 60))]
 # Task 13 (RBAC-2, H-C12): ADDED to the existing dependency list on create/send/
 # regenerate -- does not replace F's quota deps or G's rate limit above.
-_ChatUseDep = Depends(require_permission("chat.use"))
+_ChatUseDep = Depends(require_action("chat.use"))
 
 _SSE_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
 

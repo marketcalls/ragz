@@ -1,8 +1,8 @@
-"""RBAC-2: granular permission resolution + the require_permission guard.
+"""RBAC-2/RBAC-06: granular permission resolution + the require_action guard.
 
 Probe-route pattern borrowed from tests/api/test_tenant_context.py: wire a
 throwaway route onto the already-built app so we can exercise
-get_tenant_context/require_permission through a real request instead of
+get_tenant_context/require_action through a real request instead of
 constructing TenantContext by hand.
 """
 
@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
-from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_permission
+from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_action
 from ragz.modules.tenancy.models import RoleTemplate
 from ragz.modules.tenancy.permissions import DEFAULT_USER_PERMISSIONS, PERMISSIONS
 
@@ -23,7 +23,7 @@ def wire_probe(app: FastAPI) -> None:
 
     @app.get(
         "/probe/requires-delete",
-        dependencies=[Depends(require_permission("documents.delete"))],
+        dependencies=[Depends(require_action("documents.delete"))],
     )
     async def requires_delete() -> dict[str, bool]:
         return {"ok": True}
@@ -130,3 +130,32 @@ async def test_require_permission_guard(
     assert (await client.get("/probe/requires-delete", headers=h(plain_tok))).status_code == 200
     assert (await client.get("/probe/requires-delete", headers=h(admin_tok))).status_code == 200
     assert (await client.get("/probe/requires-delete", headers=h(super_tok))).status_code == 200
+
+
+def test_catalog_is_a_superset_of_every_legacy_flag() -> None:
+    legacy = {"documents.upload", "documents.delete", "workspace.configure",
+              "analytics.view", "chat.use"}
+    assert legacy <= PERMISSIONS
+
+
+def test_new_action_catalog_covers_every_declared_domain() -> None:
+    for action in (
+        "search.execute", "chat.read", "chat.generate", "documents.content.read",
+        "documents.acl.bypass", "audit.read", "audit.export", "roles.assign",
+        "users.role.assign", "groups.manage", "quota.manage", "evals.run",
+    ):
+        assert action in PERMISSIONS
+
+
+def test_default_user_permissions_stays_behavior_preserving_in_task_1() -> None:
+    """RBAC-06 (Task 1) is a pure catalog EXPANSION -- it must not change
+    who-can-do-what (that's RBAC-04/Task 3's deny-by-default narrowing).
+    DEFAULT_USER_PERMISSIONS therefore keeps every legacy flag a plain
+    "user"-tier account with no custom role already receives today
+    (documents.upload/delete, chat.use) AND additionally exposes the new
+    non-destructive read-ish actions those accounts implicitly rely on, so
+    Task 3 can narrow this set later without a second behavior change here.
+    """
+    legacy = {"documents.upload", "documents.delete", "chat.use"}
+    assert legacy <= DEFAULT_USER_PERMISSIONS
+    assert {"search.execute", "chat.read", "chat.generate"} <= DEFAULT_USER_PERMISSIONS

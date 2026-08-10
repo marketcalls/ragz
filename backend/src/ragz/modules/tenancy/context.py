@@ -125,14 +125,22 @@ def require_role(*roles: str) -> Callable[..., Awaitable[TenantContext]]:
     return guard
 
 
-def require_permission(permission: str) -> Callable[..., Awaitable[TenantContext]]:
-    """Granular guard (RBAC-2). Superadmin bypass matches require_role; admins
-    pass because get_tenant_context grants them every permission. Custom roles
-    refine the 'user' tier only."""
+def require_action(
+    action: str, *, scope: str = "workspace"
+) -> Callable[..., Awaitable[TenantContext]]:
+    """Central authorization decision point (RBAC-06): every declared route
+    action funnels through here. Superadmin bypass matches require_role;
+    admins pass because get_tenant_context grants them every permission.
+    Custom roles refine the 'user' tier only. `scope`
+    (self|workspace|organization|platform) documents the action's resource
+    scope for api/policy.py's route registry and the /me/authorization
+    response (a later task) -- it does not itself widen or narrow the check
+    below; resource-scope enforcement stays where it already lives
+    (get_workspace_checked/get_document_checked/etc)."""
 
     async def guard(ctx: Annotated[TenantContext, Depends(get_tenant_context)]) -> TenantContext:
-        if ctx.role != "superadmin" and permission not in ctx.permissions:
-            raise AuthorizationError(f"requires permission {permission}")
+        if ctx.role != "superadmin" and action not in ctx.permissions:
+            raise AuthorizationError(f"requires permission {action}")
         return ctx
 
     return guard

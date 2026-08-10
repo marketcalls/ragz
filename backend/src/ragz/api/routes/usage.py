@@ -24,7 +24,7 @@ from ragz.modules.quotas.schemas import (
 from ragz.modules.tenancy.context import (
     TenantContext,
     get_tenant_context,
-    require_permission,
+    require_action,
     require_role,
 )
 
@@ -36,7 +36,7 @@ AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 SuperDep = Annotated[TenantContext, Depends(require_role("superadmin"))]
 # Task 13 (RBAC-2): org-scoped analytics dashboard narrows/widens independently
 # of admin role; GET .../orgs (platform-wide, superadmin) is unchanged.
-AnalyticsDep = Annotated[TenantContext, Depends(require_permission("analytics.view"))]
+AnalyticsDep = Annotated[TenantContext, Depends(require_action("analytics.view"))]
 
 
 @router.get("/admin/orgs/{org_id}/quota", response_model=OrgQuotaOut | None)
