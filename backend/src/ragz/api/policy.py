@@ -6,11 +6,60 @@ a new route with neither entry fails tests/api/test_route_policy.py, which
 is the enforcement mechanism for "no unclassified route reaches main"
 (audit §9 mandatory adversarial test 5)."""
 
+import re
+from collections.abc import Iterable, Iterator
+from typing import Any
+
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 
 from ragz.modules.tenancy.permissions import PERMISSIONS
 
 _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
+_HTTP_METHODS_UPPER = frozenset(m.upper() for m in _HTTP_METHODS)
+
+# Strips Starlette path-converter syntax ("{name:path}" -> "{name}") so a
+# path assembled from raw APIRoute.path segments matches the normalized form
+# FastAPI's OpenAPI generator (and ROUTE_POLICY's keys) use.
+_PATH_CONVERTER_RE = re.compile(r"\{([^:{}]+):[^{}]+\}")
+
+
+def _normalize_path(path: str) -> str:
+    return _PATH_CONVERTER_RE.sub(r"{\1}", path)
+
+
+def _iter_hidden_api_routes(
+    routes: Iterable[Any], prefix: str = ""
+) -> Iterator[tuple[str, APIRoute]]:
+    """Recursively walk the router tree rooted at `routes`, yielding
+    (full_path, route) for every APIRoute with include_in_schema=False.
+
+    This exists purely as a supplementary safety net -- see the docstring on
+    audit_route_policy for why app.openapi() remains the primary enumeration
+    source and this walk is not. Descends into anything that looks like a
+    nested router: Starlette Mount-style nodes exposing `.routes` directly,
+    and FastAPI's private `_IncludedRouter` wrapper, which instead exposes
+    the sub-router (with its own `.routes`) via `.original_router` and the
+    path prefix it was mounted under via `.include_context.prefix`.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            if not route.include_in_schema:
+                yield prefix + route.path, route
+            continue
+
+        nested_prefix = prefix
+        include_context = getattr(route, "include_context", None)
+        if include_context is not None:
+            nested_prefix = prefix + getattr(include_context, "prefix", "")
+
+        nested = getattr(route, "routes", None)
+        if nested is None:
+            original_router = getattr(route, "original_router", None)
+            if original_router is not None:
+                nested = getattr(original_router, "routes", None)
+        if nested:
+            yield from _iter_hidden_api_routes(nested, nested_prefix)
 
 # No TenantContext dependency at all: either genuinely public (login, health,
 # docs) or the auth IS something other than a bearer JWT (webhook signature
@@ -156,6 +205,20 @@ def audit_route_policy(app: FastAPI) -> list[str]:
     finds zero routes and this gate would vacuously "pass" with an empty
     gap list. `app.openapi()` is the public, version-stable surface that
     always reflects exactly what FastAPI will actually dispatch.
+
+    One gap in `app.openapi()`: it omits any route mounted with
+    `include_in_schema=False` entirely -- there are none of those today, but
+    a hidden internal/webhook route is exactly the kind of thing a developer
+    forgets to add to ROUTE_POLICY. To close that hole without giving up the
+    stable openapi()-based primary walk, this also runs a supplementary,
+    best-effort recursive walk of `app.router.routes` (see
+    `_iter_hidden_api_routes`) that finds `APIRoute` instances with
+    `include_in_schema=False` specifically and reports any that aren't
+    declared. That walk relies on FastAPI's private `_IncludedRouter`/
+    `original_router`/`include_context` attributes, which is exactly the
+    kind of version-fragile internals the openapi() switch above was meant
+    to avoid -- so it stays scoped to this supplementary check only, never
+    the primary source of truth.
     """
     gaps: list[str] = []
     schema = app.openapi()
@@ -174,4 +237,18 @@ def audit_route_policy(app: FastAPI) -> list[str]:
                 gaps.append(f"{method} {path}")
             elif action not in PERMISSIONS:
                 gaps.append(f"{method} {path} (unknown action {action!r})")
+
+    for full_path, route in _iter_hidden_api_routes(app.router.routes):
+        path = _normalize_path(full_path)
+        for method in route.methods or ():
+            if method not in _HTTP_METHODS_UPPER:
+                continue
+            key = (method, path)
+            if key in PUBLIC_ROUTES:
+                continue
+            action = ROUTE_POLICY.get(key)
+            if action is None:
+                gaps.append(f"{method} {path} (hidden route, include_in_schema=False)")
+            elif action not in PERMISSIONS:
+                gaps.append(f"{method} {path} (hidden route, unknown action {action!r})")
     return gaps
