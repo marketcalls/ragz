@@ -4,6 +4,7 @@ parse_bytes call) or `llamaparse` (LlamaIndex cloud via REST, no SDK). Both
 return list[PageBlock] so the chunk/embed pipeline downstream is unchanged."""
 
 import asyncio
+import re
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,60 @@ from ragz.modules.secrets import service as secrets_service
 _LLAMA_BASE = "https://api.cloud.llamaindex.ai/api/v1/parsing"
 _LLAMA_POLL_INTERVAL = 3.0
 _LLAMA_MAX_POLLS = 100  # ~5 min at 3s
+
+_ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+_TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$")
+
+
+def _markdown_to_blocks(markdown: str) -> list[PageBlock]:
+    """Map anydoc's flat GFM Markdown to PageBlocks. No page boundaries exist
+    in the input, so every block is page=1 (documented trade-off); headings
+    carry `level` so the existing chunker derives section trails, and GFM
+    pipe tables are emitted whole as one `table` block (the chunker emits a
+    table as its own chunk). Everything else is text, split on blank lines."""
+    lines = markdown.splitlines()
+    blocks: list[PageBlock] = []
+    para: list[str] = []
+
+    def flush_para() -> None:
+        text = "\n".join(para).strip()
+        if text:
+            blocks.append(PageBlock(page=1, text=text, kind="text"))
+        para.clear()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        heading = _ATX_HEADING.match(line)
+        if heading:
+            flush_para()
+            blocks.append(
+                PageBlock(page=1, text=heading.group(2).strip(),
+                          kind="heading", level=len(heading.group(1)))
+            )
+            i += 1
+            continue
+        # GFM table: a pipe row immediately followed by a separator row.
+        if (
+            "|" in line
+            and i + 1 < len(lines)
+            and _TABLE_SEP.match(lines[i + 1])
+        ):
+            flush_para()
+            table = [line, lines[i + 1]]
+            i += 2
+            while i < len(lines) and "|" in lines[i] and lines[i].strip():
+                table.append(lines[i])
+                i += 1
+            blocks.append(PageBlock(page=1, text="\n".join(table).strip(), kind="table"))
+            continue
+        if line.strip():
+            para.append(line)
+        else:
+            flush_para()
+        i += 1
+    flush_para()
+    return blocks
 
 
 class LlamaParseParser:
