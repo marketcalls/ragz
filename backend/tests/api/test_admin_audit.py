@@ -1,18 +1,56 @@
 from datetime import timedelta
+from uuid import UUID
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.audit.models import AuditEvent
 from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
-from ragz.modules.tenancy.models import Organization, RoleTemplate
+from ragz.modules.auth.passwords import hash_password
+from ragz.modules.tenancy.models import Organization, RoleTemplate, Workspace
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": "pw123456"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.fixture
+async def super_headers(client: httpx.AsyncClient, seeded_superadmin: User) -> dict[str, str]:
+    return await auth(client, seeded_superadmin.email)
+
+
+@pytest.fixture
+async def ws_id(session: AsyncSession, seeded_user: User) -> UUID:
+    ws = Workspace(org_id=seeded_user.org_id, name="AuditWS")
+    session.add(ws)
+    await session.commit()
+    return ws.id
+
+
+@pytest.fixture
+async def member_headers_no_perms(
+    client: httpx.AsyncClient, session: AsyncSession, seeded_user: User
+) -> dict[str, str]:
+    """A role="user" account carrying only DEFAULT_USER_PERMISSIONS (the
+    read-only floor) -- it lacks documents.upload, so require_action denies it
+    and records the denial event."""
+    user = User(org_id=seeded_user.org_id, email="noperms@acme.com",
+                password_hash=hash_password("pw123456"), role="user")
+    session.add(user)
+    await session.commit()
+    return await auth(client, "noperms@acme.com")
+
+
+@pytest.fixture
+async def org_scoped_audit_reader_headers(
+    client: httpx.AsyncClient, session: AsyncSession, seeded_user: User
+) -> dict[str, str]:
+    await make_org_scoped_audit_reader(session, seeded_user, email="export-reader@acme.com")
+    return await auth(client, "export-reader@acme.com")
 
 
 async def seed_events(session: AsyncSession, seeded_user: User, n: int = 7) -> None:
@@ -222,3 +260,28 @@ async def test_superadmin_still_sees_platform_wide(
     )
     assert r.status_code == 200
     assert len(r.json()["events"]) == 2
+
+
+async def test_denied_action_is_recorded_as_audit_event(
+    client: httpx.AsyncClient, member_headers_no_perms: dict[str, str], ws_id: UUID,
+    super_headers: dict[str, str],
+) -> None:
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents", headers=member_headers_no_perms,
+        files={"file": ("a.txt", b"x", "text/plain")},
+    )
+    assert r.status_code == 403
+    r = await client.get(
+        "/api/v1/admin/audit", headers=super_headers, params={"action": "documents.upload"}
+    )
+    assert any(e["result"] == "denied" for e in r.json()["events"])
+
+
+async def test_export_requires_audit_export_action(
+    client: httpx.AsyncClient, org_scoped_audit_reader_headers: dict[str, str],
+) -> None:
+    # org_scoped_audit_reader_headers (Task 10) grants audit.read + audit.export
+    r = await client.get(
+        "/api/v1/admin/audit/export", headers=org_scoped_audit_reader_headers
+    )
+    assert r.status_code == 200

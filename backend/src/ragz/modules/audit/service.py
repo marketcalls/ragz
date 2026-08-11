@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+import structlog
 from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,11 +17,24 @@ async def record_audit(
     action: str,
     target_type: str,
     target_id: str,
+    result: str = "success",
+    reason_code: str | None = None,
+    source_ip: str | None = None,
+    request_id: str | None = None,
+    auth_method: str | None = None,
+    credential_id: str | None = None,
 ) -> None:
+    # RBAC-07: request_id is auto-filled from the ambient structlog contextvar
+    # RequestIDMiddleware already binds on every request -- no need to thread
+    # it through all 52 existing call sites individually.
+    if request_id is None:
+        request_id = structlog.contextvars.get_contextvars().get("request_id")
     session.add(
         AuditEvent(
             org_id=org_id, actor_id=actor_id, action=action,
             target_type=target_type, target_id=target_id,
+            result=result, reason_code=reason_code, source_ip=source_ip,
+            request_id=request_id, auth_method=auth_method, credential_id=credential_id,
         )
     )
 

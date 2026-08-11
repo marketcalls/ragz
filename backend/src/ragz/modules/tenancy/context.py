@@ -14,6 +14,7 @@ from ragz.core.app_settings import get_or_create_signing_key
 from ragz.core.db import get_session
 from ragz.core.errors import AuthenticationError, AuthorizationError
 from ragz.core.ratelimit import check_rate_limit
+from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
 from ragz.modules.auth.tokens import decode_access_token
 from ragz.modules.tenancy.models import RoleTemplate, UserGroup, WorkspaceMember
@@ -181,8 +182,22 @@ def require_action(
     below; resource-scope enforcement stays where it already lives
     (get_workspace_checked/get_document_checked/etc)."""
 
-    async def guard(ctx: Annotated[TenantContext, Depends(get_tenant_context)]) -> TenantContext:
+    async def guard(
+        ctx: Annotated[TenantContext, Depends(get_tenant_context)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> TenantContext:
         if ctx.role != "superadmin" and action not in ctx.permissions:
+            # RBAC-07: every 403 from the central authorization decision point
+            # leaves structured evidence. Commit runs ONLY on this deny branch,
+            # before raising -- the success path stays untouched (no commit, no
+            # audit write) and the handler never runs on a 403, so the request
+            # session is not disturbed for the allow path.
+            await record_audit(
+                session, org_id=ctx.org_id, actor_id=ctx.user_id, action=action,
+                target_type="route", target_id=action, result="denied",
+                reason_code="missing_action",
+            )
+            await session.commit()
             raise AuthorizationError(f"requires permission {action}")
         return ctx
 

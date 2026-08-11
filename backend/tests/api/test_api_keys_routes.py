@@ -80,3 +80,36 @@ async def test_requires_superadmin(
             json={"name": "x", "user_id": str(UUID(int=0)), "workspace_id": str(UUID(int=0))},
         )
     ).status_code == 403
+
+
+async def test_revoke_nonexistent_key_404s_not_silent_success(
+    client: httpx.AsyncClient, super_headers: dict[str, str],
+) -> None:
+    import uuid
+    r = await client.delete(f"/api/v1/admin/api-keys/{uuid.uuid4()}", headers=super_headers)
+    assert r.status_code == 404
+
+
+async def test_revoke_records_the_keys_own_org_not_actors(
+    client: httpx.AsyncClient, super_headers: dict[str, str],
+    ws_and_member: tuple[UUID, UUID], session: AsyncSession,
+) -> None:
+    ws_id, user_id = ws_and_member
+    key_id = (await client.post(
+        "/api/v1/admin/api-keys", headers=super_headers,
+        json={"name": "k", "user_id": str(user_id), "workspace_id": str(ws_id)},
+    )).json()["id"]
+    await client.delete(f"/api/v1/admin/api-keys/{key_id}", headers=super_headers)
+    from sqlalchemy import select
+
+    from ragz.modules.audit.models import AuditEvent
+    key_owner_org = (
+        await session.execute(select(User.org_id).where(User.id == user_id))
+    ).scalar_one()
+    event = (
+        await session.execute(
+            select(AuditEvent).where(AuditEvent.action == "api_key.revoked")
+        )
+    ).scalars().first()
+    assert event is not None
+    assert event.org_id == key_owner_org

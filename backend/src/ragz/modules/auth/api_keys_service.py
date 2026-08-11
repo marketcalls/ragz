@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import Settings
 from ragz.core.db import naive_utc
-from ragz.core.errors import ConflictError
+from ragz.core.errors import ConflictError, NotFoundError
 from ragz.modules.auth.models import ApiKey
 from ragz.modules.auth.service import _hash
 from ragz.modules.tenancy.models import Workspace, WorkspaceMember
@@ -65,6 +65,18 @@ async def list_api_keys(session: AsyncSession) -> list[ApiKey]:
     return list(
         (await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc()))).scalars()
     )
+
+
+async def get_api_key(session: AsyncSession, *, key_id: UUID) -> ApiKey:
+    """Direct lookup for the revoke path (RBAC-07): the audit event must be
+    attributed to the KEY's own org, and a missing key must 404 rather than
+    silently succeed. Raises NotFoundError when absent."""
+    row = (
+        await session.execute(select(ApiKey).where(ApiKey.id == key_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError("api key not found")
+    return row
 
 
 async def revoke_api_key(session: AsyncSession, *, key_id: UUID) -> None:

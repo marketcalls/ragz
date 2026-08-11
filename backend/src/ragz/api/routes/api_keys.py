@@ -36,9 +36,12 @@ async def list_api_keys_route(session: SessionDep, ctx: SuperadminDep) -> list[A
 
 @router.delete("/admin/api-keys/{key_id}", status_code=204)
 async def revoke_api_key_route(key_id: UUID, session: SessionDep, ctx: SuperadminDep) -> None:
+    # RBAC-07: a missing key must 404 (not silently succeed), and the audit
+    # event is attributed to the KEY's own org -- not the acting superadmin's.
+    row = await svc.get_api_key(session, key_id=key_id)
     await svc.revoke_api_key(session, key_id=key_id)
     await record_audit(
-        session, org_id=ctx.org_id, actor_id=ctx.user_id,
+        session, org_id=row.org_id, actor_id=ctx.user_id,
         action="api_key.revoked", target_type="api_key", target_id=str(key_id),
     )
     await session.commit()

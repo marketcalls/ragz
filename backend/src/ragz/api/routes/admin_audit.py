@@ -1,8 +1,10 @@
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
@@ -15,6 +17,8 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 # RBAC-05: audit.read is an explicit, org-scoped grant independent of
 # admin/IAM duties (NIST AC-5) -- not require_role("superadmin") anymore.
 AuditReadDep = Annotated[TenantContext, Depends(require_action("audit.read"))]
+# RBAC-07: bulk export is a separate, explicitly-gated grant.
+AuditExportDep = Annotated[TenantContext, Depends(require_action("audit.export"))]
 
 
 @router.get("/audit", response_model=AuditPageOut)
@@ -40,4 +44,32 @@ async def get_audit(
     )
     return AuditPageOut(
         events=[AuditEventOut.model_validate(e) for e in events], next_cursor=next_cursor
+    )
+
+
+async def _export_lines(
+    session: AsyncSession, ctx: TenantContext, org_id: UUID | None
+) -> AsyncIterator[str]:
+    # Same org-scoping discipline as get_audit: a non-superadmin only ever
+    # exports its OWN org; the org_id param is ignored/overridden for them.
+    cursor: str | None = None
+    effective_org_id = org_id if ctx.role == "superadmin" else ctx.org_id
+    while True:
+        events, cursor = await list_audit_events(
+            session, org_id=effective_org_id, cursor=cursor, limit=200
+        )
+        if not events:
+            break
+        for e in events:
+            yield AuditEventOut.model_validate(e).model_dump_json() + "\n"
+        if cursor is None:
+            break
+
+
+@router.get("/audit/export")
+async def export_audit(
+    session: SessionDep, ctx: AuditExportDep, org_id: UUID | None = None,
+) -> StreamingResponse:
+    return StreamingResponse(
+        _export_lines(session, ctx, org_id), media_type="application/x-ndjson"
     )

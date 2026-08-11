@@ -11,6 +11,12 @@ class AuditEventOut(BaseModel):
     action: str
     target_type: str
     target_id: str
+    result: str
+    reason_code: str | None
+    request_id: str | None
+    source_ip: str | None
+    auth_method: str | None
+    credential_id: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
