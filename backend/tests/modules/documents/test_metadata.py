@@ -2,6 +2,7 @@ import pytest
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.core.errors import ConflictError, NotFoundError
 from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from ragz.modules.documents.metadata import (
@@ -19,7 +20,13 @@ from tests.modules.retrieval.test_retrieve import seed_workspace
 
 async def _index(session, ctx, ws, filename, text):  # type: ignore[no-untyped-def]
     """Fully ingest a document (parse -> chunk -> embed/upsert) so its points
-    actually land in Qdrant, non-vacuously exercising the payload mirror."""
+    actually land in Qdrant, non-vacuously exercising the payload mirror.
+
+    Plain .txt fixture content -- anydoc (the install-wide default) does not
+    parse .txt at all; this suite is about metadata mirroring, not parser
+    choice, so pin docling explicitly.
+    """
+    await set_app_setting(session, "document_parser", "docling")
     doc = await create_from_upload(
         session, ctx, ws.id, filename=filename, mime="text/plain", data=text.encode()
     )

@@ -6,6 +6,7 @@ demoted, or merely in-flight must never leak through retrieve().
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.core.config import get_settings
 from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch, upsert_points
@@ -18,6 +19,10 @@ from tests.modules.retrieval.test_retrieve import seed_workspace
 
 
 async def _index(session, ctx, ws, filename, text):  # type: ignore[no-untyped-def]
+    # Plain .txt fixture content -- anydoc (the install-wide default) does not
+    # parse .txt at all; explicit docling keeps this version-isolation suite
+    # exercising the real pipeline instead of failing on an unrelated gap.
+    await set_app_setting(session, "document_parser", "docling")
     doc = await create_from_upload(
         session, ctx, ws.id, filename=filename, mime="text/plain", data=text.encode()
     )

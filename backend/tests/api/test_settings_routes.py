@@ -14,7 +14,7 @@ async def test_get_settings_defaults(
     r = await client.get("/api/v1/admin/settings", headers=superadmin_headers)
     assert r.status_code == 200
     body = r.json()
-    assert body["document_parser"] == "docling"
+    assert body["document_parser"] == "anydoc"
     assert body["rerank_provider"] == "local"
     assert body["llamaparse_key_set"] is False
     # never a key value in the payload

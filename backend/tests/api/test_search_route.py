@@ -80,6 +80,7 @@ async def test_search_with_metadata_filter_excludes_non_matching_doc(
 ) -> None:
     from sqlalchemy import select
 
+    from ragz.core.app_settings import set_app_setting
     from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
     from ragz.modules.documents.metadata import list_fields, set_document_metadata
     from ragz.modules.documents.service import create_from_upload
@@ -88,6 +89,10 @@ async def test_search_with_metadata_filter_excludes_non_matching_doc(
     from ragz.modules.tenancy.context import TenantContext
     from ragz.modules.tenancy.models import Workspace
 
+    # Plain .txt fixture content -- anydoc (the install-wide default) does not
+    # parse .txt at all; this test is about metadata filtering, not parser
+    # choice, so pin docling explicitly.
+    await set_app_setting(session, "document_parser", "docling")
     h = await auth(client, "a@acme.com")
     ws_id = await make_workspace(client, h)
     ws = (await session.execute(select(Workspace))).scalar_one()

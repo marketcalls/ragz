@@ -19,11 +19,24 @@ def settings(tmp_path: Path) -> Settings:
 
 async def test_defaults_when_nothing_set(session, settings) -> None:
     out = await settings_service.get_provider_settings(session)
-    assert out.document_parser == "docling"
+    assert out.document_parser == "anydoc"
     assert out.rerank_provider == "local"
     assert out.cohere_rerank_model == "rerank-v4.0-fast"
     assert out.llamaparse_key_set is False
     assert out.cohere_key_set is False
+
+
+async def test_document_parser_defaults_to_anydoc(session, settings) -> None:
+    out = await settings_service.get_provider_settings(session)
+    assert out.document_parser == "anydoc"
+
+
+async def test_update_accepts_anydoc(session, settings, seeded_user: User) -> None:
+    out = await settings_service.update_provider_settings(
+        session, settings, actor_id=seeded_user.id,
+        patch=ProviderSettingsUpdate(document_parser="anydoc"),
+    )
+    assert out.document_parser == "anydoc"
 
 
 async def test_update_selections_and_keys_roundtrip(session, settings, seeded_user: User) -> None:

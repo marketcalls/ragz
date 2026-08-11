@@ -6,6 +6,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.core.config import get_settings
 from ragz.core.db import build_session_factory
 from ragz.core.storage import build_storage
@@ -38,6 +39,10 @@ BIG_TEXT = "\n\n".join(f"Section {i}. {_PARAGRAPH}" for i in range(3)).encode()
 
 
 async def _upload(session: AsyncSession, name: str, data: bytes = TEXT) -> tuple:  # type: ignore[type-arg]
+    # Plain .txt fixture content -- anydoc (the install-wide default) does not
+    # parse .txt at all; this suite is about the generic ingest runner
+    # sequence, not parser choice, so pin docling explicitly.
+    await set_app_setting(session, "document_parser", "docling")
     ctx, ws = await seed_workspace(session, name)
     doc = await create_from_upload(session, ctx, ws.id, filename="n.txt",
                                    mime="text/plain", data=data)

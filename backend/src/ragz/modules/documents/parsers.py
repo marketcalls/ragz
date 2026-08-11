@@ -1,6 +1,7 @@
 """Pluggable document parser seam. `document_parser` app_setting selects the
-backend: `docling` (default, self-hosted, byte-identical to the prior direct
-parse_bytes call) or `llamaparse` (LlamaIndex cloud via REST, no SDK). Both
+backend: `anydoc` (default, self-hosted, pure-Rust, with a scanned-PDF fallback
+to Docling OCR), `docling` (self-hosted, byte-identical to the original direct
+parse_bytes call), or `llamaparse` (LlamaIndex cloud via REST, no SDK). All
 return list[PageBlock] so the chunk/embed pipeline downstream is unchanged."""
 
 import asyncio
@@ -170,26 +171,23 @@ async def parse_document(
                 "LlamaParse selected but no API key is configured"
             ) from exc
         return await LlamaParseParser(api_key=key).parse(data, filename)
-    if parser == "anydoc":
-        import anydoc
-
-        is_pdf = Path(filename).suffix.lower() == ".pdf"
-        try:
-            return await AnydocParser().parse(data, filename)
-        except anydoc.ConvertError as exc:
-            if is_pdf:
-                # RBAC/DOC requirement: scanned/image-only PDFs need OCR, which
-                # anydoc cannot do. Retry this one file through Docling OCR.
-                _log.info("documents.anydoc_pdf_fallback_to_docling", filename=filename)
-                return await asyncio.to_thread(
-                    parse_bytes, data, filename,
-                    ocr_enabled=True,
-                    ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
-                )
-            raise IngestFailure("unsupported or unreadable document") from exc
-    # docling default — byte-identical to the prior direct call.
-    return await asyncio.to_thread(
-        parse_bytes, data, filename,
-        ocr_enabled=settings.ocr_enabled,
-        ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
-    )
+    if parser == "docling":
+        return await asyncio.to_thread(
+            parse_bytes, data, filename,
+            ocr_enabled=settings.ocr_enabled,
+            ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+        )
+    # anydoc is the default (parser == "anydoc", or unset/unknown).
+    import anydoc
+    is_pdf = Path(filename).suffix.lower() == ".pdf"
+    try:
+        return await AnydocParser().parse(data, filename)
+    except anydoc.ConvertError as exc:
+        if is_pdf:
+            _log.info("documents.anydoc_pdf_fallback_to_docling", filename=filename)
+            return await asyncio.to_thread(
+                parse_bytes, data, filename,
+                ocr_enabled=True,
+                ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+            )
+        raise IngestFailure("unsupported or unreadable document") from exc

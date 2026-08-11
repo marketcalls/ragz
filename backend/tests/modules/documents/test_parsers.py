@@ -73,8 +73,16 @@ async def test_llamaparse_malformed_result_body_raises_ingest_failure() -> None:
         await p.parse(b"x", "doc.pdf")
 
 
-async def test_parse_document_docling_default(session, settings) -> None:
-    # No app_setting -> docling path; a .txt round-trips through parse_bytes.
+async def test_parse_document_defaults_to_anydoc(session, settings) -> None:
+    # No app_setting -> anydoc path; page==1 is anydoc's signature (Docling
+    # would paginate differently and does not accept .csv at all).
+    blocks = await parse_document(session, settings, data=b"a,b\n1,2\n", filename="t.csv")
+    assert blocks and all(b.page == 1 for b in blocks)
+
+
+async def test_parse_document_docling_when_selected(session, settings) -> None:
+    # Explicit docling selection still works, unaffected by the new default.
+    await set_app_setting(session, "document_parser", "docling")
     blocks = await parse_document(
         session, settings, data=b"line one\n\nline two", filename="a.txt"
     )

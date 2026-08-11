@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.modules.auth.models import User
 from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from ragz.modules.documents.models import Document
@@ -20,7 +21,13 @@ async def ingest_text(
     promotion — Task 6). Real promotion doesn't exist yet, so this fixture
     flips visibility itself via the sanctioned update_document_current path —
     standing in for "this freshly-ingested version was promoted."
+
+    Uses plain .txt fixture content, a format anydoc (the install-wide
+    default) does not parse at all -- explicitly select docling so these
+    adversarial isolation/leak tests exercise the real pipeline rather than
+    failing on an unrelated parser-capability gap.
     """
+    await set_app_setting(session, "document_parser", "docling")
     doc = await create_from_upload(session, ctx, ws.id, filename=filename,
                                    mime="text/plain", data=text.encode())
     await run_parse(doc.id)

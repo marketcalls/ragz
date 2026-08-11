@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.core.config import get_settings
 from ragz.core.db import naive_utc
 from ragz.core.errors import NotFoundError
@@ -75,7 +76,12 @@ async def _seed_indexed_document(
     chunks.json off storage, so a real ingest run is needed to produce it.
     Called from inside test bodies (never from a fixture) so it always runs
     AFTER the qdrant_collection fixture has set up COLLECTION -- fixture
-    instantiation order between two sibling fixtures isn't guaranteed."""
+    instantiation order between two sibling fixtures isn't guaranteed.
+
+    Plain .txt fixture content -- anydoc (the install-wide default) does not
+    parse .txt at all; this suite is about re-embed job mechanics, not parser
+    choice, so pin docling explicitly."""
+    await set_app_setting(session, "document_parser", "docling")
     ws = await tenancy_service.create_workspace(session, ctx, name)
     doc = await create_from_upload(
         session, ctx, ws.id, filename="a.txt", mime="text/plain", data=data

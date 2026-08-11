@@ -8,6 +8,7 @@ approve v2 as well -> v2 current (highest approved wins)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.modules.documents.ingest import run_chunk, run_delete, run_embed_upsert, run_parse
 from ragz.modules.documents.models import Document
 from ragz.modules.documents.service import create_from_upload, promote_lineage, set_approved
@@ -22,7 +23,13 @@ async def _index(
 ) -> Document:
     """Real pipeline: upload -> parse -> chunk -> embed+upsert (which now ends
     by calling promote_lineage per DOC-5). No manual update_document_current
-    stand-in needed anymore -- that was Task 5's placeholder."""
+    stand-in needed anymore -- that was Task 5's placeholder.
+
+    Plain .txt fixture content -- anydoc (the install-wide default) does not
+    parse .txt at all; this suite is about version-promotion semantics, not
+    parser choice, so pin docling explicitly.
+    """
+    await set_app_setting(session, "document_parser", "docling")
     doc = await create_from_upload(
         session, ctx, ws.id, filename=filename, mime="text/plain", data=text.encode()
     )

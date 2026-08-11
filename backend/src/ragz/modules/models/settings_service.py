@@ -22,7 +22,7 @@ _COHERE_SECRET = "cohere_api_key"  # noqa: S105 - a secret NAME, not a secret
 
 
 async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
-    parser = await get_app_setting(session, _PARSER_KEY) or "docling"
+    parser = await get_app_setting(session, _PARSER_KEY) or "anydoc"
     rerank = await get_app_setting(session, _RERANK_KEY) or "local"
     cohere_model = await get_app_setting(session, _COHERE_MODEL_KEY) or _COHERE_MODEL_DEFAULT
     present = await secrets_service.existing_secret_names(

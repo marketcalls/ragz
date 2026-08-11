@@ -5,6 +5,7 @@ from docx import Document as DocxBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.modules.documents.ingest import run_chunk, run_embed_upsert, run_parse
 from ragz.modules.documents.models import IngestJob
 from ragz.modules.documents.pipeline import IngestFailure
@@ -66,6 +67,11 @@ async def test_docx_through_real_pipeline_then_hybrid_retrieval(
 async def test_empty_and_unsupported_fail_cleanly(
     session: AsyncSession, stack_env: None
 ) -> None:
+    # Docling explicitly: the empty-file message ("file is empty") this test
+    # asserts is Docling's own pipeline check (pipeline.parse_bytes), not
+    # something anydoc implements -- this test exercises that specific
+    # Docling behavior, unaffected by which parser is the install-wide default.
+    await set_app_setting(session, "document_parser", "docling")
     ctx, ws = await seed_workspace(session, "e2e2")
     empty = await create_from_upload(session, ctx, ws.id, filename="empty.txt",
                                      mime="text/plain", data=b"")
