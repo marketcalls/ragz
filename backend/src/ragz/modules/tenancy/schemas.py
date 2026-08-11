@@ -104,6 +104,8 @@ class RoleTemplateOut(BaseModel):
     name: str
     description: str
     permissions: list[str]
+    status: str
+    version: int
 
     model_config = {"from_attributes": True}
 

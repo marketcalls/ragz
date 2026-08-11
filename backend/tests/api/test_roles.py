@@ -73,6 +73,9 @@ async def test_delete_while_assigned_is_409(
         "name": "Engineer2", "permissions": ["documents.upload"],
     })
     template_id = r.json()["id"]
+    # RBAC-09: new templates start "draft" and can't be assigned until activated.
+    activate = await client.post(f"/api/v1/admin/roles/{template_id}/activate", headers=super_h)
+    assert activate.status_code == 200
 
     plain = User(
         org_id=seeded_user.org_id, email="p@acme.com",
@@ -103,6 +106,9 @@ async def test_admin_assigns_template_and_user_out_reflects_it(
         "name": "Engineer3", "permissions": ["documents.upload"],
     })
     template_id = r.json()["id"]
+    # RBAC-09: new templates start "draft" and can't be assigned until activated.
+    activate = await client.post(f"/api/v1/admin/roles/{template_id}/activate", headers=super_h)
+    assert activate.status_code == 200
 
     plain = User(
         org_id=seeded_user.org_id, email="p3@acme.com",
@@ -175,3 +181,29 @@ async def test_cross_org_assignment_is_404(
         json={"role_template_id": None},
     )
     assert r.status_code == 404
+
+
+async def test_activate_route(
+    client: httpx.AsyncClient, seeded_superadmin: User, superadmin_headers: dict[str, str]
+) -> None:
+    created = (await client.post(
+        "/api/v1/admin/roles", headers=superadmin_headers,
+        json={"name": "route-activate-test", "permissions": ["chat.read"]},
+    )).json()
+    r = await client.post(
+        f"/api/v1/admin/roles/{created['id']}/activate", headers=superadmin_headers
+    )
+    assert r.status_code == 200 and r.json()["status"] == "active"
+
+
+async def test_impact_route(
+    client: httpx.AsyncClient, seeded_superadmin: User, superadmin_headers: dict[str, str]
+) -> None:
+    created = (await client.post(
+        "/api/v1/admin/roles", headers=superadmin_headers,
+        json={"name": "route-impact-test", "permissions": ["chat.read"]},
+    )).json()
+    r = await client.get(
+        f"/api/v1/admin/roles/{created['id']}/impact", headers=superadmin_headers
+    )
+    assert r.status_code == 200 and r.json()["affected_users"] == 0

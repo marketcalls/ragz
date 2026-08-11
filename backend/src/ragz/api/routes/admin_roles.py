@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
@@ -50,3 +51,22 @@ async def delete_role_template(
     role_template_id: UUID, session: SessionDep, ctx: SuperDep
 ) -> None:
     await service.delete_role_template(session, ctx, role_template_id)
+
+
+class ImpactOut(BaseModel):
+    affected_users: int
+
+
+@router.post("/{role_template_id}/activate", response_model=RoleTemplateOut)
+async def activate_role_template_route(
+    role_template_id: UUID, session: SessionDep, ctx: SuperDep
+) -> RoleTemplateOut:
+    template = await service.activate_role_template(session, ctx, role_template_id)
+    return RoleTemplateOut.model_validate(template)
+
+
+@router.get("/{role_template_id}/impact", response_model=ImpactOut)
+async def role_template_impact_route(
+    role_template_id: UUID, session: SessionDep, ctx: AdminDep
+) -> ImpactOut:
+    return ImpactOut(affected_users=await service.role_template_impact(session, role_template_id))

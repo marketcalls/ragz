@@ -4,6 +4,8 @@ tests/modules/evals/conftest.py's seed_workspace pattern (role="admin" so the
 fixture ctx can call update_retrieval_settings without a WorkspacePatch/route
 in the way)."""
 
+from uuid import UUID
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,7 +85,12 @@ async def test_assign_custom_role_now_allows_admin_target(session: AsyncSession)
                   password_hash="x", role="admin")  # noqa: S106
     session.add_all([actor, target])
     await session.flush()
-    template = RoleTemplate(name="cm-admin-target", permissions=["documents.acl.bypass"])
+    # RBAC-09: assign_custom_role now rejects a non-active template; this
+    # test is about the admin-target relaxation, not the lifecycle gate, so
+    # construct it already active.
+    template = RoleTemplate(
+        name="cm-admin-target", permissions=["documents.acl.bypass"], status="active"
+    )
     session.add(template)
     await session.flush()
     seeded_ctx = TenantContext(
@@ -178,3 +185,68 @@ async def test_assign_custom_role_still_rejects_superadmin_target(session: Async
     )
     with pytest.raises(NotFoundError):
         await service.assign_custom_role(session, seeded_ctx, superadmin.id, None)
+
+
+@pytest.fixture
+async def seeded_ctx(session: AsyncSession) -> TenantContext:
+    """Task 17 (RBAC-09): a plain admin ctx for role-template lifecycle
+    tests (create/activate/impact)."""
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization
+
+    org = Organization(name="role-template-versioning-org")
+    session.add(org)
+    await session.flush()
+    actor = User(org_id=org.id, email="actor@versioning.example",
+                 password_hash="x", role="admin")  # noqa: S106
+    session.add(actor)
+    await session.commit()
+    return TenantContext(user_id=actor.id, org_id=org.id, role="admin", workspace_ids=frozenset())
+
+
+@pytest.fixture
+async def user_id(session: AsyncSession, seeded_ctx: TenantContext) -> UUID:
+    """A same-org 'user'-tier account to assign templates to."""
+    from ragz.modules.auth.models import User
+
+    user = User(org_id=seeded_ctx.org_id, email="target@versioning.example",
+                password_hash="x", role="user")  # noqa: S106
+    session.add(user)
+    await session.commit()
+    return user.id
+
+
+async def test_new_template_starts_as_draft_and_cannot_be_assigned(
+    session: AsyncSession, seeded_ctx: TenantContext, user_id: UUID
+) -> None:
+    from ragz.core.errors import ConflictError
+
+    template = await service.create_role_template(
+        session, seeded_ctx, name="draft-test", description="", permissions=["chat.read"],
+    )
+    assert template.status == "draft"
+    with pytest.raises(ConflictError):
+        await service.assign_custom_role(session, seeded_ctx, user_id, template.id)
+
+
+async def test_activate_makes_it_assignable_and_bumps_version(
+    session: AsyncSession, seeded_ctx: TenantContext, user_id: UUID
+) -> None:
+    template = await service.create_role_template(
+        session, seeded_ctx, name="activate-test", description="", permissions=["chat.read"],
+    )
+    activated = await service.activate_role_template(session, seeded_ctx, template.id)
+    assert activated.status == "active" and activated.version == 2
+    await service.assign_custom_role(session, seeded_ctx, user_id, template.id)  # no longer raises
+
+
+async def test_impact_preview_counts_assigned_users(
+    session: AsyncSession, seeded_ctx: TenantContext, user_id: UUID
+) -> None:
+    template = await service.create_role_template(
+        session, seeded_ctx, name="impact-test", description="", permissions=["chat.read"],
+    )
+    await service.activate_role_template(session, seeded_ctx, template.id)
+    assert await service.role_template_impact(session, template.id) == 0
+    await service.assign_custom_role(session, seeded_ctx, user_id, template.id)
+    assert await service.role_template_impact(session, template.id) == 1

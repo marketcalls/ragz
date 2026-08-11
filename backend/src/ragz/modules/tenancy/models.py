@@ -87,10 +87,24 @@ class UserGroup(Base):
 class RoleTemplate(UUIDPk, Base):
     """Plan H (RBAC-2): superadmin-built, GLOBAL (no org_id per the owner's
     requirement) named bundle of permission flags that org admins assign to
-    role="user" accounts."""
+    role="user" accounts.
+
+    RBAC-09: templates carry a draft|active|archived lifecycle and a
+    monotonic version. New app-created templates default to "draft" here
+    (ORM-level default) -- deliberately asymmetric with the migration's
+    server_default="active", which only backfills EXISTING rows so they stay
+    immediately assignable. See the versioning migration for the full
+    rationale."""
 
     __tablename__ = "role_templates"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'active', 'archived')", name="ck_role_templates_status"
+        ),
+    )
 
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str] = mapped_column(default="")
     permissions: Mapped[list[str]] = mapped_column(ARRAY(String))
+    status: Mapped[str] = mapped_column(default="draft")
+    version: Mapped[int] = mapped_column(default=1)

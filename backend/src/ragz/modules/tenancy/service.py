@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
@@ -447,6 +447,32 @@ async def update_role_template(
     return template
 
 
+async def activate_role_template(
+    session: AsyncSession, ctx: TenantContext, role_template_id: UUID
+) -> RoleTemplate:
+    """RBAC-09: flips a draft (or re-activates an archived) template to
+    active and bumps its version -- the only way a new template becomes
+    assignable via assign_custom_role."""
+    template = await _get_role_template(session, role_template_id)
+    template.status = "active"
+    template.version += 1
+    await record_audit(session, org_id=None, actor_id=ctx.user_id,
+                       action="role_template.activated", target_type="role_template",
+                       target_id=str(template.id))
+    await session.commit()
+    return template
+
+
+async def role_template_impact(session: AsyncSession, role_template_id: UUID) -> int:
+    """RBAC-09: count of users currently assigned this template, for the
+    superadmin/admin "impact preview" before activating/editing/deleting."""
+    return (
+        await session.execute(
+            select(func.count()).select_from(User).where(User.custom_role_id == role_template_id)
+        )
+    ).scalar_one()
+
+
 async def delete_role_template(
     session: AsyncSession, ctx: TenantContext, role_template_id: UUID
 ) -> None:
@@ -483,7 +509,9 @@ async def assign_custom_role(
     if user is None or user.role == "superadmin":
         raise NotFoundError("user not found")
     if role_template_id is not None:
-        await _get_role_template(session, role_template_id)  # NotFoundError if unknown
+        template = await _get_role_template(session, role_template_id)  # NotFoundError if unknown
+        if template.status != "active":
+            raise ConflictError("role template is not active")
     user.custom_role_id = role_template_id
     action = (
         "user.custom_role_assigned" if role_template_id is not None else "user.custom_role_cleared"
