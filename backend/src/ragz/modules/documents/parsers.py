@@ -180,6 +180,15 @@ async def parse_document(
     # anydoc is the default (parser == "anydoc", or unset/unknown).
     import anydoc
     is_pdf = Path(filename).suffix.lower() == ".pdf"
+    # anydoc supports no plain-text format; Docling's parse_bytes has a
+    # dedicated UTF-8 .txt path (no OCR needed). Route .txt there directly
+    # rather than calling anydoc just to catch its UnsupportedError.
+    if Path(filename).suffix.lower() == ".txt":
+        return await asyncio.to_thread(
+            parse_bytes, data, filename,
+            ocr_enabled=settings.ocr_enabled,
+            ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+        )
     try:
         return await AnydocParser().parse(data, filename)
     except anydoc.ConvertError as exc:

@@ -138,3 +138,13 @@ async def test_anydoc_non_pdf_failure_raises_ingest_failure(session, settings, m
     monkeypatch.setattr(anydoc, "to_markdown_bytes", _raise)
     with pytest.raises(IngestFailure):
         await parse_document(session, settings, data=b"junk", filename="mystery.xyz")
+
+
+async def test_anydoc_default_routes_txt_to_docling(session, settings):
+    # anydoc has no plain-text format; a .txt upload under the anydoc default
+    # must still ingest (via Docling's dedicated .txt path), not IngestFailure.
+    blocks = await parse_document(
+        session, settings, data=b"first para\n\nsecond para\n", filename="notes.txt"
+    )
+    assert [b.text for b in blocks] == ["first para", "second para"]
+    assert all(b.kind == "text" for b in blocks)
