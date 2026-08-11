@@ -1,6 +1,38 @@
 # Ragz
 
-Self-hosted, multi-tenant RAG platform. Specs live in `docs/superpowers/specs/`.
+Self-hosted, multi-tenant Agentic RAG platform (FastAPI + React + Qdrant + LiteLLM +
+Postgres), AGPL-3.0. Specs live in `docs/superpowers/specs/`.
+
+## Features
+
+- **Multi-tenant isolation.** Orgs, workspaces, and groups. Document ACLs are enforced
+  *inside* the vector query (never post-filtered), so an answer can never cite a document
+  the asking user can't open. Restricted docs still appear in listings (Drive-style
+  existence), only their contents/citations are gated.
+- **Role-based access control.** `superadmin` / `admin` / `user` tiers plus composable
+  custom **role templates** (draft → active lifecycle, monotonic versioning, rollback with
+  immutable history). Deny-by-default permissions; a central `require_action` policy with a
+  CI gate that fails on any unclassified route; append-only audit log (DB-trigger enforced)
+  that records **denials** as well as successes, with an org-scoped, `audit.read`-gated
+  export. Admins need an explicit content-relationship to read restricted documents
+  (no automatic ACL bypass).
+- **Pluggable document parsing** (superadmin-selectable in *Settings*):
+  - **anydoc** *(default)* — Firecrawl's pure-Rust converter; office formats + text PDFs to
+    clean Markdown in single-digit ms.
+  - **Docling** — local; **OCRs scanned/image-only PDFs** (EasyOCR). anydoc auto-falls back
+    to Docling-OCR for scans, and `.txt` routes to Docling, so those keep working under the
+    anydoc default.
+  - **LlamaParse** — cloud (API key).
+  - Version-aware retrieval (latest-approved wins); citations carry document name, version,
+    section, and page.
+- **Hybrid retrieval + rerank.** Dense (`bge-m3` via TEI) + sparse, with an optional
+  reranker — local TEI or **Cohere Rerank v4** (fast/pro) — and a lexical fallback.
+- **Chat.** Streaming answers with citations, no-answer mode when grounding is insufficient,
+  and an agent loop.
+- **Integrations.** A secure external API (superadmin-managed, per-user/workspace API keys;
+  OpenAI-compatible chat endpoint) and inbound **bots** for Telegram, Discord, and Slack.
+- **Secrets.** Provider keys stored envelope-encrypted (AES-256-GCM) in Postgres; the only
+  out-of-DB secret is the KEK. Keys are write-only in the API and never logged or returned.
 
 ## Dev Setup
 
@@ -24,7 +56,8 @@ uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default
 uv run celery -A ragz.worker.celery_app:celery_app beat -l info
 ```
 
-**OCR (scanned PDFs).** The ingestion worker OCRs low-text PDFs automatically via EasyOCR.
+**Parsing & OCR.** anydoc is the default parser (fast, no models); scanned/image-only PDFs
+auto-fall back to Docling, whose ingestion worker OCRs low-text PDFs automatically via EasyOCR.
 First use downloads ~90 MB of models to `~/.EasyOCR` **on the machine running the worker** —
 pre-fetch with `uv run python -c "import easyocr; easyocr.Reader(['en'])"`. Air-gapped
 installs: copy a populated `~/.EasyOCR` directory into the worker's home. arm64 (Apple
