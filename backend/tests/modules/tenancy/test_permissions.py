@@ -11,7 +11,12 @@ from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
-from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_action
+from ragz.modules.tenancy.context import (
+    _AUTOMATIC_CARVE_OUTS,
+    TenantContext,
+    get_tenant_context,
+    require_action,
+)
 from ragz.modules.tenancy.models import RoleTemplate
 from ragz.modules.tenancy.permissions import DEFAULT_USER_PERMISSIONS, PERMISSIONS
 
@@ -40,10 +45,11 @@ async def test_admin_ctx_has_all_permissions_except_acl_bypass(
     wire_probe(client._transport.app)  # type: ignore[attr-defined]
     tok = await login_token(client, "a@acme.com")
     r = await client.get("/probe/permissions", headers={"Authorization": f"Bearer {tok}"})
-    # RBAC-05: admin holds every permission EXCEPT the carve-out
-    # documents.acl.bypass, which is earned only via an explicit role-template
-    # overlay (the seeded "Content Manager"), never automatically by role.
-    assert set(r.json()["permissions"]) == set(PERMISSIONS) - {"documents.acl.bypass"}
+    # RBAC-05: admin holds every permission EXCEPT the carve-outs
+    # (documents.acl.bypass, audit.read, audit.export), which are earned only
+    # via an explicit role-template overlay (e.g. the seeded "Content Manager"
+    # or "Audit Reader" templates), never automatically by role.
+    assert set(r.json()["permissions"]) == set(PERMISSIONS) - _AUTOMATIC_CARVE_OUTS
 
 
 async def test_plain_user_has_exactly_default_permissions(

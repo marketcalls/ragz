@@ -40,7 +40,11 @@ _log = structlog.get_logger("ragz.tenancy")
 # RBAC-05: permissions that are NEVER auto-granted, even to admin/superadmin --
 # they must come from an explicit role-template overlay (e.g. the seeded
 # "Content Manager" template). Task 10 EXTENDS this exact set; keep the name.
-_AUTOMATIC_CARVE_OUTS = frozenset({"documents.acl.bypass"})
+# audit.read/audit.export are carved out too (NIST AC-5): audit access must be
+# an explicit grant (the seeded "Audit Reader" template) independent of
+# admin/IAM duties -- an admin is no longer ambiently able to read the org's
+# audit trail just by being an admin.
+_AUTOMATIC_CARVE_OUTS = frozenset({"documents.acl.bypass", "audit.read", "audit.export"})
 
 
 async def build_context_for_user(
