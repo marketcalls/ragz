@@ -5,8 +5,11 @@ return list[PageBlock] so the chunk/embed pipeline downstream is unchanged."""
 
 import asyncio
 import re
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_app_setting
@@ -15,12 +18,20 @@ from ragz.core.errors import NotFoundError
 from ragz.modules.documents.pipeline import IngestFailure, PageBlock, parse_bytes
 from ragz.modules.secrets import service as secrets_service
 
+if TYPE_CHECKING:
+    import anydoc
+
+_log = structlog.get_logger("ragz.documents.parsers")
+
 _LLAMA_BASE = "https://api.cloud.llamaindex.ai/api/v1/parsing"
 _LLAMA_POLL_INTERVAL = 3.0
 _LLAMA_MAX_POLLS = 100  # ~5 min at 3s
 
 _ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 _TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$")
+
+# Signature-less formats anydoc cannot sniff from bytes; pass the extension.
+_ANYDOC_FORMAT_HINTS: dict[str, "anydoc.Format"] = {".csv": "csv"}
 
 
 def _markdown_to_blocks(markdown: str) -> list[PageBlock]:
@@ -125,6 +136,26 @@ class LlamaParseParser:
         return blocks
 
 
+class AnydocParser:
+    """Firecrawl anydoc (pure-Rust, <5ms): bytes -> flat GFM Markdown -> blocks
+    (page=1, headings/tables preserved). No OCR and no page boundaries; the
+    scanned-PDF fallback lives in parse_document, not here."""
+
+    async def parse(self, data: bytes, filename: str) -> list[PageBlock]:
+        import anydoc
+
+        hint = _ANYDOC_FORMAT_HINTS.get(Path(filename).suffix.lower())
+
+        def _convert() -> str:
+            return anydoc.to_markdown_bytes(data, hint) if hint else anydoc.to_markdown_bytes(data)
+
+        markdown = await asyncio.to_thread(_convert)
+        blocks = _markdown_to_blocks(markdown)
+        if not blocks:
+            raise IngestFailure("anydoc produced no extractable text")
+        return blocks
+
+
 async def parse_document(
     session: AsyncSession, settings: Settings, *, data: bytes, filename: str
 ) -> list[PageBlock]:
@@ -139,6 +170,23 @@ async def parse_document(
                 "LlamaParse selected but no API key is configured"
             ) from exc
         return await LlamaParseParser(api_key=key).parse(data, filename)
+    if parser == "anydoc":
+        import anydoc
+
+        is_pdf = Path(filename).suffix.lower() == ".pdf"
+        try:
+            return await AnydocParser().parse(data, filename)
+        except anydoc.ConvertError as exc:
+            if is_pdf:
+                # RBAC/DOC requirement: scanned/image-only PDFs need OCR, which
+                # anydoc cannot do. Retry this one file through Docling OCR.
+                _log.info("documents.anydoc_pdf_fallback_to_docling", filename=filename)
+                return await asyncio.to_thread(
+                    parse_bytes, data, filename,
+                    ocr_enabled=True,
+                    ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
+                )
+            raise IngestFailure("unsupported or unreadable document") from exc
     # docling default — byte-identical to the prior direct call.
     return await asyncio.to_thread(
         parse_bytes, data, filename,

@@ -1,11 +1,12 @@
 from pathlib import Path
 
+import anydoc
 import httpx
 import pytest
 
 from ragz.core.app_settings import set_app_setting
 from ragz.core.config import Settings
-from ragz.modules.documents.parsers import LlamaParseParser, parse_document
+from ragz.modules.documents.parsers import AnydocParser, LlamaParseParser, parse_document
 from ragz.modules.documents.pipeline import IngestFailure, PageBlock
 
 
@@ -84,3 +85,48 @@ async def test_parse_document_llamaparse_without_key_raises(session, settings) -
     await set_app_setting(session, "document_parser", "llamaparse")
     with pytest.raises(IngestFailure):
         await parse_document(session, settings, data=b"x", filename="a.pdf")
+
+
+async def test_anydoc_parses_office_bytes_to_blocks():
+    p = AnydocParser()
+    blocks = await p.parse(b"name,age\nAlice,30\nBob,25\n", "data.csv")
+    assert blocks and all(b.page == 1 for b in blocks)
+    assert any("Alice" in b.text for b in blocks)
+
+
+async def test_parse_document_anydoc_selected_uses_anydoc(session, settings):
+    await set_app_setting(session, "document_parser", "anydoc")
+    blocks = await parse_document(session, settings, data=b"a,b\n1,2\n", filename="t.csv")
+    assert blocks and all(b.page == 1 for b in blocks)
+
+
+async def test_anydoc_scanned_pdf_falls_back_to_docling_ocr(session, settings, monkeypatch):
+    await set_app_setting(session, "document_parser", "anydoc")
+
+    def _raise(*a, **k):
+        # Real, directly-constructible ConvertError subclass (see Task 3
+        # report for constructibility notes) -- still caught by the base
+        # `except anydoc.ConvertError` in parse_document.
+        raise anydoc.UnsupportedError("image-only pdf")  # variant: Unsupported/Malformed
+
+    monkeypatch.setattr(anydoc, "to_markdown_bytes", _raise)
+
+    called = {}
+    def _fake_parse_bytes(data, filename, *, ocr_enabled, ocr_min_chars_per_page):
+        called["ocr_enabled"] = ocr_enabled
+        from ragz.modules.documents.pipeline import PageBlock
+        return [PageBlock(page=7, text="ocr text", kind="text")]
+
+    monkeypatch.setattr("ragz.modules.documents.parsers.parse_bytes", _fake_parse_bytes)
+    blocks = await parse_document(session, settings, data=b"%PDF-1.7 fake", filename="scan.pdf")
+    assert called["ocr_enabled"] is True          # Docling OCR path was taken
+    assert [(b.page, b.text) for b in blocks] == [(7, "ocr text")]   # the fallback's blocks
+
+
+async def test_anydoc_non_pdf_failure_raises_ingest_failure(session, settings, monkeypatch):
+    await set_app_setting(session, "document_parser", "anydoc")
+    def _raise(*a, **k):
+        raise anydoc.UnsupportedError("unsupported")
+    monkeypatch.setattr(anydoc, "to_markdown_bytes", _raise)
+    with pytest.raises(IngestFailure):
+        await parse_document(session, settings, data=b"junk", filename="mystery.xyz")
