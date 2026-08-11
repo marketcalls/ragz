@@ -16,6 +16,7 @@ import { LoginPage } from '@/features/auth/login-page';
 import { ChatPage } from '@/features/chat/chat-page';
 import { DocumentsPage } from '@/features/documents/documents-page';
 
+import { RequireAction } from './require-action';
 import { RequireAuth } from './require-auth';
 import { RequireRole } from './require-role';
 
@@ -47,10 +48,16 @@ export const router = createBrowserRouter([
               { path: '/admin/settings', element: <SettingsPage /> },
               { path: '/admin/api-keys', element: <ApiKeysPage /> },
               { path: '/admin/bots', element: <BotsPage /> },
-              { path: '/admin/roles', element: <RolesPage /> },
-              { path: '/admin/audit', element: <AuditPage /> },
               { path: '/admin/health', element: <HealthPage /> },
             ],
+          },
+          {
+            element: <RequireAction action="roles.read" />,
+            children: [{ path: '/admin/roles', element: <RolesPage /> }],
+          },
+          {
+            element: <RequireAction action="audit.read" />,
+            children: [{ path: '/admin/audit', element: <AuditPage /> }],
           },
         ],
       },

@@ -16,6 +16,8 @@ const fixtureRole: RoleTemplateOut = {
   name: 'Reviewer',
   description: 'Reads and comments only',
   permissions: ['documents.upload', 'chat.use'],
+  status: 'active',
+  version: 1,
 };
 
 function renderDialog(

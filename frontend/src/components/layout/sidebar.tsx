@@ -14,6 +14,7 @@ import {
 import { NavLink } from 'react-router-dom';
 
 import { cn } from '@/lib/cn';
+import { useAuthorization } from '@/lib/use-authorization';
 import { useClaims } from '@/lib/use-claims';
 
 import { SidebarChatList } from './sidebar-chat-list';
@@ -39,7 +40,9 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
 
 export function Sidebar() {
   const claims = useClaims();
-  const isAdmin = claims?.role === 'admin' || claims?.role === 'superadmin';
+  const { data: auth } = useAuthorization();
+  const can = (action: string) => auth?.role === 'superadmin' || auth?.permissions.has(action) === true;
+  const isSuperadmin = claims?.role === 'superadmin';
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex items-center gap-2 px-3 pb-1 pt-3">
@@ -52,46 +55,46 @@ export function Sidebar() {
       <SidebarChatList />
       <nav aria-label="Sections" className="space-y-0.5 border-t border-line-faint px-1 py-2">
         <SideLink to="/documents" label="Documents" icon={<FileText className="h-4 w-4" aria-hidden />} />
-        {isAdmin ? (
+        {can('analytics.view') ? (
           <SideLink
             to="/admin/dashboard"
             label="Dashboard"
             icon={<LayoutDashboard className="h-4 w-4" aria-hidden />}
           />
         ) : null}
-        {isAdmin ? (
+        {can('users.read') ? (
           <SideLink to="/admin/users" label="Users" icon={<Users className="h-4 w-4" aria-hidden />} />
         ) : null}
-        {isAdmin ? (
+        {can('feedback.review') ? (
           <SideLink
             to="/admin/feedback"
             label="Feedback"
             icon={<MessageSquare className="h-4 w-4" aria-hidden />}
           />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {can('roles.read') ? (
           <SideLink to="/admin/roles" label="Roles" icon={<ShieldCheck className="h-4 w-4" aria-hidden />} />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {isSuperadmin ? (
           <SideLink to="/admin/models" label="Models" icon={<Settings2 className="h-4 w-4" aria-hidden />} />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {isSuperadmin ? (
           <SideLink to="/admin/settings" label="Settings" icon={<Settings className="h-4 w-4" aria-hidden />} />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {isSuperadmin ? (
           <SideLink
             to="/admin/api-keys"
             label="API Keys"
             icon={<KeyRound className="h-4 w-4" aria-hidden />}
           />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {isSuperadmin ? (
           <SideLink to="/admin/bots" label="Bots" icon={<Bot className="h-4 w-4" aria-hidden />} />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {can('audit.read') ? (
           <SideLink to="/admin/audit" label="Audit" icon={<ScrollText className="h-4 w-4" aria-hidden />} />
         ) : null}
-        {claims?.role === 'superadmin' ? (
+        {isSuperadmin ? (
           <SideLink to="/admin/health" label="Health" icon={<Activity className="h-4 w-4" aria-hidden />} />
         ) : null}
       </nav>

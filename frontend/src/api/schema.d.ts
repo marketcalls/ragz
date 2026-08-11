@@ -250,7 +250,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Members Route */
+        get: operations["list_members_route_api_v1_workspaces__workspace_id__members_get"];
         put?: never;
         /** Add Member */
         post: operations["add_member_api_v1_workspaces__workspace_id__members_post"];
@@ -258,6 +259,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspaces/{workspace_id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Member Route */
+        delete: operations["remove_member_route_api_v1_workspaces__workspace_id__members__user_id__delete"];
+        options?: never;
+        head?: never;
+        /** Change Member Role Route */
+        patch: operations["change_member_role_route_api_v1_workspaces__workspace_id__members__user_id__patch"];
         trace?: never;
     };
     "/api/v1/workspaces/{workspace_id}/embedding-model": {
@@ -677,6 +696,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/authorization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get My Authorization */
+        get: operations["get_my_authorization_api_v1_me_authorization_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/secrets/{name}": {
         parameters: {
             query?: never;
@@ -739,6 +775,23 @@ export interface paths {
         };
         /** Get Audit */
         get: operations["get_audit_api_v1_admin_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Audit */
+        get: operations["export_audit_api_v1_admin_audit_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -921,6 +974,57 @@ export interface paths {
         head?: never;
         /** Patch Role Template */
         patch: operations["patch_role_template_api_v1_admin_roles__role_template_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/roles/{role_template_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Role Template Route */
+        post: operations["activate_role_template_route_api_v1_admin_roles__role_template_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/roles/{role_template_id}/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Role Template Impact Route */
+        get: operations["role_template_impact_route_api_v1_admin_roles__role_template_id__impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/roles/{role_template_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rollback Role Template Route */
+        post: operations["rollback_role_template_route_api_v1_admin_roles__role_template_id__rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/admin/models": {
@@ -1574,6 +1678,18 @@ export interface components {
             target_type: string;
             /** Target Id */
             target_id: string;
+            /** Result */
+            result: string;
+            /** Reason Code */
+            reason_code: string | null;
+            /** Request Id */
+            request_id: string | null;
+            /** Source Ip */
+            source_ip: string | null;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Credential Id */
+            credential_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1586,6 +1702,15 @@ export interface components {
             events: components["schemas"]["AuditEventOut"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** AuthorizationOut */
+        AuthorizationOut: {
+            /** Role */
+            role: string;
+            /** Permissions */
+            permissions: string[];
+            /** Policy Version */
+            policy_version: number | null;
         };
         /** Body_upload_attachment_api_v1_chats__chat_id__attachments_post */
         Body_upload_attachment_api_v1_chats__chat_id__attachments_post: {
@@ -2179,6 +2304,11 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** ImpactOut */
+        ImpactOut: {
+            /** Affected Users */
+            affected_users: number;
+        };
         /** InvitationAccept */
         InvitationAccept: {
             /** Token */
@@ -2224,9 +2354,31 @@ export interface components {
             user_id: string;
             /**
              * Role
-             * @default member
+             * @default contributor
+             * @enum {string}
              */
-            role: string;
+            role: "owner" | "manager" | "contributor" | "viewer";
+        };
+        /** MemberOut */
+        MemberOut: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "manager" | "contributor" | "viewer";
+        };
+        /** MemberRolePatch */
+        MemberRolePatch: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "manager" | "contributor" | "viewer";
         };
         /** MessageFeedbackIn */
         MessageFeedbackIn: {
@@ -2785,6 +2937,10 @@ export interface components {
             description: string;
             /** Permissions */
             permissions: string[];
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
         };
         /** RoleTemplatePatch */
         RoleTemplatePatch: {
@@ -3468,6 +3624,37 @@ export interface operations {
             };
         };
     };
+    list_members_route_api_v1_workspaces__workspace_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     add_member_api_v1_workspaces__workspace_id__members_post: {
         parameters: {
             query?: never;
@@ -3489,6 +3676,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_member_route_api_v1_workspaces__workspace_id__members__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_member_role_route_api_v1_workspaces__workspace_id__members__user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberRolePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberOut"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -4507,6 +4760,26 @@ export interface operations {
             };
         };
     };
+    get_my_authorization_api_v1_me_authorization_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizationOut"];
+                };
+            };
+        };
+    };
     put_secret_api_v1_admin_secrets__name__put: {
         parameters: {
             query?: never;
@@ -4668,6 +4941,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditPageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_audit_api_v1_admin_audit_export_get: {
+        parameters: {
+            query?: {
+                org_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -5118,6 +5422,99 @@ export interface operations {
                 "application/json": components["schemas"]["RoleTemplatePatch"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleTemplateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_role_template_route_api_v1_admin_roles__role_template_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleTemplateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    role_template_impact_route_api_v1_admin_roles__role_template_id__impact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImpactOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_role_template_route_api_v1_admin_roles__role_template_id__rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
