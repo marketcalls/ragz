@@ -174,8 +174,10 @@ def require_action(
 ) -> Callable[..., Awaitable[TenantContext]]:
     """Central authorization decision point (RBAC-06): every declared route
     action funnels through here. Superadmin bypass matches require_role;
-    admins pass because get_tenant_context grants them every permission.
-    Custom roles refine the 'user' tier only. `scope`
+    admins pass for every permission EXCEPT the RBAC-05 carve-outs
+    (documents.acl.bypass, audit.read, audit.export), which they earn only via
+    an explicit role-template overlay -- see build_context_for_user's
+    _AUTOMATIC_CARVE_OUTS. Custom roles refine the 'user' tier only. `scope`
     (self|workspace|organization|platform) documents the action's resource
     scope for api/policy.py's route registry and the /me/authorization
     response (a later task) -- it does not itself widen or narrow the check
