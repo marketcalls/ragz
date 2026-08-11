@@ -61,9 +61,21 @@ def _iter_hidden_api_routes(
         if nested:
             yield from _iter_hidden_api_routes(nested, nested_prefix)
 
-# No TenantContext dependency at all: either genuinely public (login, health,
-# docs) or the auth IS something other than a bearer JWT (webhook signature
-# verification in bots.py; the request never reaches get_tenant_context).
+# Two distinct reasons a route lands here, both meaning "no per-action policy
+# decision for audit_route_policy to enforce":
+#  1. No TenantContext dependency at all: either genuinely public (login,
+#     health, docs) or the auth IS something other than a bearer JWT (webhook
+#     signature verification in bots.py; the request never reaches
+#     get_tenant_context).
+#  2. Authenticated-but-actionless "self" routes: they DO depend on
+#     get_tenant_context (a valid JWT is required), but the only thing
+#     resembling an authorization decision is "is authenticated" -- there is
+#     no separate action/resource to gate, so there is nothing for
+#     ROUTE_POLICY to declare. `/me/authorization` (RBAC-12) is this case: it
+#     just echoes the caller's own already-computed TenantContext back to
+#     them. Don't read this bucket as "truly public, no auth" -- check which
+#     of the two reasons applies before assuming a bearer token isn't
+#     required.
 PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/healthz"), ("GET", "/readyz"),
     ("POST", "/api/v1/auth/login"), ("POST", "/api/v1/auth/refresh"),
@@ -73,6 +85,9 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/external/bots/telegram/{webhook_id}"),
     ("POST", "/external/bots/slack/{webhook_id}"),
     ("POST", "/external/bots/discord/{webhook_id}"),
+    # authenticated-but-actionless self route (reason 2 above): requires a
+    # valid JWT via get_tenant_context, but has no per-action policy.
+    ("GET", "/api/v1/me/authorization"),
 })
 
 # (method, path-with-{param}-placeholders) -> declared action. `path` matches

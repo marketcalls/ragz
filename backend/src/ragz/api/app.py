@@ -26,6 +26,7 @@ from ragz.api.routes.evals import router as evals_router
 from ragz.api.routes.external import router as external_router
 from ragz.api.routes.groups import router as groups_router
 from ragz.api.routes.health import router as health_router
+from ragz.api.routes.me import router as me_router
 from ragz.api.routes.models import router as models_router
 from ragz.api.routes.oidc import router as oidc_router
 from ragz.api.routes.search import router as search_router
@@ -160,6 +161,7 @@ def create_app(
     app.include_router(evals_router, prefix="/api/v1")
     app.include_router(groups_router, prefix="/api/v1")
     app.include_router(search_router, prefix="/api/v1")
+    app.include_router(me_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(admin_audit_router, prefix="/api/v1")
