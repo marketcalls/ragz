@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import CheckConstraint, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ragz.core.db import Base, UUIDPk
@@ -9,6 +9,14 @@ from ragz.core.db import Base, UUIDPk
 
 class User(UUIDPk, Base):
     __tablename__ = "users"
+    # RBAC-11: mirrors migration 0521b696bbe9's ck_users_role so create_all
+    # (test/dev schema build) enforces it too, not just a genuinely-migrated
+    # Postgres.
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('superadmin', 'admin', 'user')", name="ck_users_role"
+        ),
+    )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"))
     email: Mapped[str] = mapped_column(unique=True, index=True)
@@ -33,6 +41,10 @@ class RefreshToken(UUIDPk, Base):
 
 class Invitation(UUIDPk, Base):
     __tablename__ = "invitations"
+    # RBAC-11: mirrors migration 0521b696bbe9's ck_invitations_role.
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'user')", name="ck_invitations_role"),
+    )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"))
     email: Mapped[str] = mapped_column(index=True)

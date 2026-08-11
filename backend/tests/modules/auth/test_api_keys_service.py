@@ -70,7 +70,7 @@ async def test_generate_rejects_non_member(session, seeded_user):
     session.add(org2)
     await session.flush()
     stranger = User(
-        org_id=org2.id, email="s@x.com", password_hash=hash_password("pw123456x"), role="member"
+        org_id=org2.id, email="s@x.com", password_hash=hash_password("pw123456x"), role="user"
     )
     session.add(stranger)
     await session.flush()

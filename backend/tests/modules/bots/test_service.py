@@ -45,7 +45,7 @@ async def test_create_rejects_non_member(session, seeded_user, test_settings):
     await session.flush()
     stranger = User(
         org_id=org2.id, email="s@x.com",
-        password_hash=hash_password("pw123456x"), role="member",  # noqa: S106
+        password_hash=hash_password("pw123456x"), role="user",  # noqa: S106
     )
     session.add(stranger)
     await session.flush()

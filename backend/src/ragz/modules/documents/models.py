@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -44,6 +44,11 @@ class Document(UUIDPk, Base):
     __tablename__ = "documents"
     __table_args__ = (
         UniqueConstraint("workspace_id", "content_hash", name="uq_documents_workspace_hash"),
+        # RBAC-11: mirrors migration 0521b696bbe9's ck_documents_status.
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'indexed', 'failed', 'deleting')",
+            name="ck_documents_status",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
