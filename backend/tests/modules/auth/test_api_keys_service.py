@@ -16,7 +16,7 @@ async def _member_ws(session, user: User):
     ws = Workspace(org_id=user.org_id, name="WS", embedding_model_id=None)
     session.add(ws)
     await session.flush()
-    session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="member"))
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="contributor"))
     await session.flush()
     return ws
 

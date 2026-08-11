@@ -54,7 +54,7 @@ async def _make_workspace_and_key(session, settings: Settings, user: User):
     ws = Workspace(org_id=user.org_id, name="WS")
     session.add(ws)
     await session.flush()
-    session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="member"))
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="contributor"))
     group = Group(org_id=user.org_id, name="G1")
     session.add(group)
     await session.flush()
@@ -111,7 +111,7 @@ async def test_revoked_key_401(
     ws = Workspace(org_id=seeded_user.org_id, name="WS2")
     session.add(ws)
     await session.flush()
-    session.add(WorkspaceMember(workspace_id=ws.id, user_id=seeded_user.id, role="member"))
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=seeded_user.id, role="contributor"))
     await session.commit()
     row, raw = await generate_api_key(
         session, test_settings, actor_id=seeded_user.id, name="k2",

@@ -58,9 +58,23 @@ class ReembedJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+WorkspaceRole = Literal["owner", "manager", "contributor", "viewer"]
+
+
 class MemberAdd(BaseModel):
     user_id: UUID
-    role: str = "member"
+    role: WorkspaceRole = "contributor"
+
+
+class MemberOut(BaseModel):
+    user_id: UUID
+    role: WorkspaceRole
+
+    model_config = {"from_attributes": True}
+
+
+class MemberRolePatch(BaseModel):
+    role: WorkspaceRole
 
 
 class GroupCreate(BaseModel):

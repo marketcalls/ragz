@@ -124,7 +124,7 @@ async def test_cross_workspace_folder_access_denied_for_plain_member(
     await session.commit()
     r = await client.post(
         f"/api/v1/workspaces/{ws1_id}/members",
-        json={"user_id": str(member.id), "role": "member"}, headers=h_admin,
+        json={"user_id": str(member.id), "role": "contributor"}, headers=h_admin,
     )
     assert r.status_code == 204
 

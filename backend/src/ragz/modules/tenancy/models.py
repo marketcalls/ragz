@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,12 +47,22 @@ class Workspace(UUIDPk, Base):
 
 class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
+    # RBAC-08: role has never gated any authorization decision -- this CHECK
+    # constraint just closes the "arbitrary free string" gap so the value is
+    # trustworthy metadata going forward. The paired forward migration
+    # backfills any pre-existing non-conforming value to 'contributor'.
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('owner', 'manager', 'contributor', 'viewer')",
+            name="ck_workspace_members_role",
+        ),
+    )
 
     workspace_id: Mapped[UUID] = mapped_column(
         ForeignKey("workspaces.id"), primary_key=True
     )
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    role: Mapped[str] = mapped_column(default="member")
+    role: Mapped[str] = mapped_column(default="contributor")
 
 
 class Group(UUIDPk, Base):

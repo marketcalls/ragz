@@ -20,6 +20,8 @@ from ragz.modules.tenancy.reembed_models import ReembedJob
 from ragz.modules.tenancy.schemas import (
     EmbeddingModelPatch,
     MemberAdd,
+    MemberOut,
+    MemberRolePatch,
     ReembedJobOut,
     ReembedRequest,
     WorkspaceCreate,
@@ -35,6 +37,10 @@ AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): PATCH (settings) is workspace configuration, distinct from
 # org administration (POST /workspaces, POST .../members stay AdminDep).
 ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
+# Task 11 (RBAC-08): member list/change-role/remove — distinct from
+# workspace.create/POST-member (AdminDep, org administration).
+MembersReadDep = Annotated[TenantContext, Depends(require_action("workspace.members.read"))]
+MembersManageDep = Annotated[TenantContext, Depends(require_action("workspace.members.manage"))]
 
 
 @router.post("", status_code=201, response_model=WorkspaceOut)
@@ -53,6 +59,31 @@ async def add_member(
     workspace_id: UUID, body: MemberAdd, session: SessionDep, ctx: AdminDep
 ) -> None:
     await service.add_member(session, ctx, workspace_id, body.user_id, body.role)
+
+
+@router.get("/{workspace_id}/members", response_model=list[MemberOut])
+async def list_members_route(
+    workspace_id: UUID, session: SessionDep, ctx: MembersReadDep
+) -> list[MemberOut]:
+    return [
+        MemberOut.model_validate(m) for m in await service.list_members(session, ctx, workspace_id)
+    ]
+
+
+@router.patch("/{workspace_id}/members/{user_id}", response_model=MemberOut)
+async def change_member_role_route(
+    workspace_id: UUID, user_id: UUID, body: MemberRolePatch,
+    session: SessionDep, ctx: MembersManageDep,
+) -> MemberOut:
+    member = await service.change_member_role(session, ctx, workspace_id, user_id, body.role)
+    return MemberOut.model_validate(member)
+
+
+@router.delete("/{workspace_id}/members/{user_id}", status_code=204)
+async def remove_member_route(
+    workspace_id: UUID, user_id: UUID, session: SessionDep, ctx: MembersManageDep,
+) -> None:
+    await service.remove_member(session, ctx, workspace_id, user_id)
 
 
 _SETTINGS_FIELDS = (

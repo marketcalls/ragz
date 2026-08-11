@@ -314,3 +314,33 @@ async def test_toggling_off_then_on_does_not_enqueue_on_the_off_leg(
     )
     assert r3.status_code == 200
     assert captured_backfill == [UUID(ws_id)]
+
+
+async def test_list_members_route(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    from ragz.modules.tenancy.models import WorkspaceMember
+
+    h = await auth(client, seeded_user.email)
+    ws_id = await make_workspace(client, h)
+    session.add(WorkspaceMember(workspace_id=UUID(ws_id), user_id=seeded_user.id, role="owner"))
+    await session.commit()
+    r = await client.get(f"/api/v1/workspaces/{ws_id}/members", headers=h)
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+    assert {m["user_id"] for m in r.json()} == {str(seeded_user.id)}
+
+
+async def test_remove_member_route_denies_final_owner(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    from ragz.modules.tenancy.models import WorkspaceMember
+
+    h = await auth(client, seeded_user.email)
+    ws_id = await make_workspace(client, h)
+    session.add(WorkspaceMember(workspace_id=UUID(ws_id), user_id=seeded_user.id, role="owner"))
+    await session.commit()
+    r = await client.delete(
+        f"/api/v1/workspaces/{ws_id}/members/{seeded_user.id}", headers=h
+    )
+    assert r.status_code == 409

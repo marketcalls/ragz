@@ -61,6 +61,66 @@ async def add_member(
     await session.commit()
 
 
+async def list_members(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID
+) -> list[WorkspaceMember]:
+    await get_workspace_checked(session, ctx, workspace_id)
+    stmt = select(WorkspaceMember).where(WorkspaceMember.workspace_id == workspace_id)
+    return list((await session.execute(stmt)).scalars())
+
+
+async def _is_last_owner(
+    session: AsyncSession, workspace_id: UUID, user_id: UUID
+) -> bool:
+    owners = (
+        await session.execute(
+            select(WorkspaceMember.user_id).where(
+                WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.role == "owner",
+            )
+        )
+    ).scalars().all()
+    return list(owners) == [user_id]
+
+
+async def change_member_role(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, user_id: UUID, role: str,
+) -> WorkspaceMember:
+    await get_workspace_checked(session, ctx, workspace_id)
+    member = await session.get(WorkspaceMember, (workspace_id, user_id))
+    if member is None:
+        raise NotFoundError("member not found")
+    if role != "owner" and await _is_last_owner(session, workspace_id, user_id):
+        raise ConflictError("cannot demote the workspace's last owner")
+    member.role = role
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="workspace.member_role_changed", target_type="workspace_member",
+                       target_id=f"{workspace_id}:{user_id}")
+    await session.commit()
+    return member
+
+
+async def remove_member(
+    session: AsyncSession, ctx: TenantContext, workspace_id: UUID, user_id: UUID,
+) -> None:
+    await get_workspace_checked(session, ctx, workspace_id)
+    member = await session.get(WorkspaceMember, (workspace_id, user_id))
+    if member is None:
+        raise NotFoundError("member not found")
+    if await _is_last_owner(session, workspace_id, user_id):
+        raise ConflictError("cannot remove the workspace's last owner")
+    await session.delete(member)
+    # RBAC-08: no separate "revoke dependent access" step is needed here --
+    # get_tenant_context/build_context_for_user already reload workspace_ids
+    # fresh from WorkspaceMember on EVERY human request, and
+    # build_verified_principal_context (RBAC-02) already re-validates current
+    # membership on EVERY API-key/bot request. Deleting this row is already
+    # the complete, immediate revocation; Task 12 adds the adversarial proof.
+    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+                       action="workspace.member_removed", target_type="workspace_member",
+                       target_id=f"{workspace_id}:{user_id}")
+    await session.commit()
+
+
 async def get_workspace_checked(
     session: AsyncSession, ctx: TenantContext, workspace_id: UUID
 ) -> Workspace:

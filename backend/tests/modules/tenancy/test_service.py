@@ -93,6 +93,70 @@ async def test_assign_custom_role_now_allows_admin_target(session: AsyncSession)
     assert updated.custom_role_id == template.id
 
 
+@pytest.fixture
+async def member_env(session: AsyncSession) -> dict:
+    """Task 11 (RBAC-08): a workspace with exactly one 'owner' and one
+    'contributor' member, plus a ctx (org-tier admin, so require_action's
+    guard is a non-issue -- these tests call service functions directly, not
+    through the routes) scoped to it."""
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization, WorkspaceMember
+
+    org = Organization(name="rbac08-member-org")
+    session.add(org)
+    await session.flush()
+    owner = User(org_id=org.id, email="owner@rbac08.example",
+                 password_hash="x", role="admin")  # noqa: S106
+    other = User(org_id=org.id, email="other@rbac08.example",
+                 password_hash="x", role="user")  # noqa: S106
+    session.add_all([owner, other])
+    await session.flush()
+    ws = Workspace(org_id=org.id, name="MemberWS")
+    session.add(ws)
+    await session.flush()
+    session.add_all([
+        WorkspaceMember(workspace_id=ws.id, user_id=owner.id, role="owner"),
+        WorkspaceMember(workspace_id=ws.id, user_id=other.id, role="contributor"),
+    ])
+    await session.commit()
+    ctx = TenantContext(
+        user_id=owner.id, org_id=org.id, role="admin", workspace_ids=frozenset({ws.id})
+    )
+    return {"ctx": ctx, "ws_id": ws.id, "owner_id": owner.id, "other_id": other.id}
+
+
+async def test_remove_last_owner_is_rejected(
+    session: AsyncSession, member_env: dict
+) -> None:
+    from ragz.core.errors import ConflictError
+
+    with pytest.raises(ConflictError):
+        await service.remove_member(
+            session, member_env["ctx"], member_env["ws_id"], member_env["owner_id"]
+        )
+
+
+async def test_change_role_of_last_owner_away_from_owner_is_rejected(
+    session: AsyncSession, member_env: dict
+) -> None:
+    from ragz.core.errors import ConflictError
+
+    with pytest.raises(ConflictError):
+        await service.change_member_role(
+            session, member_env["ctx"], member_env["ws_id"], member_env["owner_id"], "viewer"
+        )
+
+
+async def test_remove_member_succeeds_when_not_the_last_owner(
+    session: AsyncSession, member_env: dict
+) -> None:
+    await service.remove_member(
+        session, member_env["ctx"], member_env["ws_id"], member_env["other_id"]
+    )
+    members = await service.list_members(session, member_env["ctx"], member_env["ws_id"])
+    assert member_env["other_id"] not in {m.user_id for m in members}
+
+
 async def test_assign_custom_role_still_rejects_superadmin_target(session: AsyncSession) -> None:
     """RBAC-05: a superadmin target is still rejected (platform-tier, out of
     this org-scoped mechanism's reach) -- 404 so existence never leaks."""
