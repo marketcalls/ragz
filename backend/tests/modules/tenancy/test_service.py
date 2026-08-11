@@ -255,8 +255,9 @@ async def test_impact_preview_counts_assigned_users(
 async def test_activate_snapshots_a_version_row(
     session: AsyncSession, seeded_ctx: TenantContext
 ) -> None:
-    from ragz.modules.tenancy.models import RoleTemplateVersion
     from sqlalchemy import select as sa_select
+
+    from ragz.modules.tenancy.models import RoleTemplateVersion
 
     template = await service.create_role_template(
         session, seeded_ctx, name="snap-test", description="", permissions=["chat.read"],
