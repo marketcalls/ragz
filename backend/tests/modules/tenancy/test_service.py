@@ -250,3 +250,48 @@ async def test_impact_preview_counts_assigned_users(
     assert await service.role_template_impact(session, template.id) == 0
     await service.assign_custom_role(session, seeded_ctx, user_id, template.id)
     assert await service.role_template_impact(session, template.id) == 1
+
+
+async def test_activate_snapshots_a_version_row(
+    session: AsyncSession, seeded_ctx: TenantContext
+) -> None:
+    from ragz.modules.tenancy.models import RoleTemplateVersion
+    from sqlalchemy import select as sa_select
+
+    template = await service.create_role_template(
+        session, seeded_ctx, name="snap-test", description="", permissions=["chat.read"],
+    )
+    await service.activate_role_template(session, seeded_ctx, template.id)
+    rows = list((await session.execute(
+        sa_select(RoleTemplateVersion).where(RoleTemplateVersion.role_template_id == template.id)
+    )).scalars())
+    assert len(rows) == 1 and rows[0].permissions == ["chat.read"]
+
+
+async def test_rollback_restores_previous_permissions_as_a_new_version(
+    session: AsyncSession, seeded_ctx: TenantContext
+) -> None:
+    template = await service.create_role_template(
+        session, seeded_ctx, name="rollback-test", description="", permissions=["chat.read"],
+    )
+    await service.activate_role_template(session, seeded_ctx, template.id)  # v2, snapshot #1
+    await service.update_role_template(
+        session, seeded_ctx, template.id, permissions=["chat.read", "documents.upload"],
+    )
+    await service.activate_role_template(session, seeded_ctx, template.id)  # v3, snapshot #2
+    rolled_back = await service.rollback_role_template(session, seeded_ctx, template.id)
+    assert rolled_back.permissions == ["chat.read"]  # snapshot #1's permissions restored
+    assert rolled_back.version == 4  # rollback is a NEW forward version, not a rewrite
+
+
+async def test_rollback_with_no_previous_version_conflicts(
+    session: AsyncSession, seeded_ctx: TenantContext
+) -> None:
+    from ragz.core.errors import ConflictError
+
+    template = await service.create_role_template(
+        session, seeded_ctx, name="rollback-none-test", description="", permissions=["chat.read"],
+    )
+    await service.activate_role_template(session, seeded_ctx, template.id)  # v2, snapshot #1 only
+    with pytest.raises(ConflictError):
+        await service.rollback_role_template(session, seeded_ctx, template.id)

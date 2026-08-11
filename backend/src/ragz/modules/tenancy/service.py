@@ -14,6 +14,7 @@ from ragz.modules.tenancy.models import (
     Group,
     Organization,
     RoleTemplate,
+    RoleTemplateVersion,
     UserGroup,
     Workspace,
     WorkspaceMember,
@@ -452,15 +453,49 @@ async def activate_role_template(
 ) -> RoleTemplate:
     """RBAC-09: flips a draft (or re-activates an archived) template to
     active and bumps its version -- the only way a new template becomes
-    assignable via assign_custom_role."""
+    assignable via assign_custom_role. Also writes an immutable
+    RoleTemplateVersion snapshot of the permissions being activated -- the
+    history rollback_role_template reads from."""
     template = await _get_role_template(session, role_template_id)
     template.status = "active"
     template.version += 1
+    session.add(
+        RoleTemplateVersion(
+            role_template_id=template.id, version=template.version,
+            permissions=list(template.permissions),
+        )
+    )
     await record_audit(session, org_id=None, actor_id=ctx.user_id,
                        action="role_template.activated", target_type="role_template",
-                       target_id=str(template.id))
+                       target_id=f"{template.id}@v{template.version}")
     await session.commit()
     return template
+
+
+async def rollback_role_template(
+    session: AsyncSession, ctx: TenantContext, role_template_id: UUID
+) -> RoleTemplate:
+    """RBAC-09: restores the PREVIOUS version snapshot's permissions and
+    activates that as a NEW forward version -- rollback never rewrites
+    role_template_versions history, it only changes what the CURRENT
+    role_templates.permissions row holds and appends yet another snapshot
+    on top (via activate_role_template)."""
+    template = await _get_role_template(session, role_template_id)
+    versions = list(
+        (
+            await session.execute(
+                select(RoleTemplateVersion)
+                .where(RoleTemplateVersion.role_template_id == role_template_id)
+                .order_by(RoleTemplateVersion.version.desc())
+                .limit(2)
+            )
+        ).scalars()
+    )
+    if len(versions) < 2:
+        raise ConflictError("no previous version to roll back to")
+    previous = versions[1]
+    template.permissions = list(previous.permissions)
+    return await activate_role_template(session, ctx, role_template_id)
 
 
 async def role_template_impact(session: AsyncSession, role_template_id: UUID) -> int:

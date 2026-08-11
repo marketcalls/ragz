@@ -108,3 +108,21 @@ class RoleTemplate(UUIDPk, Base):
     permissions: Mapped[list[str]] = mapped_column(ARRAY(String))
     status: Mapped[str] = mapped_column(default="draft")
     version: Mapped[int] = mapped_column(default=1)
+
+
+class RoleTemplateVersion(UUIDPk, Base):
+    """Immutable snapshot written on every activate_role_template call (RBAC-09).
+    Never updated or deleted by application code -- rollback_role_template
+    reads the PREVIOUS row and writes a NEW one, same append-only posture as
+    AuditEvent."""
+
+    __tablename__ = "role_template_versions"
+    __table_args__ = (
+        UniqueConstraint("role_template_id", "version", name="uq_role_template_versions"),
+    )
+
+    role_template_id: Mapped[UUID] = mapped_column(
+        ForeignKey("role_templates.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int]
+    permissions: Mapped[list[str]] = mapped_column(ARRAY(String))

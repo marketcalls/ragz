@@ -70,3 +70,11 @@ async def role_template_impact_route(
     role_template_id: UUID, session: SessionDep, ctx: AdminDep
 ) -> ImpactOut:
     return ImpactOut(affected_users=await service.role_template_impact(session, role_template_id))
+
+
+@router.post("/{role_template_id}/rollback", response_model=RoleTemplateOut)
+async def rollback_role_template_route(
+    role_template_id: UUID, session: SessionDep, ctx: SuperDep
+) -> RoleTemplateOut:
+    template = await service.rollback_role_template(session, ctx, role_template_id)
+    return RoleTemplateOut.model_validate(template)

@@ -146,6 +146,7 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("PATCH", "/api/v1/admin/roles/{role_template_id}"): "roles.author",
     ("DELETE", "/api/v1/admin/roles/{role_template_id}"): "roles.author",
     ("POST", "/api/v1/admin/roles/{role_template_id}/activate"): "roles.author",
+    ("POST", "/api/v1/admin/roles/{role_template_id}/rollback"): "roles.author",
     ("GET", "/api/v1/admin/roles/{role_template_id}/impact"): "roles.read",
     ("GET", "/api/v1/admin/audit"): "audit.read",
     ("GET", "/api/v1/admin/audit/export"): "audit.export",
