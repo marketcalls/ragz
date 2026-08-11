@@ -2853,7 +2853,7 @@ export interface components {
         /** ProviderSettingsUpdate */
         ProviderSettingsUpdate: {
             /** Document Parser */
-            document_parser?: ("docling" | "llamaparse") | null;
+            document_parser?: ("anydoc" | "docling" | "llamaparse") | null;
             /** Rerank Provider */
             rerank_provider?: ("local" | "cohere") | null;
             /** Cohere Rerank Model */

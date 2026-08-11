@@ -18,7 +18,7 @@ export function SettingsPage() {
   const settings = useProviderSettings();
   const update = useUpdateProviderSettings();
 
-  const [parser, setParser] = useState<'docling' | 'llamaparse'>('docling');
+  const [parser, setParser] = useState<'anydoc' | 'docling' | 'llamaparse'>('anydoc');
   const [rerank, setRerank] = useState<'local' | 'cohere'>('local');
   const [cohereModel, setCohereModel] = useState<CohereRerankModel>('rerank-v4.0-fast');
   // API keys are write-only: never populated from the query response, always
@@ -74,8 +74,14 @@ export function SettingsPage() {
                 <NativeSelect
                   id="parser"
                   value={parser}
-                  onChange={(e) => setParser(e.target.value as 'docling' | 'llamaparse')}
+                  onChange={(e) =>
+                    setParser(e.target.value as 'anydoc' | 'docling' | 'llamaparse')
+                  }
                 >
+                  <option value="anydoc">
+                    anydoc (fastest — office + text PDFs; scans use Docling OCR; section-level
+                    citations)
+                  </option>
                   <option value="docling">Docling (local)</option>
                   <option value="llamaparse">LlamaParse (cloud, PPTX + OCR)</option>
                 </NativeSelect>

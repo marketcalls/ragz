@@ -96,6 +96,21 @@ test('leaving a key field blank on save omits it from the PUT body', async () =>
   expect(body.llamaparse_api_key).toBeUndefined();
 });
 
+test('offers anydoc as a parser option and selects it when reported by the backend', async () => {
+  useProviderSettings.mockReturnValue({
+    data: { ...settings, document_parser: 'anydoc' },
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  });
+
+  render(<SettingsPage />);
+
+  expect(await screen.findByRole('option', { name: /anydoc/i })).toBeInTheDocument();
+  expect(screen.getByLabelText(/document parser/i)).toHaveValue('anydoc');
+});
+
 test('shows an error message and retry button when the settings query fails', async () => {
   const refetch = vi.fn();
   useProviderSettings.mockReturnValue({
