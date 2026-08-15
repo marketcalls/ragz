@@ -34,7 +34,7 @@ export function ChatInput({
 
   return (
     <div className="mx-auto w-full max-w-thread px-4 pb-4">
-      <div className="flex items-end gap-2 rounded-xl border border-line bg-bg p-2 shadow-soft">
+      <div className="flex items-end gap-2 rounded-xl border border-line bg-bg p-2 shadow-soft transition-shadow duration-150 ease-out focus-within:shadow-md">
         <textarea
           ref={boxRef}
           aria-label="Message"
@@ -54,7 +54,7 @@ export function ChatInput({
             type="button"
             aria-label="Stop generating"
             onClick={onStop}
-            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg"
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg transition-colors duration-150 ease-out"
           >
             <Square className="h-3 w-3 fill-current" aria-hidden />
           </button>
@@ -64,7 +64,7 @@ export function ChatInput({
             aria-label="Send"
             disabled={disabled || value.trim() === ''}
             onClick={submit}
-            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg disabled:opacity-40"
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-ink text-bg transition-colors duration-150 ease-out disabled:opacity-40"
           >
             <ArrowUp className="h-4 w-4" aria-hidden />
           </button>

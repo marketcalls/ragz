@@ -12,8 +12,9 @@ const LIGHT: Record<string, string> = {
   '--bg-sidebar': '#f9f9f9',
   '--bg-subtle': '#f4f4f5',
   '--bg-raised': '#fafafa',
-  '--border': '#ececec',
-  '--border-faint': '#f1f1f1',
+  '--border': 'rgba(23, 23, 23, 0.08)',
+  '--border-strong': 'rgba(23, 23, 23, 0.16)',
+  '--border-faint': 'rgba(23, 23, 23, 0.05)',
   '--text': '#171717',
   '--text-secondary': '#555555',
   '--text-muted': '#8a8a8a',
@@ -33,8 +34,9 @@ const DARK: Record<string, string> = {
   '--bg-sidebar': '#111113',
   '--bg-subtle': '#26262a',
   '--bg-raised': '#1d1d20',
-  '--border': '#26262a',
-  '--border-strong': '#313136',
+  '--border': 'rgba(236, 236, 236, 0.1)',
+  '--border-strong': 'rgba(236, 236, 236, 0.18)',
+  '--border-faint': 'rgba(236, 236, 236, 0.06)',
   '--text': '#ececec',
   '--text-secondary': '#a7a7ad',
   '--text-muted': '#7a7a80',
@@ -56,4 +58,11 @@ test('radii per theme spec §2.4', () => {
   for (const decl of ['--r-sm: 6px', '--r-md: 8px', '--r-lg: 10px', '--r-xl: 16px']) {
     expect(lightBlock).toContain(decl);
   }
+});
+
+test('elevation tokens: --shadow-soft aliases --shadow-sm in both themes', () => {
+  expect(lightBlock).toContain('--shadow-soft: var(--shadow-sm)');
+  expect(darkBlock).toContain('--shadow-soft: var(--shadow-sm)');
+  expect(lightBlock).toContain('--shadow-md:');
+  expect(darkBlock).toContain('--shadow-md:');
 });

@@ -26,7 +26,8 @@ export const TabsTrigger = forwardRef<
     ref={ref}
     className={cn(
       '-mb-px border-b-2 border-transparent px-3 py-1.5 text-[13px] font-medium text-secondary',
-      'hover:text-ink data-[state=active]:border-accent data-[state=active]:text-ink',
+      'transition-colors duration-150 ease-out hover:text-ink',
+      'data-[state=active]:border-accent data-[state=active]:text-ink',
       className,
     )}
     {...props}

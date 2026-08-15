@@ -29,7 +29,7 @@ function SideLink({ to, label, icon }: { to: string; label: string; icon: React.
       to={to}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-secondary hover:bg-subtle hover:text-ink',
+          'flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink',
           isActive && 'bg-subtle text-ink',
         )
       }

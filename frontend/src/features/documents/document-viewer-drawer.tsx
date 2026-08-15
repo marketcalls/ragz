@@ -65,8 +65,8 @@ export function DocumentViewerDrawer({
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
-        <DialogPrimitive.Content className="fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-2xl flex-col border-l border-line bg-bg shadow-soft focus:outline-none">
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+        <DialogPrimitive.Content className="fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-2xl flex-col border-l border-line bg-bg shadow-md focus:outline-none data-[state=open]:animate-drawer-in data-[state=closed]:animate-drawer-out">
           <DialogPrimitive.Description className="sr-only">
             Previewing {filename}
           </DialogPrimitive.Description>
@@ -87,7 +87,7 @@ export function DocumentViewerDrawer({
                     href={pageSrc}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary hover:bg-subtle hover:text-ink"
+                    className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink"
                   >
                     <ExternalLink className="h-3.5 w-3.5" aria-hidden />
                     Open in new tab
@@ -96,7 +96,7 @@ export function DocumentViewerDrawer({
               ) : null}
               <DialogPrimitive.Close
                 aria-label="Close"
-                className="rounded-sm p-1.5 text-secondary hover:bg-subtle hover:text-ink"
+                className="rounded-sm p-1.5 text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink"
               >
                 <X className="h-4 w-4" aria-hidden />
               </DialogPrimitive.Close>
@@ -138,7 +138,7 @@ export function DocumentViewerDrawer({
                       href={pageSrc}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary hover:bg-subtle hover:text-ink"
+                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink"
                     >
                       <ExternalLink className="h-3.5 w-3.5" aria-hidden />
                       Open in new tab

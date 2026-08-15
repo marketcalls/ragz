@@ -15,7 +15,8 @@ export const PopoverContent = forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 max-w-sm rounded-md border border-line bg-bg p-3 text-[13px] text-ink shadow-soft',
+        'z-50 max-w-sm rounded-md border border-line bg-bg p-3 text-[13px] text-ink shadow-md',
+        'data-[state=open]:animate-menu-in',
         className,
       )}
       {...props}

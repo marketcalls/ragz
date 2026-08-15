@@ -6,7 +6,9 @@
 
 @layer base {
   body {
-    @apply bg-bg font-sans text-[14px] text-ink antialiased;
+    /* leading-normal (1.5) + a hair of letter-spacing: generous, openui-style
+       body rhythm (design-refresh) — was unset (browser default ~1.2). */
+    @apply bg-bg font-sans text-[14px] leading-normal tracking-[-0.006em] text-ink antialiased;
   }
   /* Accessibility (theme spec §5): visible accent focus ring, 2px offset, everywhere */
   :focus-visible {
@@ -15,5 +17,26 @@
   }
   table {
     font-variant-numeric: tabular-nums;
+  }
+  /* Chart axis ticks / tooltips (recharts renders these as SVG <text>, which
+     Tailwind utility classes on the React tree can't reach) — keep metric
+     labels aligned on a fixed-width grid like every other number in the app. */
+  .recharts-text,
+  .recharts-tooltip-wrapper {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Motion (design-refresh): every transition/animation in the app collapses to
+   near-zero when the user has asked for reduced motion — kept outside
+   @layer so it always wins regardless of utility specificity. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

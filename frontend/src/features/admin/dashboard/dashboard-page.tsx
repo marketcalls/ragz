@@ -115,7 +115,7 @@ export function DashboardPage() {
                 key={r}
                 type="button"
                 onClick={() => setDays(r)}
-                className={`rounded-md px-2 py-1 text-xs ${
+                className={`rounded-md px-2 py-1 text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink ${
                   days === r ? 'bg-subtle text-ink' : 'text-secondary'
                 }`}
               >
@@ -214,7 +214,7 @@ export function DashboardPage() {
             {/* Top users stays a table, not a chart: queries and tokens differ by
                 orders of magnitude, so a shared-axis bar would misrepresent one of
                 them, and the email column has nothing chartable to plot it against. */}
-            <div className="rounded-lg border border-line">
+            <div className="rounded-lg border border-line shadow-soft">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-raised text-left text-xs text-secondary">
@@ -237,7 +237,7 @@ export function DashboardPage() {
               </table>
             </div>
             {query.data.worst_answers.length > 0 ? (
-              <div className="rounded-lg border border-line">
+              <div className="rounded-lg border border-line shadow-soft">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-raised text-left text-xs text-secondary">

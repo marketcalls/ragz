@@ -8,7 +8,7 @@ export function ChartCard({
   title, subtitle, children,
 }: { title?: string; subtitle?: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-line bg-bg p-4">
+    <div className="rounded-lg border border-line bg-bg p-4 shadow-soft transition-shadow duration-150 ease-out">
       {title ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
       {subtitle ? <p className="mt-0.5 text-[12px] text-secondary">{subtitle}</p> : null}
       <div className={cn('h-64', (title || subtitle) && 'mt-3')}>{children}</div>
