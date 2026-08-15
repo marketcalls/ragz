@@ -2,6 +2,7 @@ import {
   Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 
+import { CHART_ANIMATION } from '@/lib/chart-animation';
 import { categorical, useChartPalette } from '@/lib/chart-palette';
 
 const tooltipContentStyle = {
@@ -41,7 +42,7 @@ export function StackedArea({
             stroke={colors[i % colors.length]}
             fill={colors[i % colors.length]}
             fillOpacity={0.5}
-            isAnimationActive={false}
+            {...CHART_ANIMATION}
           />
         ))}
       </AreaChart>

@@ -1,5 +1,6 @@
 import { Cell, Legend, type LegendPayload, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
+import { CHART_ANIMATION } from '@/lib/chart-animation';
 import { categorical, useChartPalette } from '@/lib/chart-palette';
 
 // Recharts renders tooltip content as a plain DOM node (not an SVG
@@ -36,7 +37,7 @@ export function DonutChart({
             innerRadius="60%"
             outerRadius="100%"
             paddingAngle={2}
-            isAnimationActive={false}
+            {...CHART_ANIMATION}
           >
             {data.map((d, i) => (
               <Cell key={d.name} fill={colors[i % colors.length]} />

@@ -2,6 +2,7 @@ import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 
+import { CHART_ANIMATION } from '@/lib/chart-animation';
 import { useChartPalette } from '@/lib/chart-palette';
 
 export function TimeSeriesLine({ data }: { data: { day: string; count: number }[] }) {
@@ -16,7 +17,7 @@ export function TimeSeriesLine({ data }: { data: { day: string; count: number }[
                allowDecimals={false} />
         <Tooltip cursor={{ stroke: p.grid }} />
         <Line type="monotone" dataKey="count" stroke={p.accent} strokeWidth={2}
-              dot={false} isAnimationActive={false} />
+              dot={false} {...CHART_ANIMATION} />
       </LineChart>
     </ResponsiveContainer>
   );

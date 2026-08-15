@@ -2,6 +2,7 @@ import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 
+import { CHART_ANIMATION } from '@/lib/chart-animation';
 import { categorical, useChartPalette } from '@/lib/chart-palette';
 
 const tooltipContentStyle = {
@@ -34,7 +35,7 @@ export function GroupedBar({
         <Tooltip cursor={{ fill: 'transparent' }} contentStyle={tooltipContentStyle} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         {keys.map((k, i) => (
-          <Bar key={k} dataKey={k} fill={colors[i % colors.length]} isAnimationActive={false} />
+          <Bar key={k} dataKey={k} fill={colors[i % colors.length]} {...CHART_ANIMATION} />
         ))}
       </BarChart>
     </ResponsiveContainer>

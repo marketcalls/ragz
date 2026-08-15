@@ -1,5 +1,6 @@
 import { Cell, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer } from 'recharts';
 
+import { CHART_ANIMATION } from '@/lib/chart-animation';
 import { useChartPalette } from '@/lib/chart-palette';
 
 // Thresholds are fractions of `max` at which the fill shifts from accent to
@@ -32,7 +33,7 @@ export function RadialGauge({
           barSize={12}
         >
           <PolarAngleAxis type="number" domain={[0, 100]} tick={false} axisLine={false} />
-          <RadialBar dataKey="value" background={{ fill: p.grid }} cornerRadius={6} isAnimationActive={false}>
+          <RadialBar dataKey="value" background={{ fill: p.grid }} cornerRadius={6} {...CHART_ANIMATION}>
             <Cell fill={color} />
           </RadialBar>
         </RadialBarChart>

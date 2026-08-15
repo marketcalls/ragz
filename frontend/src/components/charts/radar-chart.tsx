@@ -3,6 +3,7 @@ import {
   RadarChart as ReRadarChart, ResponsiveContainer, Tooltip,
 } from 'recharts';
 
+import { CHART_ANIMATION } from '@/lib/chart-animation';
 import { categorical, useChartPalette } from '@/lib/chart-palette';
 
 const tooltipContentStyle = {
@@ -40,7 +41,7 @@ export function RadarChart({
             stroke={colors[i % colors.length]}
             fill={colors[i % colors.length]}
             fillOpacity={0.25}
-            isAnimationActive={false}
+            {...CHART_ANIMATION}
           />
         ))}
       </ReRadarChart>
