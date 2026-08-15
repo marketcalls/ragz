@@ -60,6 +60,7 @@ export function ProviderPanel({
   const [customName, setCustomName] = useState('');
   const [customDisplay, setCustomDisplay] = useState('');
   const [customModality, setCustomModality] = useState<'chat' | 'embedding'>('chat');
+  const [embeddingDimension, setEmbeddingDimension] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,11 +95,29 @@ export function ProviderPanel({
       ...(resolvedBaseUrl ? { base_url: resolvedBaseUrl } : {}),
       ...(apiKey ? { api_key: apiKey } : {}),
       modality: m.modality,
+      // Backend's ModelCreate validator requires `dimension` when
+      // modality === 'embedding' (422 otherwise) and rejects it on chat
+      // models -- so it's only ever set here for embedding rows, and
+      // handleAddSelected blocks submission before this can carry NaN.
+      ...(m.modality === 'embedding' ? { dimension: Number(embeddingDimension) } : {}),
       supports_vision: m.supports_vision ?? false,
       supports_reasoning: m.supports_reasoning ?? false,
       default_reasoning_effort: 'off',
       tools_unreliable: false,
     };
+  };
+
+  const hasEmbeddingSelected = provider.models.some(
+    (m) => selected.has(m.litellm_model_name) && m.modality === 'embedding',
+  );
+  const hasEmbeddingCustom = showCustom && customModality === 'embedding';
+  const showDimensionInput = hasEmbeddingSelected || hasEmbeddingCustom;
+
+  const isValidDimension = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (trimmed === '') return false;
+    const n = Number(trimmed);
+    return Number.isInteger(n) && n > 0;
   };
 
   const handleAddSelected = async (): Promise<void> => {
@@ -116,6 +135,10 @@ export function ProviderPanel({
       );
     }
     if (bodies.length === 0) return;
+    if (bodies.some((b) => b.modality === 'embedding') && !isValidDimension(embeddingDimension)) {
+      setError('Embedding dimension is required (a positive whole number) to register an embedding model.');
+      return;
+    }
     setSubmitting(true);
     try {
       for (const body of bodies) {
@@ -238,6 +261,21 @@ export function ProviderPanel({
           </div>
         ) : null}
       </div>
+      {showDimensionInput ? (
+        <div>
+          <Label htmlFor="embedding-dimension">
+            Embedding dimension (required for embedding models, e.g. 1024 for bge-m3)
+          </Label>
+          <Input
+            id="embedding-dimension"
+            type="number"
+            min={1}
+            step={1}
+            value={embeddingDimension}
+            onChange={(e) => setEmbeddingDimension(e.target.value)}
+          />
+        </div>
+      ) : null}
       {error ? (
         <p role="alert" className="text-[12px] text-danger">
           {error}

@@ -197,6 +197,34 @@ test('registers a suggested model from a provider card with a prefilled body', a
   expect(body.modality).toBe('chat');
 });
 
+test('registering a suggested embedding model sends modality and the entered dimension', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  await user.click(screen.getByRole('button', { name: /jina/i }));
+  const jinaCheckboxes = await screen.findAllByRole('checkbox', { name: /jina-embeddings/i });
+  await user.click(jinaCheckboxes[0]!);
+  await user.type(
+    screen.getByLabelText(/embedding dimension/i),
+    '1024',
+  );
+  await user.click(screen.getByRole('button', { name: /add selected/i }));
+  expect(createSpy).toHaveBeenCalled();
+  const body = createSpy.mock.calls[0]![0];
+  expect(body.modality).toBe('embedding');
+  expect(body.dimension).toBe(1024);
+});
+
+test('checking a suggested embedding model without a dimension blocks submission', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  await user.click(screen.getByRole('button', { name: /jina/i }));
+  const jinaCheckboxes = await screen.findAllByRole('checkbox', { name: /jina-embeddings/i });
+  await user.click(jinaCheckboxes[0]!);
+  await user.click(screen.getByRole('button', { name: /add selected/i }));
+  expect(createSpy).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent(/dimension/i);
+});
+
 test('a suggested model already registered renders checked and disabled', async () => {
   const anthropicModel: ModelOut = {
     ...modelA,
