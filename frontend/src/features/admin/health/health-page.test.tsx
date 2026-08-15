@@ -25,8 +25,13 @@ vi.mock('../quotas/queries', () => ({
 import { HealthPage } from './health-page';
 
 const healthyHealth: SystemHealth = {
+  db: { status: 'ok', latency_ms: 4 },
+  redis: { status: 'ok', latency_ms: 2 },
   queues: { status: 'ok', depths: { default: 2, interactive: 0 } },
   qdrant: { status: 'ok', collections: [{ name: 'org_docs', points_count: 4200 }] },
+  minio: { status: 'ok', latency_ms: 11 },
+  embedder: { status: 'ok', latency_ms: 40 },
+  reranker: { status: 'ok', latency_ms: 55 },
   litellm: { status: 'ok' },
   orgs: [{ org_id: 'org-1', name: 'Acme', tokens: 12_345 }],
 };
@@ -34,6 +39,7 @@ const healthyHealth: SystemHealth = {
 const degradedHealth: SystemHealth = {
   ...healthyHealth,
   qdrant: { status: 'error', detail: 'ConnectError' },
+  reranker: { status: 'error', detail: 'ConnectError', latency_ms: 8 },
 };
 
 const clientErrors: ClientErrorOut[] = [
@@ -73,6 +79,52 @@ test('degraded qdrant renders a Failed-styled pill with visible text, plus one c
   // one client-error row rendered
   expect(screen.getByText('user-1')).toBeInTheDocument();
   expect(screen.getByText('https://app.example.com/chat')).toBeInTheDocument();
+});
+
+test('renders a dependency row per new probe (db/redis/minio/embedder/reranker) with status + latency', () => {
+  useSystemHealth.mockReturnValue({ data: healthyHealth, isPending: false });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+
+  for (const [label, latency] of [
+    ['Postgres', '4 ms'],
+    ['Redis', '2 ms'],
+    ['Object storage (MinIO)', '11 ms'],
+    ['Embedder (TEI)', '40 ms'],
+    ['Reranker (TEI)', '55 ms'],
+  ] as const) {
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText(latency)).toBeInTheDocument();
+  }
+  // healthy deps render the OK badge, visible text (not color-only)
+  expect(screen.getAllByText('OK')).toHaveLength(5);
+});
+
+test('a down reranker renders an Error badge for that dependency while others stay OK', () => {
+  useSystemHealth.mockReturnValue({ data: degradedHealth, isPending: false });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+
+  expect(screen.getAllByText('Error')).toHaveLength(1);
+  expect(screen.getAllByText('OK')).toHaveLength(4);
+});
+
+test('a slow (high-latency) but healthy dependency is visually flagged distinctly from a normal one', () => {
+  const slowHealth: SystemHealth = {
+    ...healthyHealth,
+    embedder: { status: 'ok', latency_ms: 12_000 },
+  };
+  useSystemHealth.mockReturnValue({ data: slowHealth, isPending: false });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+
+  const slowLatency = screen.getByText('12,000 ms (slow)');
+  expect(slowLatency.className).toContain('text-warning');
+  const normalLatency = screen.getByText('2 ms');
+  expect(normalLatency.className).not.toContain('text-warning');
 });
 
 test('clicking Manage quota on an org row opens the org quota dialog for that org', async () => {

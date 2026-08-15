@@ -36,6 +36,13 @@ class ObjectStorage:
                 else:
                     raise
 
+    async def head_bucket(self) -> None:
+        """Lightweight existence check for health probes. Unlike
+        `ensure_bucket`, this never creates the bucket as a side effect --
+        a health check must only observe, not mutate."""
+        async with self._client() as s3:
+            await s3.head_bucket(Bucket=self.bucket)
+
     async def put(
         self, key: str, data: bytes, content_type: str = "application/octet-stream"
     ) -> None:

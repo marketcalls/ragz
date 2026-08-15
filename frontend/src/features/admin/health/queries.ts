@@ -31,6 +31,14 @@ export interface LiteLlmHealth {
   detail?: string;
 }
 
+// Shape shared by the new dependency probes (db/redis/minio/embedder/
+// reranker) — each is timed, so `latency_ms` is present alongside status.
+export interface DependencyHealth {
+  status: 'ok' | 'error';
+  latency_ms?: number;
+  detail?: string;
+}
+
 export interface OrgUsageRow {
   org_id: string;
   name: string;
@@ -42,8 +50,13 @@ export interface OrgUsageRow {
 export type OrgsHealth = OrgUsageRow[] | { status: 'error'; detail?: string };
 
 export interface SystemHealth {
+  db: DependencyHealth;
+  redis: DependencyHealth;
   queues: QueueHealth;
   qdrant: QdrantHealth;
+  minio: DependencyHealth;
+  embedder: DependencyHealth;
+  reranker: DependencyHealth;
   litellm: LiteLlmHealth;
   orgs: OrgsHealth;
 }

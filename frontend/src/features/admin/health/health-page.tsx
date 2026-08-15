@@ -9,7 +9,13 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 
 import { OrgQuotaDialog } from '../quotas/org-quota-dialog';
 
-import { useClientErrors, useSystemHealth, type OrgsHealth, type OrgUsageRow } from './queries';
+import {
+  useClientErrors,
+  useSystemHealth,
+  type DependencyHealth,
+  type OrgsHealth,
+  type OrgUsageRow,
+} from './queries';
 
 // Pill carries the status word in visible text (never color-only) — a11y
 // rule from the brief.
@@ -21,6 +27,52 @@ function HealthPill({ label, ok }: { label: string; ok: boolean }) {
       }`}
     >
       {label}: {ok ? 'Healthy' : 'Failed'}
+    </span>
+  );
+}
+
+// A dependency responding but noticeably slowly is just as much an incident
+// as one that's down outright (the brief's motivating case: a 12s-slow
+// embedder was invisible) — flag it distinctly even though its status is
+// still "ok".
+const SLOW_LATENCY_MS = 1000;
+
+type SystemHealthDeps = {
+  db: DependencyHealth;
+  redis: DependencyHealth;
+  minio: DependencyHealth;
+  embedder: DependencyHealth;
+  reranker: DependencyHealth;
+};
+
+const DEPENDENCY_ROWS: ReadonlyArray<[string, keyof SystemHealthDeps]> = [
+  ['Postgres', 'db'],
+  ['Redis', 'redis'],
+  ['Object storage (MinIO)', 'minio'],
+  ['Embedder (TEI)', 'embedder'],
+  ['Reranker (TEI)', 'reranker'],
+];
+
+function DependencyStatusBadge({ dep }: { dep: DependencyHealth }) {
+  const ok = dep.status === 'ok';
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium ${
+        ok ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'
+      }`}
+    >
+      {ok ? 'OK' : 'Error'}
+    </span>
+  );
+}
+
+function DependencyLatency({ dep }: { dep: DependencyHealth }) {
+  if (dep.latency_ms === undefined) return <span className="text-secondary">—</span>;
+  const slow = dep.status === 'ok' && dep.latency_ms >= SLOW_LATENCY_MS;
+  const tone = slow ? 'font-semibold text-warning' : dep.status === 'error' ? 'text-danger' : 'text-ink';
+  return (
+    <span className={tone}>
+      {dep.latency_ms.toLocaleString()} ms{slow ? ' (slow)' : ''}
     </span>
   );
 }
@@ -59,6 +111,32 @@ export function HealthPage() {
               <HealthPill label="LiteLLM" ok={data.litellm.status === 'ok'} />
               <HealthPill label="Qdrant" ok={data.qdrant.status === 'ok'} />
               <HealthPill label="Queues" ok={data.queues.status === 'ok'} />
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-ink">Dependency health</h3>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Dependency</TH>
+                    <TH>Status</TH>
+                    <TH className="text-right">Latency</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {DEPENDENCY_ROWS.map(([label, key]) => (
+                    <TR key={key}>
+                      <TD>{label}</TD>
+                      <TD>
+                        <DependencyStatusBadge dep={data[key]} />
+                      </TD>
+                      <TD className="text-right">
+                        <DependencyLatency dep={data[key]} />
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
             </div>
 
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
