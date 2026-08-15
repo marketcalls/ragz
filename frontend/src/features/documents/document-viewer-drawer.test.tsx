@@ -83,10 +83,10 @@ test('status "forbidden" shows an access-denied message, not a blank frame', () 
   expect(screen.queryByTitle('secret.pdf')).not.toBeInTheDocument();
 });
 
-test('status "not-found" shows a document-not-found message', () => {
+test('status "not-found" shows a file-not-available message', () => {
   mockFile({ status: 'not-found' });
   render(<DocumentViewerDrawer documentId="d1" page={1} filename="gone.pdf" onClose={vi.fn()} />);
-  expect(screen.getByText('Document not found.')).toBeInTheDocument();
+  expect(screen.getByText(/original file isn't available to preview/i)).toBeInTheDocument();
 });
 
 test('clicking Close calls onClose', async () => {
