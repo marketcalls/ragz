@@ -5,6 +5,7 @@ from ragz.modules.chat.blocks import TextBlock
 from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
+    ToolResultItem,
     agent_step_event,
     blocks_event,
     citations_event,
@@ -13,6 +14,7 @@ from ragz.modules.chat.events import (
     retrieval_started_event,
     sources_event,
     token_event,
+    tool_result_event,
 )
 
 
@@ -90,3 +92,26 @@ def test_blocks_event_shape() -> None:
 def test_blocks_event_empty() -> None:
     e = blocks_event([])
     assert e.data == {"blocks": []}
+
+
+def test_tool_result_event_shape() -> None:
+    items = [
+        ToolResultItem(
+            title="ISO 45001 overview", url="https://example.test/iso", source="example.test"
+        ),
+    ]
+    e = tool_result_event(n=1, tool="web_search", results=items)
+    assert e.event == "tool_result"
+    assert e.data == {
+        "n": 1,
+        "tool": "web_search",
+        "results": [
+            {"title": "ISO 45001 overview", "url": "https://example.test/iso",
+             "source": "example.test"},
+        ],
+    }
+
+
+def test_tool_result_event_empty_results() -> None:
+    e = tool_result_event(n=2, tool="web_search", results=[])
+    assert e.data == {"n": 2, "tool": "web_search", "results": []}

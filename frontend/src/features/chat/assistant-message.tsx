@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
 
-import type { Block } from '@/api/types';
+import type { AgentStepInfo, Block, ToolResultInfo } from '@/api/types';
 import { Markdown } from '@/components/markdown/markdown';
 
+import { BehindTheScenes } from './behind-the-scenes';
 import { BlockRenderer } from './blocks/block-renderer';
 import { CitationProvider } from './citation-context';
 import { NoAnswerNotice } from './no-answer-notice';
@@ -16,6 +17,8 @@ export function AssistantMessage({
   stopped = false,
   grounding = 'documents',
   validationFailed = false,
+  agentSteps = [],
+  toolResults = [],
   footer,
   onOpenDocument,
 }: {
@@ -28,6 +31,12 @@ export function AssistantMessage({
   stopped?: boolean;
   grounding?: string;
   validationFailed?: boolean;
+  // "Behind the scenes" (design 2026-08-15): live-turn-only -- agent steps
+  // aren't persisted, so these are always [] for a message rendered from
+  // chat history (chat-page.tsx never passes them). Only the live streaming
+  // message (streaming-message.tsx) does.
+  agentSteps?: AgentStepInfo[];
+  toolResults?: ToolResultInfo[];
   footer?: ReactNode;
   // Citation -> source-document drawer (chip click and inline [n] marker
   // click both route through here; web citations are excluded below).
@@ -52,6 +61,7 @@ export function AssistantMessage({
           General knowledge — not from your documents
         </span>
       ) : null}
+      <BehindTheScenes steps={agentSteps} toolResults={toolResults} />
       <CitationProvider onCitationClick={handleCitationClick} sources={sources}>
         <Markdown content={content} />
       </CitationProvider>

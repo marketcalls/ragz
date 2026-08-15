@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
 
-import type { AgentStepInfo, Block, CitationRef, SourceRef } from '@/api/types';
+import type { AgentStepInfo, Block, CitationRef, SourceRef, ToolResultInfo } from '@/api/types';
 
 import { streamChatSse, type ChatSseEvent } from './stream';
 
@@ -24,6 +24,10 @@ export interface ChatStreamState {
   pendingUserContent: string | null;
   doneMessageId: string | null; // lets the page hide the streamed block once the refetched tree contains it
   agentSteps: AgentStepInfo[]; // Phase 3 (Task 10): progress line on escalated turns
+  // Design 2026-08-15 ("Behind the scenes" UI): captured off `tool_result`
+  // frames, keyed by step `n` to pair with agentSteps. Live-turn-only, same
+  // as agentSteps -- neither is persisted, so this resets on every send.
+  toolResults: ToolResultInfo[];
 }
 
 const IDLE: ChatStreamState = {
@@ -39,6 +43,7 @@ const IDLE: ChatStreamState = {
   pendingUserContent: null,
   doneMessageId: null,
   agentSteps: [],
+  toolResults: [],
 };
 
 function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
@@ -66,6 +71,8 @@ function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
       return { ...state, status: 'error', errorDetail: event.detail };
     case 'agent_step':
       return { ...state, status: 'retrieving', agentSteps: [...state.agentSteps, event.step] };
+    case 'tool_result':
+      return { ...state, toolResults: [...state.toolResults, event.result] };
   }
 }
 

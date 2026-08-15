@@ -37,6 +37,8 @@ export function StreamingMessage({ stream }: { stream: ChatStreamState }) {
           noAnswer={stream.noAnswer}
           grounding={stream.grounding}
           validationFailed={stream.validationFailed}
+          agentSteps={stream.agentSteps}
+          toolResults={stream.toolResults}
         />
       ) : null}
       {stream.status === 'error' ? (

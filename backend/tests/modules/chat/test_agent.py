@@ -10,6 +10,7 @@ from ragz.modules.auth.models import User
 from ragz.modules.chat.agent import (
     AgentGathered,
     AgentStep,
+    AgentToolResult,
     PlannerAction,
     execute_tool,
     native_tool_specs,
@@ -23,7 +24,7 @@ from ragz.modules.models.models import Model
 from ragz.modules.retrieval.client import COLLECTION
 from ragz.modules.retrieval.service import RetrievedChunk
 from ragz.modules.tenancy.context import TenantContext
-from tests.conftest import FakeChunkReader, FakeCompleter, FakeRetriever
+from tests.conftest import FakeChunkReader, FakeCompleter, FakeRetriever, FakeWebSearcher
 
 _ALL = ("search", "search_by_metadata", "get_document", "web_search", "answer")
 
@@ -383,3 +384,80 @@ async def test_duplicate_chunks_deduped(session, chat_env, ctx, flagged_model) -
         collection_name=COLLECTION,
     ))
     assert len(steps) == 2 and len(gathered.chunks) == 2  # not 4
+
+
+def _web_search_completion(query: str) -> LLMCompletion:
+    return LLMCompletion(
+        text=f'{{"action": "web_search", "query": "{query}"}}', tool_calls=[],
+        usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+    )
+
+
+async def test_web_search_step_yields_tool_result_with_results(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """Design 2026-08-15 ("Behind the scenes" UI): a successful web_search
+    step yields an AgentToolResult carrying the raw WebResults, tagged with
+    the SAME step index as its preceding AgentStep, so stream_reply can pair
+    the two into one tool_result SSE frame."""
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    web_searcher = FakeWebSearcher()
+    steps: list[AgentStep] = []
+    tool_results: list[AgentToolResult] = []
+    gathered: AgentGathered | None = None
+    async for item in run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, metadata_field_names=[],
+        collection_name=COLLECTION, web_search_consented=True,
+    ):
+        if isinstance(item, AgentStep):
+            steps.append(item)
+        elif isinstance(item, AgentToolResult):
+            tool_results.append(item)
+        else:
+            gathered = item
+    assert gathered is not None
+    assert [s.tool for s in steps] == ["web_search"]
+    assert len(tool_results) == 1
+    result = tool_results[0]
+    assert result.n == steps[0].n and result.tool == "web_search"
+    assert [r.url for r in result.web_results] == [web_searcher.results[0].url]
+
+
+async def test_non_web_search_step_never_yields_tool_result(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    completer = FakeCompleter([_search_completion("muster point")])
+    tool_results: list[AgentToolResult] = []
+    async for item in run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=None, metadata_field_names=[],
+        collection_name=COLLECTION,
+    ):
+        if isinstance(item, AgentToolResult):
+            tool_results.append(item)
+    assert tool_results == []
+
+
+async def test_web_search_without_consent_never_yields_tool_result(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """No consent -> execute_tool refuses (ToolOutcome.error set) -> no
+    web_results to show, so no AgentToolResult either."""
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    tool_results: list[AgentToolResult] = []
+    async for item in run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=FakeWebSearcher(),
+        metadata_field_names=[], collection_name=COLLECTION,
+        web_search_consented=False,
+    ):
+        if isinstance(item, AgentToolResult):
+            tool_results.append(item)
+    assert tool_results == []

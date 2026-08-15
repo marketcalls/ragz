@@ -14,6 +14,7 @@ from ragz.core.db import build_session_factory
 from ragz.modules.chat.llm import LLMCompletion, LLMUsage
 from ragz.modules.chat.models import Citation, Message
 from ragz.modules.chat.service import NO_ANSWER_TEXT
+from ragz.modules.chat.web import WebResult
 from ragz.modules.models.models import Model
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
 from tests.conftest import (
@@ -77,6 +78,7 @@ async def test_multi_part_question_escalates(
     assert names.index("retrieval_started") < names.index("agent_step") < names.index("sources")
     step = next(d for n, d in frames if n == "agent_step")
     assert step == {"n": 1, "tool": "search", "query": "muster point"}
+    assert "tool_result" not in names  # non-web tools never emit tool_result
     done = next(d for n, d in frames if n == "done")
     # Usage summed: synthesize (42/7 from FakeStreamer) + planner rounds (10+3 / 5+1):
     assert done["prompt_tokens"] == 55 and done["completion_tokens"] == 13
@@ -278,6 +280,20 @@ async def test_web_search_tool_produces_url_citations(
         assert "agent_step" in names
         step = next(d for n, d in frames if n == "agent_step")
         assert step["tool"] == "web_search"
+        # tool_result frame (design 2026-08-15, "Behind the scenes" UI):
+        # same step index as agent_step, carrying the web_search hits
+        # reshaped to {title, url, source} for the expandable result card.
+        assert "tool_result" in names
+        tool_result = next(d for n, d in frames if n == "tool_result")
+        assert tool_result["n"] == step["n"]
+        assert tool_result["tool"] == "web_search"
+        assert tool_result["results"] == [
+            {
+                "title": web_searcher.results[0].title,
+                "url": web_searcher.results[0].url,
+                "source": "example.test",
+            },
+        ]
         sources = next(d for n, d in frames if n == "sources")["sources"]
         web_source = sources[-1]
         assert web_source["url"] == web_searcher.results[0].url
@@ -300,6 +316,65 @@ async def test_web_search_tool_produces_url_citations(
             m for m in r_hist.json()["messages"][0]["children"] if m["role"] == "assistant"
         )
         assert assistant_node["citations"][-1]["url"] == web_searcher.results[0].url
+
+
+async def test_web_search_tool_result_frame_bounded_and_hostname_parsed(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """tool_result frame (design 2026-08-15, "Behind the scenes" UI): capped
+    to 8 results and string fields bounded even when the searcher returns
+    more/longer than that, and `source` is the parsed hostname with a
+    leading www. stripped -- a hostile/misbehaving search provider can't
+    inflate the SSE stream or the rendered card."""
+    long_title = "x" * 500
+    results = [
+        WebResult(
+            title=f"{long_title}-{i}", url=f"https://www.example{i}.test/path", snippet="s",
+        )
+        for i in range(12)
+    ]
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    web_searcher = FakeWebSearcher(results=results)
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer, web_searcher=web_searcher,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _flag_tools_unreliable(client, h_super)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"web_search_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200
+        r_secret = await client.put(
+            "/api/v1/admin/secrets/tavily", json={"value": "tvly-test-key"}, headers=h_super,
+        )
+        assert r_secret.status_code == 200
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={
+                "content": "What is the muster point and when was it approved?",
+                "web_search_consented": True,
+            },
+            headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    tool_result = next(d for n, d in frames if n == "tool_result")
+    items = tool_result["results"]
+    assert len(items) == 8  # capped, not the 12 the searcher returned
+    assert all(len(item["title"]) <= 200 for item in items)
+    assert all(len(item["url"]) <= 2048 for item in items)
+    assert items[0]["source"] == "example0.test"  # leading www. stripped
 
 
 async def test_web_search_without_consent_never_calls_searcher_via_api(

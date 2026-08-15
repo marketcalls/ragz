@@ -180,3 +180,20 @@ export interface AgentStepInfo {
   tool: string;
   query: string;
 }
+
+// Design 2026-08-15 ("Behind the scenes" UI): emitted right after a
+// successful web_search AgentStepInfo, same `n`, carrying the results
+// already surfaced as `sources`/`citations` -- this frame just reshapes them
+// for the expandable web_search result card. Display-only, live-turn-only
+// (not persisted): a page reload shows no "Behind the scenes" section.
+export interface ToolResultItem {
+  title: string;
+  url: string;
+  source: string;
+}
+
+export interface ToolResultInfo {
+  n: number;
+  tool: string;
+  results: ToolResultItem[];
+}

@@ -86,6 +86,25 @@ test('persisted blocks render below the text via BlockRenderer', () => {
   expect(screen.getByText('On track')).toBeInTheDocument();
 });
 
+// "Behind the scenes" (design 2026-08-15): only shown when agent steps are
+// passed in -- persisted history (chat-page.tsx) never passes them, so a
+// reloaded message shows no section (live-turn-only, documented gap).
+test('agentSteps omitted (the persisted-history default) renders no "Behind the scenes" section', () => {
+  render(<AssistantMessage content="The muster point is the north carpark." sources={[]} />);
+  expect(screen.queryByText('Behind the scenes')).not.toBeInTheDocument();
+});
+
+test('agentSteps present (the live-turn path) renders the "Behind the scenes" toggle', () => {
+  render(
+    <AssistantMessage
+      content="Per ISO 45001 [1]."
+      sources={[]}
+      agentSteps={[{ n: 1, tool: 'web_search', query: 'iso 45001' }]}
+    />,
+  );
+  expect(screen.getByText('Behind the scenes')).toBeInTheDocument();
+});
+
 test('blocks omitted or empty renders nothing extra', () => {
   const { container: withoutProp } = render(
     <AssistantMessage content="No blocks here." sources={[]} />,

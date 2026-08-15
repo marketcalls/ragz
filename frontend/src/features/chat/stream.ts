@@ -1,5 +1,12 @@
 import { authFetch } from '@/api/client';
-import type { AgentStepInfo, Block, CitationRef, DoneInfo, SourceRef } from '@/api/types';
+import type {
+  AgentStepInfo,
+  Block,
+  CitationRef,
+  DoneInfo,
+  SourceRef,
+  ToolResultInfo,
+} from '@/api/types';
 import { createSseParser, type SseMessage } from '@/lib/sse';
 
 export type ChatSseEvent =
@@ -13,7 +20,10 @@ export type ChatSseEvent =
   | { type: 'blocks'; blocks: Block[] }
   | { type: 'done'; done: DoneInfo }
   | { type: 'error'; detail: string }
-  | { type: 'agent_step'; step: AgentStepInfo };
+  | { type: 'agent_step'; step: AgentStepInfo }
+  // Design 2026-08-15 ("Behind the scenes" UI): pairs with an agent_step by
+  // `n`, carrying a web_search step's results for the expandable card.
+  | { type: 'tool_result'; result: ToolResultInfo };
 
 function toEvent(message: SseMessage): ChatSseEvent {
   try {
@@ -35,6 +45,8 @@ function toEvent(message: SseMessage): ChatSseEvent {
         return { type: 'error', detail: (data as { detail: string }).detail };
       case 'agent_step':
         return { type: 'agent_step', step: data as AgentStepInfo };
+      case 'tool_result':
+        return { type: 'tool_result', result: data as ToolResultInfo };
       default:
         return { type: 'error', detail: `unknown event: ${message.event}` };
     }

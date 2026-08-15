@@ -187,6 +187,71 @@ test('agentSteps resets to empty on a fresh send (back to IDLE)', async () => {
   expect(result.current.agentSteps).toEqual([]);
 });
 
+test('tool_result frames accumulate into toolResults, paired to their agent_step by n', async () => {
+  const frames: ChatSseEvent[] = [
+    { type: 'retrieval_started' },
+    { type: 'agent_step', step: { n: 1, tool: 'web_search', query: 'iso 45001' } },
+    {
+      type: 'tool_result',
+      result: {
+        n: 1, tool: 'web_search',
+        results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+      },
+    },
+    { type: 'token', delta: 'Per ISO 45001.' },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm4', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'documents', validation_failed: false,
+      },
+    },
+  ];
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      for (const frame of frames) onEvent(frame);
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+  await act(async () => {
+    result.current.send('What does ISO 45001 say?');
+  });
+
+  expect(result.current.toolResults).toEqual([
+    {
+      n: 1, tool: 'web_search',
+      results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+    },
+  ]);
+});
+
+test('toolResults resets to empty on a fresh send (back to IDLE)', async () => {
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({
+        type: 'tool_result',
+        result: { n: 1, tool: 'web_search', results: [{ title: 't', url: 'https://x.test', source: 'x.test' }] },
+      });
+    },
+  );
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+  await act(async () => {
+    result.current.send('first');
+  });
+  expect(result.current.toolResults).toHaveLength(1);
+
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, _onEvent: (e: ChatSseEvent) => void) => {
+      // second turn never emits a tool_result
+    },
+  );
+  await act(async () => {
+    result.current.send('second');
+  });
+  expect(result.current.toolResults).toEqual([]);
+});
+
 test('the reducer stores blocks from the blocks SSE frame and resets on the next send', async () => {
   const blocks: ChatSseEvent[] = [
     { type: 'token', delta: 'Revenue grew.' },

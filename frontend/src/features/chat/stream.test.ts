@@ -126,6 +126,29 @@ test('an agent_step frame parses to the typed event', async () => {
   expect(stepEvent?.step).toEqual({ n: 1, tool: 'search', query: 'muster point' });
 });
 
+test('a tool_result frame parses to the typed event (design 2026-08-15, "Behind the scenes" UI)', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      sseResponse([
+        'event: agent_step\ndata: {"n":1,"tool":"web_search","query":"iso 45001"}\n\n',
+        'event: tool_result\ndata: {"n":1,"tool":"web_search","results":[{"title":"ISO 45001 overview","url":"https://example.test/iso","source":"example.test"}]}\n\n',
+        'event: done\ndata: {"message_id":"m1","prompt_tokens":1,"completion_tokens":1,"no_answer":false,"grounding":"documents"}\n\n',
+      ]),
+    ),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', { content: 'hi' }, (e) => events.push(e), new AbortController().signal);
+  const toolResultEvent = events.find(
+    (e): e is Extract<ChatSseEvent, { type: 'tool_result' }> => e.type === 'tool_result',
+  );
+  expect(toolResultEvent?.result).toEqual({
+    n: 1,
+    tool: 'web_search',
+    results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+  });
+});
+
 test('a sources frame entry with a url (web citation, Task 11/D7) parses through', async () => {
   vi.stubGlobal(
     'fetch',

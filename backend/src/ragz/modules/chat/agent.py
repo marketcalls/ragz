@@ -333,6 +333,21 @@ class AgentStep:
 
 
 @dataclass(frozen=True)
+class AgentToolResult:
+    """Yielded right after a successful `web_search` step, alongside (never
+    instead of) its AgentStep, so stream_reply can surface the raw
+    WebResults it already fetched (they become web citations regardless) as
+    a display-only `tool_result` SSE frame -- the "Behind the scenes" UI's
+    expandable result list. Never yielded for any other tool, and never
+    yielded on a web_search that errored or returned nothing (nothing to
+    show)."""
+
+    n: int
+    tool: str
+    web_results: list[WebResult] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class AgentGathered:
     chunks: list[RetrievedChunk]      # deduped on (document_id, page, chunk_index), gather order
     web_results: list[WebResult]      # deduped on url
@@ -426,12 +441,14 @@ async def run_agent_gather(
     collection_name: str,
     web_search_consented: bool = False,
     web_search_budget: int = DEFAULT_WEB_SEARCH_BUDGET,
-) -> AsyncIterator[AgentStep | AgentGathered]:
+) -> AsyncIterator[AgentStep | AgentToolResult | AgentGathered]:
     """The gather phase of the hand-rolled loop (design §2): yields an
     AgentStep before each tool execution (mapped to the agent_step SSE frame
-    by stream_reply) and terminates with exactly one AgentGathered. The
-    synthesize phase stays in stream_reply — production build_messages,
-    production streaming, nothing agent-specific.
+    by stream_reply), an AgentToolResult right after a successful web_search
+    step (mapped to the tool_result SSE frame -- the "Behind the scenes"
+    UI's expandable result cards), and terminates with exactly one
+    AgentGathered. The synthesize phase stays in stream_reply — production
+    build_messages, production streaming, nothing agent-specific.
 
     `question` is captured ONCE here, at loop entry, and is the user's
     original message — never anything derived from a later tool result. It is
@@ -481,6 +498,10 @@ async def run_agent_gather(
         )
         if action.action == "web_search" and outcome.error is None:
             web_searches_used += 1
+            if outcome.web_results:
+                yield AgentToolResult(
+                    n=n, tool="web_search", web_results=list(outcome.web_results)
+                )
         if outcome.error is not None:
             # Failure posture (design §2): degrade to single-shot RAG on the
             # ORIGINAL question — never a dead end — and stop planning. The

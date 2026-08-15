@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { StreamingMessage } from './streaming-message';
 import type { ChatStreamState } from './use-chat-stream';
@@ -16,6 +17,7 @@ const base: ChatStreamState = {
   pendingUserContent: null,
   doneMessageId: null,
   agentSteps: [],
+  toolResults: [],
 };
 
 test('a pre-stream error (no token ever streamed) renders as a visible alert', () => {
@@ -62,6 +64,29 @@ test('a retrieving state with agentSteps renders the latest step as a progress l
 test('a retrieving state with no agentSteps shows the spinner but no progress line', () => {
   render(<StreamingMessage stream={{ ...base, status: 'retrieving' }} />);
   expect(screen.getByText('Searching documents…')).toBeInTheDocument();
+});
+
+test('agentSteps/toolResults captured live flow through to the "Behind the scenes" section once streaming', async () => {
+  render(
+    <StreamingMessage
+      stream={{
+        ...base,
+        status: 'streaming',
+        text: 'Per ISO 45001 [1].',
+        agentSteps: [{ n: 1, tool: 'web_search', query: 'iso 45001' }],
+        toolResults: [
+          {
+            n: 1,
+            tool: 'web_search',
+            results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+          },
+        ],
+      }}
+    />,
+  );
+  expect(screen.getByText('Behind the scenes')).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByText('Behind the scenes'));
+  expect(screen.getByText('web_search')).toBeInTheDocument();
 });
 
 test('blocks captured off the live SSE frame render via BlockRenderer once streaming', () => {

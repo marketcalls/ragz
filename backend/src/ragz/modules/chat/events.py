@@ -94,6 +94,30 @@ def agent_step_event(*, n: int, tool: str, query: str) -> SSEEvent:
     return SSEEvent("agent_step", {"n": n, "tool": tool, "query": query})
 
 
+@dataclass(frozen=True)
+class ToolResultItem:
+    """One `tool_result` entry (display-only): the same web-search hits that
+    already became citations, reshaped for the "Behind the scenes" UI's
+    expandable web_search card. `source` is the result's hostname (leading
+    `www.` stripped) so the card can right-align it next to the title
+    without the frontend fetching or parsing anything itself."""
+
+    title: str
+    url: str
+    source: str
+
+
+def tool_result_event(*, n: int, tool: str, results: list[ToolResultItem]) -> SSEEvent:
+    """"Behind the scenes" collapsible (design 2026-08-15): emitted right
+    after a `web_search` agent step whose results are already known,
+    carrying the same step index `n` as the preceding agent_step frame so
+    the frontend can pair them. Display-only — these results already reached
+    the client as `sources`/`citations`; this frame just surfaces them
+    grouped under their originating tool call. Additive, like agent_step: a
+    client that ignores unknown SSE event names sees no behavior change."""
+    return SSEEvent("tool_result", {"n": n, "tool": tool, "results": [asdict(r) for r in results]})
+
+
 def blocks_event(blocks: "list[Block]") -> SSEEvent:
     """In-chat generative UI (design 2026-08-15, §2): emitted AFTER citations,
     only when workspace.generative_ui_enabled + a completer are both present

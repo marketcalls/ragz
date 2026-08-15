@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Protocol
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import structlog
@@ -22,13 +23,14 @@ from ragz.core.config import Settings, get_settings
 from ragz.core.db import naive_utc
 from ragz.core.errors import ConflictError, NotFoundError, UpstreamError
 from ragz.core.storage import build_storage
-from ragz.modules.chat.agent import AgentGathered, AgentStep, run_agent_gather
+from ragz.modules.chat.agent import AgentGathered, AgentStep, AgentToolResult, run_agent_gather
 from ragz.modules.chat.blocks import validate_blocks
 from ragz.modules.chat.blocks_emit import generate_blocks
 from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
     SSEEvent,
+    ToolResultItem,
     agent_step_event,
     blocks_event,
     citations_event,
@@ -37,6 +39,7 @@ from ragz.modules.chat.events import (
     retrieval_started_event,
     sources_event,
     token_event,
+    tool_result_event,
 )
 from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
 from ragz.modules.chat.models import (
@@ -1167,6 +1170,41 @@ def persist_stopped_detached(
     return task
 
 
+_TOOL_RESULT_MAX_ITEMS = 8
+_TOOL_RESULT_TITLE_MAX_CHARS = 200
+_TOOL_RESULT_URL_MAX_CHARS = 2048
+_TOOL_RESULT_SOURCE_MAX_CHARS = 100
+
+
+def _web_result_source(url: str) -> str:
+    """Hostname for the tool_result card's right-aligned source label
+    (`www.` stripped, matching the frontend's own safeHostname convention in
+    source-panel.tsx). Best-effort: an unparseable url degrades to "" rather
+    than raising -- display-only, never a dead end."""
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
+    if host.startswith("www."):
+        host = host[len("www.") :]
+    return host[:_TOOL_RESULT_SOURCE_MAX_CHARS]
+
+
+def _tool_result_items(web_results: Sequence[WebResult]) -> list[ToolResultItem]:
+    """Reshapes the web_search step's already-fetched WebResults (they
+    become citations regardless) into the tool_result frame's display
+    items: capped to _TOOL_RESULT_MAX_ITEMS, string fields bounded so a
+    hostile search provider can't inflate the SSE stream."""
+    return [
+        ToolResultItem(
+            title=r.title[:_TOOL_RESULT_TITLE_MAX_CHARS],
+            url=r.url[:_TOOL_RESULT_URL_MAX_CHARS],
+            source=_web_result_source(r.url),
+        )
+        for r in web_results[:_TOOL_RESULT_MAX_ITEMS]
+    ]
+
+
 async def stream_reply(
     session: AsyncSession,
     ctx: TenantContext,
@@ -1407,6 +1445,11 @@ async def stream_reply(
                 if isinstance(gather_item, AgentStep):
                     yield agent_step_event(
                         n=gather_item.n, tool=gather_item.tool, query=gather_item.query
+                    )
+                elif isinstance(gather_item, AgentToolResult):
+                    yield tool_result_event(
+                        n=gather_item.n, tool=gather_item.tool,
+                        results=_tool_result_items(gather_item.web_results),
                     )
                 else:
                     gathered = gather_item
