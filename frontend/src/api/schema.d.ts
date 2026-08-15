@@ -2957,9 +2957,11 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "text" | "number" | "select" | "multiselect";
+            kind: "text" | "number" | "select" | "multiselect" | "date" | "daterange" | "card_select";
             /** Options */
             options?: string[] | null;
+            /** Option Details */
+            option_details?: string[] | null;
             /**
              * Required
              * @default false

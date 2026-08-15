@@ -26,9 +26,29 @@ function initialValues(fields: FormField[]): FormValues {
   return values;
 }
 
+// A daterange value is the composed "{start} to {end}" string; it's only
+// "filled" once BOTH sides are non-empty (a lone start or end doesn't count).
+const DATERANGE_FILLED = /\S+ to \S+/;
+
 function isFilled(field: FormField, value: FormValue | undefined): boolean {
   if (field.kind === 'multiselect') return Array.isArray(value) && value.length > 0;
+  if (field.kind === 'daterange') {
+    return typeof value === 'string' && DATERANGE_FILLED.test(value);
+  }
   return typeof value === 'string' && value.trim() !== '';
+}
+
+// daterange values are stored/composed as "{start} to {end}"; split back
+// into the two sides for the controlled start/end date inputs.
+function splitDateRange(value: FormValue): { start: string; end: string } {
+  const text = typeof value === 'string' ? value : '';
+  const [start = '', end = ''] = text.split(' to ');
+  return { start, end };
+}
+
+function composeDateRange(start: string, end: string): string {
+  if (!start && !end) return '';
+  return `${start} to ${end}`;
 }
 
 // "{label}: {value}" per field, newline-joined; multiselect values
@@ -101,6 +121,69 @@ function FieldControl({
           ))}
         </NativeSelect>
       );
+    case 'date':
+      return (
+        <Input
+          id={id}
+          type="date"
+          value={typeof value === 'string' ? value : ''}
+          required={field.required}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      );
+    case 'daterange': {
+      const { start, end } = splitDateRange(value);
+      return (
+        <div className="flex items-center gap-2">
+          <Input
+            id={id}
+            aria-label={`${field.label} start`}
+            type="date"
+            value={start}
+            required={field.required}
+            onChange={(e) => onChange(composeDateRange(e.target.value, end))}
+          />
+          <span className="text-[12px] text-secondary">to</span>
+          <Input
+            id={`${id}-end`}
+            aria-label={`${field.label} end`}
+            type="date"
+            value={end}
+            required={field.required}
+            onChange={(e) => onChange(composeDateRange(start, e.target.value))}
+          />
+        </div>
+      );
+    }
+    case 'card_select': {
+      const selected = typeof value === 'string' ? value : '';
+      return (
+        <div className="grid gap-2 sm:grid-cols-2" role="group" aria-labelledby={`${id}-label`}>
+          {(field.options ?? []).map((option, i) => {
+            const isSelected = selected === option;
+            const detail = field.option_details?.[i];
+            return (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={isSelected}
+                onClick={() => onChange(option)}
+                className={cn(
+                  'rounded-md border px-3 py-2 text-left text-[13px] transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  isSelected
+                    ? 'border-accent bg-accent-soft text-accent-on-soft'
+                    : 'border-line bg-subtle text-secondary hover:text-ink',
+                )}
+              >
+                <span className="block font-medium">{option}</span>
+                {detail ? <span className="mt-0.5 block text-[12px] text-secondary">{detail}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
     case 'multiselect': {
       const selected = Array.isArray(value) ? value : [];
       return (
@@ -179,7 +262,7 @@ export function FormBlockView({
             const id = `${idPrefix}-${field.name}`;
             return (
               <div key={field.name}>
-                {field.kind === 'multiselect' ? (
+                {field.kind === 'multiselect' || field.kind === 'card_select' ? (
                   <span id={`${id}-label`} className="mb-1 block text-[12px] font-medium text-secondary">
                     {field.label}
                     {field.required ? ' *' : ''}

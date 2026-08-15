@@ -165,3 +165,77 @@ test('without an onSubmit callback the submit button stays disabled (defensive n
   await user.type(screen.getByLabelText('Destination'), 'Osaka');
   expect(submitButton).toBeDisabled();
 });
+
+test('a "card_select" field renders a tile per option with its detail subtitle; selecting one composes "label: option"', async () => {
+  const block: FormBlockT = {
+    type: 'form',
+    fields: [
+      {
+        name: 'plan',
+        label: 'Plan',
+        kind: 'card_select',
+        options: ['Starter', 'Pro'],
+        option_details: ['For individuals', 'For teams'],
+        required: true,
+      },
+    ],
+  };
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(<FormBlockView block={block} onSubmit={onSubmit} />);
+
+  const starterTile = screen.getByRole('button', { name: /Starter/ });
+  const proTile = screen.getByRole('button', { name: /Pro/ });
+  expect(screen.getByText('For individuals')).toBeInTheDocument();
+  expect(screen.getByText('For teams')).toBeInTheDocument();
+  expect(starterTile).toHaveAttribute('aria-pressed', 'false');
+
+  await user.click(starterTile);
+  expect(starterTile).toHaveAttribute('aria-pressed', 'true');
+  expect(proTile).toHaveAttribute('aria-pressed', 'false');
+
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  expect(onSubmit).toHaveBeenCalledWith('Plan: Starter');
+});
+
+test('a "date" field renders a date input and its value flows into the composed submit', async () => {
+  const block: FormBlockT = {
+    type: 'form',
+    fields: [{ name: 'start', label: 'Start date', kind: 'date', required: true }],
+  };
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(<FormBlockView block={block} onSubmit={onSubmit} />);
+
+  const input = screen.getByLabelText('Start date', { exact: false });
+  expect(input).toHaveAttribute('type', 'date');
+  await user.type(input, '2026-08-20');
+
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  expect(onSubmit).toHaveBeenCalledWith('Start date: 2026-08-20');
+});
+
+test('a "daterange" field blocks submit until both dates are set, then composes "start to end"', async () => {
+  const block: FormBlockT = {
+    type: 'form',
+    fields: [{ name: 'trip', label: 'Trip dates', kind: 'daterange', required: true }],
+  };
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(<FormBlockView block={block} onSubmit={onSubmit} />);
+
+  const submitButton = screen.getByRole('button', { name: 'Submit' });
+  expect(submitButton).toBeDisabled();
+
+  const startInput = screen.getByLabelText('Trip dates start', { exact: false });
+  const endInput = screen.getByLabelText('Trip dates end', { exact: false });
+
+  await user.type(startInput, '2026-08-20');
+  expect(submitButton).toBeDisabled();
+
+  await user.type(endInput, '2026-08-25');
+  expect(submitButton).toBeEnabled();
+
+  await user.click(submitButton);
+  expect(onSubmit).toHaveBeenCalledWith('Trip dates: 2026-08-20 to 2026-08-25');
+});
