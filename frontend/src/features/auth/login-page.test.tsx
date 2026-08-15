@@ -35,6 +35,13 @@ function ssoStatusResponse(enabled: boolean): Response {
   });
 }
 
+function bootstrapStatusResponse(needs_setup: boolean): Response {
+  return new Response(JSON.stringify({ needs_setup }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 test('successful login stores the access token', async () => {
   vi.stubGlobal(
     'fetch',
@@ -189,6 +196,84 @@ test('safeReturnTo rejects protocol-relative and backslash host-escape targets',
   expect(safeReturnTo('/\\evil.com')).toBe('/');
   expect(safeReturnTo('\\\\evil.com')).toBe('/');
   expect(safeReturnTo(42)).toBe('/');
+});
+
+test('shows the create-first-admin form on a fresh install (needs_setup=true)', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: Request) => {
+      if (req.url.includes('/api/v1/auth/bootstrap-status')) return bootstrapStatusResponse(true);
+      if (req.url.includes('/api/v1/auth/oidc/status')) return ssoStatusResponse(false);
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  renderPage();
+  expect(await screen.findByText('Create the first admin account')).toBeInTheDocument();
+  expect(screen.getByText(/first account becomes the superadmin/)).toBeInTheDocument();
+  // normal sign-in affordances are absent in first-run mode
+  expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+});
+
+test('create-first-admin form registers and lands the user in the app', async () => {
+  const posted: unknown[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: Request) => {
+      if (req.url.includes('/api/v1/auth/bootstrap-status')) return bootstrapStatusResponse(true);
+      if (req.url.includes('/api/v1/auth/oidc/status')) return ssoStatusResponse(false);
+      if (req.url.includes('/api/v1/auth/register')) {
+        posted.push(req.url);
+        return new Response(JSON.stringify({ access_token: 'tok-super' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByText('Create the first admin account');
+  await user.type(screen.getByLabelText('Email'), 'root@platform.example');
+  await user.type(screen.getByLabelText('Password'), 'correct-horse-1');
+  await user.type(screen.getByLabelText('Confirm password'), 'correct-horse-1');
+  await user.click(screen.getByRole('button', { name: 'Create superadmin' }));
+  expect(await screen.findByText('home page')).toBeInTheDocument();
+  await vi.waitFor(() => expect(getAccessToken()).toBe('tok-super'));
+  expect(posted).toHaveLength(1);
+});
+
+test('create-first-admin form blocks mismatched passwords client-side', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: Request) => {
+      if (req.url.includes('/api/v1/auth/bootstrap-status')) return bootstrapStatusResponse(true);
+      if (req.url.includes('/api/v1/auth/oidc/status')) return ssoStatusResponse(false);
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByText('Create the first admin account');
+  await user.type(screen.getByLabelText('Email'), 'root@platform.example');
+  await user.type(screen.getByLabelText('Password'), 'correct-horse-1');
+  await user.type(screen.getByLabelText('Confirm password'), 'different-horse-1');
+  await user.click(screen.getByRole('button', { name: 'Create superadmin' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Passwords do not match.');
+});
+
+test('shows the normal login form when the install is already set up (needs_setup=false)', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: Request) => {
+      if (req.url.includes('/api/v1/auth/bootstrap-status')) return bootstrapStatusResponse(false);
+      if (req.url.includes('/api/v1/auth/oidc/status')) return ssoStatusResponse(false);
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  renderPage();
+  expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+  expect(screen.queryByText('Create the first admin account')).not.toBeInTheDocument();
 });
 
 test('shows a "Forgot password?" link to /forgot-password', async () => {

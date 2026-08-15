@@ -8,8 +8,9 @@ from uuid import UUID, uuid4
 
 import structlog
 from redis.asyncio import Redis
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_or_create_signing_key
@@ -38,6 +39,20 @@ _FORGOT_EMAIL_WINDOW_SECONDS = 900  # 15 minutes
 
 # RAGZ-PUB-06: reset TTL for a self-service PasswordResetToken.
 _RESET_TOKEN_TTL_MINUTES = 45
+
+# Self-service first-run: fixed 64-bit key for the Postgres transaction
+# advisory lock that serializes concurrent first-signups. Any stable constant
+# works; it only has to be the SAME value on every call so all racing
+# register_first_superadmin transactions contend for one lock. Held for the
+# duration of the transaction (pg_advisory_xact_lock, auto-released on
+# commit/rollback), so two concurrent bootstraps can never both pass the
+# "no superadmin exists" check.
+_BOOTSTRAP_ADVISORY_LOCK_KEY = 0x7261677A_626F6F74  # "ragzboot"
+
+# Registration is invite-only once a superadmin exists. Identical message for
+# every closed-path rejection (existing superadmin found under the lock, or the
+# IntegrityError backstop) so a racing loser can't distinguish the two.
+_REGISTRATION_CLOSED = "Registration is closed — ask an administrator for an invitation."
 
 
 @dataclass(frozen=True)
@@ -110,6 +125,81 @@ async def login(
     await record_audit(session, org_id=user.org_id, actor_id=user.id, action="login.success",
                        target_type="user", target_id=str(user.id))
     return await _issue_pair(session, user, uuid4(), settings)
+
+
+async def issue_session(
+    session: AsyncSession, user: User, settings: Settings
+) -> TokenPair:
+    """Mint a fresh access+refresh pair for `user`, starting a brand-new
+    session family -- the exact token issuance `login` performs. Reused by the
+    self-service register route so its auto-login yields the identical pair
+    (and refresh cookie) a `/login` would."""
+    return await _issue_pair(session, user, uuid4(), settings)
+
+
+async def needs_bootstrap(session: AsyncSession) -> bool:
+    """True when the platform has NO superadmin yet -- i.e. a fresh install
+    whose self-service first-run (register_first_superadmin) is still open.
+    Once any superadmin exists this returns False and registration is closed."""
+    existing = (
+        await session.execute(select(User.id).where(User.role == "superadmin").limit(1))
+    ).scalar_one_or_none()
+    return existing is None
+
+
+async def register_first_superadmin(
+    session: AsyncSession, *, email: str, password: str
+) -> User:
+    """Self-service first-run: create the platform superadmin, but ONLY on a
+    system with zero superadmins. Fail-closed and race-safe:
+
+    - Fail-closed: if any superadmin already exists, raise ConflictError
+      ("registration closed"). This path can NEVER mint a second superadmin.
+    - Race-safe: a Postgres transaction advisory lock
+      (pg_advisory_xact_lock) is taken FIRST, so two concurrent first-signups
+      serialize -- the loser blocks until the winner commits, then sees the
+      winner's superadmin and is rejected. The lock is xact-scoped
+      (auto-released on commit/rollback). The IntegrityError backstop (mirrors
+      bootstrap.py) is the last line of defense (e.g. a unique-email/role
+      clash from the env bootstrap running concurrently); it also rolls back
+      and reports the same closed message.
+
+    The check + create + commit all happen inside this one locked transaction.
+    """
+    # Serialize concurrent first-signups before reading superadmin state.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"),
+        {"key": _BOOTSTRAP_ADVISORY_LOCK_KEY},
+    )
+    existing = (
+        await session.execute(select(User.id).where(User.role == "superadmin").limit(1))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise ConflictError(_REGISTRATION_CLOSED)
+    org = Organization(name="Platform")
+    session.add(org)
+    try:
+        await session.flush()
+        user = User(
+            org_id=org.id,
+            email=email,
+            password_hash=hash_password(password),
+            role="superadmin",
+        )
+        session.add(user)
+        await session.flush()
+        await record_audit(
+            session, org_id=org.id, actor_id=user.id, action="bootstrap.register",
+            target_type="user", target_id=str(user.id),
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        # Backstop for anything the advisory lock didn't already serialize
+        # (e.g. the env-based bootstrap racing in): roll back and report the
+        # same closed message rather than surfacing a DB error.
+        await session.rollback()
+        raise ConflictError(_REGISTRATION_CLOSED) from exc
+    return user
 
 
 async def rotate_refresh(

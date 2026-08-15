@@ -21,6 +21,22 @@ class AccessTokenResponse(BaseModel):
     token_type: str = "bearer"  # noqa: S105 (not a secret, just the auth scheme name)
 
 
+class RegisterRequest(BaseModel):
+    # Self-service first-run: the FIRST registrant becomes the platform
+    # superadmin, then registration closes. Public + rate-limited, so bound
+    # both fields exactly as LoginRequest/InvitationAccept do. Password rule
+    # mirrors InvitationAccept.password verbatim -- the shared min-length floor
+    # (do NOT weaken it here).
+    email: EmailStr = Field(max_length=320)
+    password: str = Field(min_length=12, max_length=4096)
+
+
+class BootstrapStatus(BaseModel):
+    # True only while the system has zero superadmins (a fresh install awaiting
+    # its first-run). Drives the frontend's "create the first admin" form.
+    needs_setup: bool
+
+
 class InvitationCreate(BaseModel):
     email: EmailStr = Field(max_length=320)
     role: Literal["admin", "user"] = "user"

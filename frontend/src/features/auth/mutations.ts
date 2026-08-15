@@ -42,6 +42,38 @@ export function useLogout() {
   });
 }
 
+// Self-service first-run: is this a fresh install whose FIRST registrant
+// becomes the platform superadmin? Drives which form login-page renders.
+export function useBootstrapStatus() {
+  return useQuery({
+    queryKey: ['bootstrap-status'],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/auth/bootstrap-status');
+      // Fail safe to the normal login form if the check itself errors.
+      if (error || !data) return { needs_setup: false };
+      return data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+// First-run only: creates the platform superadmin and auto-logs-in (the
+// response carries an access token + sets the refresh cookie, exactly like
+// login). Returns 409 once a superadmin already exists.
+export function useRegister() {
+  return useMutation({
+    mutationFn: async (creds: { email: string; password: string }) => {
+      const { data, error } = await api.POST('/api/v1/auth/register', { body: creds });
+      if (error) throw new Error(problemDetail(error));
+      if (!data) throw new Error('Registration failed: the server did not respond');
+      return data;
+    },
+    onSuccess: (data) => {
+      setAccessToken(data.access_token);
+    },
+  });
+}
+
 export function useSsoStatus() {
   return useQuery({
     queryKey: ['sso-status'],

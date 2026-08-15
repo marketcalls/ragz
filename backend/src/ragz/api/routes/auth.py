@@ -11,12 +11,14 @@ from ragz.core.ratelimit import peek_rate_limit, rate_limit, record_failure
 from ragz.modules.auth import service
 from ragz.modules.auth.schemas import (
     AccessTokenResponse,
+    BootstrapStatus,
     ChangePasswordRequest,
     ForgotPasswordRequest,
     InvitationAccept,
     InvitationCreate,
     InvitationOut,
     LoginRequest,
+    RegisterRequest,
     ResetPasswordRequest,
     SessionOut,
 )
@@ -84,6 +86,36 @@ async def login(
     # Successful auth clears the account's failure counter (a real user who
     # mistyped a few times isn't left throttled after they get in).
     await redis.delete(account_key)
+    _set_refresh(response, pair.refresh_token, settings)
+    return AccessTokenResponse(access_token=pair.access_token)
+
+
+@router.get("/bootstrap-status", response_model=BootstrapStatus)
+async def bootstrap_status(session: SessionDep) -> BootstrapStatus:
+    """Public: whether this is a fresh install awaiting its first-run
+    (self-service superadmin creation). Reveals only a single boolean --
+    whether any superadmin exists -- never any account detail."""
+    return BootstrapStatus(needs_setup=await service.needs_bootstrap(session))
+
+
+@router.post(
+    "/register",
+    response_model=AccessTokenResponse,
+    dependencies=[Depends(rate_limit("register", limit=5, window_seconds=60))],
+)
+async def register(
+    body: RegisterRequest, response: Response,
+    session: SessionDep, settings: SettingsDep,
+) -> AccessTokenResponse:
+    """Self-service first-run: the FIRST registrant becomes the platform
+    superadmin, then registration closes (409 thereafter). service.
+    register_first_superadmin is fail-closed + race-safe (advisory lock).
+    On success, auto-log-in by issuing the exact token pair /login returns
+    -- same refresh cookie included."""
+    user = await service.register_first_superadmin(
+        session, email=body.email, password=body.password
+    )
+    pair = await service.issue_session(session, user, settings)
     _set_refresh(response, pair.refresh_token, settings)
     return AccessTokenResponse(access_token=pair.access_token)
 

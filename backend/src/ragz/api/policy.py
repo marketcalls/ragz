@@ -96,6 +96,10 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/healthz"), ("GET", "/readyz"),
     ("POST", "/api/v1/auth/login"), ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/logout"), ("POST", "/api/v1/auth/invitations/accept"),
+    # Self-service first-run (no TenantContext -- this IS the bootstrap path,
+    # run before any superadmin/JWT exists). register_first_superadmin is
+    # fail-closed (409 once a superadmin exists) + race-safe (advisory lock).
+    ("GET", "/api/v1/auth/bootstrap-status"), ("POST", "/api/v1/auth/register"),
     ("GET", "/api/v1/auth/oidc/status"), ("GET", "/api/v1/auth/oidc/login"),
     ("GET", "/api/v1/auth/oidc/callback"),
     # RAGZ-PUB-06: forgot/reset-password are unauthenticated by nature (the
