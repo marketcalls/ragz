@@ -1958,6 +1958,23 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** CalloutBlock */
+        CalloutBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "callout";
+            /**
+             * Tone
+             * @enum {string}
+             */
+            tone: "info" | "success" | "warning" | "danger";
+            /** Title */
+            title?: string | null;
+            /** Body */
+            body: string;
+        };
         /** CatalogEntryOut */
         CatalogEntryOut: {
             /** Name */
@@ -1990,6 +2007,33 @@ export interface components {
             current_password: string;
             /** New Password */
             new_password: string;
+        };
+        /** ChartBlock */
+        ChartBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "chart";
+            /**
+             * Chart
+             * @enum {string}
+             */
+            chart: "bar" | "line" | "area" | "stacked_area" | "donut" | "radar" | "radial_gauge" | "grouped_bar";
+            /** Title */
+            title?: string | null;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Data */
+            data: {
+                [key: string]: string | number;
+            }[];
+            /** X Key */
+            x_key?: string | null;
+            /** Category Key */
+            category_key?: string | null;
+            /** Keys */
+            keys?: string[] | null;
         };
         /** ChatCreate */
         ChatCreate: {
@@ -2618,10 +2662,42 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** ImageCardBlock */
+        ImageCardBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "image_card";
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Badge */
+            badge?: string | null;
+            /** Image Ref */
+            image_ref?: string | null;
+        };
         /** ImpactOut */
         ImpactOut: {
             /** Affected Users */
             affected_users: number;
+        };
+        /** InfoCardBlock */
+        InfoCardBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "info_card";
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Body */
+            body?: string | null;
+            /** Icon */
+            icon?: ("info" | "chart" | "dollar" | "trophy" | "warning" | "doc" | "spark" | "users" | "clock" | "check" | "star" | "target" | "globe" | "shield" | "calendar") | null;
         };
         /** InvitationAccept */
         InvitationAccept: {
@@ -2757,6 +2833,8 @@ export interface components {
             /** Citations */
             citations: components["schemas"]["CitationOut"][];
             feedback: components["schemas"]["FeedbackOut"] | null;
+            /** Blocks */
+            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"])[] | null;
             /** Children */
             children: components["schemas"]["MessageNode"][];
         };
@@ -3182,6 +3260,25 @@ export interface components {
             /** Cohere Api Key */
             cohere_api_key?: string | null;
         };
+        /** RankedListBlock */
+        RankedListBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ranked_list";
+            /** Title */
+            title?: string | null;
+            /** Items */
+            items: components["schemas"]["RankedListItem"][];
+        };
+        /** RankedListItem */
+        RankedListItem: {
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+        };
         /** ReembedJobOut */
         ReembedJobOut: {
             /**
@@ -3340,6 +3437,66 @@ export interface components {
             /** Domains */
             domains: string[];
         };
+        /** TabItem */
+        TabItem: {
+            /** Label */
+            label: string;
+            /** Blocks */
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"])[];
+        };
+        /** TableBlock */
+        TableBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "table";
+            /** Columns */
+            columns: string[];
+            /** Rows */
+            rows: (string | number)[][];
+        };
+        /** TabsBlock */
+        TabsBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tabs";
+            /** Tabs */
+            tabs: components["schemas"]["TabItem"][];
+        };
+        /** TagBadge */
+        TagBadge: {
+            /** Label */
+            label: string;
+            /**
+             * Tone
+             * @default neutral
+             * @enum {string}
+             */
+            tone: "neutral" | "info" | "success" | "warning" | "danger";
+        };
+        /** TagBadgesBlock */
+        TagBadgesBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tag_badges";
+            /** Tags */
+            tags: components["schemas"]["TagBadge"][];
+        };
+        /** TextBlock */
+        TextBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text";
+            /** Markdown */
+            markdown: string;
+        };
         /** UsageKpis */
         UsageKpis: {
             /** Queries */
@@ -3484,6 +3641,8 @@ export interface components {
             enrichment_enabled: boolean;
             /** Chunk Method */
             chunk_method: string;
+            /** Generative Ui Enabled */
+            generative_ui_enabled: boolean;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
@@ -3507,6 +3666,8 @@ export interface components {
             enrichment_enabled?: boolean | null;
             /** Chunk Method */
             chunk_method?: ("heading" | "fixed" | "page" | "table_qa") | null;
+            /** Generative Ui Enabled */
+            generative_ui_enabled?: boolean | null;
         };
         /** WorstAnswerOut */
         WorstAnswerOut: {
