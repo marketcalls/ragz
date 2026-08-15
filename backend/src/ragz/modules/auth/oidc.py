@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.core.app_settings import get_app_setting, set_app_setting
 from ragz.core.config import Settings
 from ragz.core.errors import AuthenticationError, UpstreamError
+from ragz.core.net import assert_public_url
 from ragz.modules.audit.service import record_audit
 from ragz.modules.secrets import service as secrets_service
 
@@ -115,13 +116,21 @@ class OidcProvider:
 
 
 async def load_provider(
-    session: AsyncSession, *, transport: httpx.AsyncBaseTransport | None = None
+    session: AsyncSession,
+    *,
+    settings: Settings,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> OidcProvider | None:
     issuer = await get_app_setting(session, OIDC_ISSUER_KEY)
     client_id = await get_app_setting(session, OIDC_CLIENT_ID_KEY)
     if not issuer or not client_id:
         return None
     url = issuer.rstrip("/") + "/.well-known/openid-configuration"
+    # sec RAGZ-PUB-11: the issuer is superadmin-set (set_sso_config, above) --
+    # a privileged-but-malicious or misconfigured value could otherwise
+    # target an internal service or the cloud metadata endpoint. No-op in
+    # dev/test; production/staging only.
+    await assert_public_url(url, settings)
     try:
         async with httpx.AsyncClient(transport=transport, timeout=10.0) as client:
             resp = await client.get(url)
@@ -228,6 +237,12 @@ async def complete_login(
     client_secret = await secrets_service._get_secret_decrypted(  # noqa: SLF001
         session, name=OIDC_SECRET_NAME, settings=settings
     )
+    # sec RAGZ-PUB-11: `token_endpoint`/`jwks_uri` come from the discovery
+    # document the issuer returned (load_provider, above) -- guarded again
+    # here, right before they're dialed, in case the discovery document
+    # itself points somewhere the issuer URL didn't. No-op in dev/test.
+    await assert_public_url(provider.token_endpoint, settings)
+    await assert_public_url(provider.jwks_uri, settings)
     try:
         async with httpx.AsyncClient(transport=transport, timeout=15.0) as client:
             token_resp = await client.post(provider.token_endpoint, data={

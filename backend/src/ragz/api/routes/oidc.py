@@ -13,6 +13,7 @@ from ragz.core.errors import (
     NotFoundError,
     RateLimitExceeded,
     SecretsError,
+    SsrfBlocked,
     UpstreamError,
 )
 from ragz.core.ratelimit import rate_limit
@@ -70,7 +71,9 @@ async def status(session: SessionDep) -> dict[str, bool]:
     dependencies=[Depends(rate_limit("oidc_login", limit=10, window_seconds=60))],
 )
 async def login(request: Request, session: SessionDep, settings: SettingsDep) -> RedirectResponse:
-    provider = await oidc.load_provider(session, transport=request.app.state.oidc_transport)
+    provider = await oidc.load_provider(
+        session, settings=settings, transport=request.app.state.oidc_transport
+    )
     if provider is None:
         raise NotFoundError("SSO is not configured")
     txn = await oidc.begin_login(
@@ -100,7 +103,9 @@ async def callback(
     # inside the try block instead keeps it on this route's own error path.
     try:
         await rate_limit("oidc_callback", limit=10, window_seconds=60)(request)
-        provider = await oidc.load_provider(session, transport=request.app.state.oidc_transport)
+        provider = await oidc.load_provider(
+            session, settings=settings, transport=request.app.state.oidc_transport
+        )
         if provider is None:
             raise NotFoundError("SSO is not configured")
         identity = await oidc.complete_login(
@@ -113,7 +118,10 @@ async def callback(
             session, email=identity.email, issuer=identity.issuer,
             subject=identity.subject, settings=settings,
         )
-    except (AuthenticationError, UpstreamError, NotFoundError, SecretsError, RateLimitExceeded):
+    except (
+        AuthenticationError, UpstreamError, NotFoundError, SecretsError,
+        RateLimitExceeded, SsrfBlocked,
+    ):
         log.warning("oidc_callback_failed", exc_info=True)
         error_response = RedirectResponse(
             f"{settings.frontend_base_url}/login?sso_error=1", status_code=302

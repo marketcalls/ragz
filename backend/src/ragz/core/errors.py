@@ -58,6 +58,17 @@ class UpstreamError(RagzError):
     title = "Upstream service error"
 
 
+class SsrfBlocked(RagzError):
+    """sec RAGZ-PUB-11: raised by `core/net.py`'s egress guard when an
+    admin/OIDC-configurable outbound target (URL or bare host) resolves to a
+    private/loopback/link-local/CGNAT/cloud-metadata address in production
+    or staging. A 400 -- the caller supplied (or persisted) a value that is
+    not permitted, distinct from a 502 upstream failure."""
+
+    status_code = 400
+    title = "Outbound target blocked"
+
+
 class QuotaExceeded(RagzError):
     status_code = 429
     title = "Token quota exhausted"

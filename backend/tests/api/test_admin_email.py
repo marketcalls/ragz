@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core import net
 from ragz.core.config import Settings, get_settings
 from ragz.modules.auth.models import User
 from ragz.modules.email import service as email_service
@@ -15,6 +16,30 @@ from ragz.modules.secrets import service as secrets_service
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": "pw123456"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+class _FakeLoop:
+    """sec RAGZ-PUB-11: `PUT /admin/email` now resolves `smtp_host` via
+    `core/net.assert_public_host` when `environment` is production/staging --
+    fakes `asyncio.get_running_loop().getaddrinfo` so these HTTP-level tests
+    don't depend on real DNS for placeholder hostnames like
+    `smtp.example.com`. See `tests/core/test_net.py` for the guard's own
+    unit tests (which exercise both the blocked and allowed branches
+    directly)."""
+
+    def __init__(self, ip: str) -> None:
+        self._ip = ip
+
+    async def getaddrinfo(self, host: str, port: object) -> list[tuple[object, ...]]:
+        return [(None, None, None, "", (self._ip, 0))]
+
+
+@pytest.fixture
+def resolve_smtp_host_to(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+    def _set(ip: str) -> None:
+        monkeypatch.setattr(net.asyncio, "get_running_loop", lambda: _FakeLoop(ip))
+
+    return _set
 
 
 @pytest.fixture
@@ -225,13 +250,48 @@ async def test_put_allows_tls_smtp_in_public_deployments(
     client: httpx.AsyncClient,
     superadmin_headers: dict[str, str],
     as_environment: Callable[[str], None],
+    resolve_smtp_host_to: Callable[[str], None],
     environment: str,
 ) -> None:
     as_environment(environment)
+    resolve_smtp_host_to("93.184.216.34")  # public IP -- sec RAGZ-PUB-11 guard must allow it
     payload = dict(_SMTP_PLAINTEXT_PAYLOAD, smtp_use_tls=True)
     r = await client.put("/api/v1/admin/email", json=payload, headers=superadmin_headers)
     assert r.status_code == 200
     assert r.json()["smtp_use_tls"] is True
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+async def test_put_rejects_smtp_host_resolving_to_internal_ip_in_public_deployments(
+    client: httpx.AsyncClient,
+    superadmin_headers: dict[str, str],
+    as_environment: Callable[[str], None],
+    resolve_smtp_host_to: Callable[[str], None],
+    environment: str,
+) -> None:
+    """sec RAGZ-PUB-11: a superadmin-set SMTP host that resolves to an
+    internal/private address (or the cloud metadata IP) must be rejected at
+    the write path, in production/staging -- before it's ever saved for a
+    later send to dial."""
+    as_environment(environment)
+    resolve_smtp_host_to("169.254.169.254")  # cloud metadata address
+    payload = dict(_SMTP_PLAINTEXT_PAYLOAD, smtp_use_tls=True)
+    r = await client.put("/api/v1/admin/email", json=payload, headers=superadmin_headers)
+    assert r.status_code == 400
+    assert r.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_put_allows_internal_smtp_host_outside_production_staging(
+    client: httpx.AsyncClient, superadmin_headers: dict[str, str]
+) -> None:
+    """sec RAGZ-PUB-11: the guard is a no-op outside production/staging (no
+    DNS mock here at all -- if the guard fired, it would attempt a real
+    lookup of `smtp.example.com` and this test would be flaky/networked
+    instead of deterministic), so dev/test SMTP config against
+    docker-hostname-style targets keeps working unmodified."""
+    payload = dict(_SMTP_PLAINTEXT_PAYLOAD, smtp_use_tls=True)
+    r = await client.put("/api/v1/admin/email", json=payload, headers=superadmin_headers)
+    assert r.status_code == 200
 
 
 async def test_put_allows_plaintext_smtp_outside_production_staging(

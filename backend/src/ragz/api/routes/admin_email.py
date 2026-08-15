@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import BadRequestError
+from ragz.core.net import assert_public_host
 from ragz.modules.email import service as email_service
 from ragz.modules.email import templates
 from ragz.modules.email.schemas import (
@@ -84,6 +85,14 @@ async def put_email_config_route(
 ) -> EmailConfigOut:
     config = EmailConfig(**body.model_dump(exclude={"smtp_password", "ses_secret_key"}))
     _reject_plaintext_smtp_in_public_deployments(config, settings)
+    if config.provider == "smtp" and config.smtp_host:
+        # sec RAGZ-PUB-11: reject a private/loopback/link-local/metadata SMTP
+        # host at the single write path (PUT /admin/email), same rationale as
+        # the plaintext-TLS guard above. dev/test stay permissive; a second
+        # guard also runs at actual send time (modules/email/service.py) in
+        # case the config predates this check or the environment later
+        # changes without a re-save.
+        await assert_public_host(config.smtp_host, settings)
     await settings_service.update_email_config(session, config, commit=False)
     if body.smtp_password is not None:
         await secrets_service.set_secret(

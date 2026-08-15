@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core import net
 from ragz.core.config import Settings
 from ragz.modules.audit.models import AuditEvent
 from ragz.modules.email import service, templates
@@ -20,6 +21,41 @@ def settings(tmp_path: Path) -> Settings:
     kek = tmp_path / "kek"
     ensure_kek(str(kek))
     return Settings(_env_file=None, kek_file=str(kek))
+
+
+@pytest.fixture
+def production_settings(tmp_path: Path) -> Settings:
+    # sec RAGZ-PUB-11: mirrors tests/core/test_production_config.py's
+    # `safe_kwargs` -- every field the fail-closed validator checks must be
+    # overridden so this fixture doesn't itself raise on construction.
+    kek = tmp_path / "kek"
+    ensure_kek(str(kek))
+    # Built as a dict (not literal kwargs) so ruff's S106 hardcoded-password
+    # heuristic doesn't fire on these deliberately-fake test values.
+    kwargs: dict[str, object] = {
+        "_env_file": None,
+        "environment": "production",
+        "api_key_pepper": "a-real-random-pepper-value",
+        "database_url": "postgresql+asyncpg://ragz_prod:s3cret-pw@db.internal:5432/ragz",
+        "minio_secret_key": "a-real-minio-secret",
+        "litellm_master_key": "sk-a-real-litellm-master-key",
+        "public_api_base_url": "https://api.example.com",
+        "frontend_base_url": "https://app.example.com",
+        "kek_file": str(kek),
+    }
+    return Settings(**kwargs)  # type: ignore[arg-type]
+
+
+class _FakeLoop:
+    """Fakes `asyncio.get_running_loop().getaddrinfo` for `core/net.py`'s
+    DNS resolution step, so the production-guard tests below don't touch
+    the network."""
+
+    def __init__(self, ip: str) -> None:
+        self._ip = ip
+
+    async def getaddrinfo(self, host: str, port: object) -> list[tuple[object, ...]]:
+        return [(None, None, None, "", (self._ip, 0))]
 
 
 class _RecorderSender:
@@ -92,6 +128,43 @@ async def test_smtp_provider_decrypts_password_and_sends(
     assert sender.kwargs["from_email"] == "noreply@ragz.example"
     assert sender.sent is not None
     assert sender.sent.to == "user@example.com"
+
+
+async def test_smtp_send_rejects_internal_host_in_production(
+    session: AsyncSession,
+    production_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sec RAGZ-PUB-11: `_build_sender` re-checks `assert_public_host` right
+    before connecting -- defense in depth for config that predates the
+    `PUT /admin/email` guard, or a deployment that flipped dev -> production
+    without a re-save. A blocked target must surface as `EmailError` (this
+    module's typed error), never as a raw `SsrfBlocked` or an aiosmtplib
+    connection attempt."""
+    monkeypatch.setattr(service, "SmtpSender", _RecorderSender)
+    monkeypatch.setattr(net.asyncio, "get_running_loop", lambda: _FakeLoop("10.0.0.5"))
+    await _configure_smtp(session, production_settings)
+    with pytest.raises(EmailError, match="not permitted"):
+        await service.send_email(
+            session, to="user@example.com", subject="Subj", html="<p>hi</p>", text="hi",
+            settings=production_settings,
+        )
+    assert len(_RecorderSender.instances) == 0  # never got as far as building the sender
+
+
+async def test_smtp_send_allows_public_host_in_production(
+    session: AsyncSession,
+    production_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service, "SmtpSender", _RecorderSender)
+    monkeypatch.setattr(net.asyncio, "get_running_loop", lambda: _FakeLoop("93.184.216.34"))
+    await _configure_smtp(session, production_settings)
+    await service.send_email(
+        session, to="user@example.com", subject="Subj", html="<p>hi</p>", text="hi",
+        settings=production_settings,
+    )
+    assert len(_RecorderSender.instances) == 1
 
 
 async def test_ses_provider_decrypts_secret_key_and_sends(

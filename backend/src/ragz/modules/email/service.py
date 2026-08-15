@@ -14,7 +14,8 @@ themselves.
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import Settings
-from ragz.core.errors import NotFoundError
+from ragz.core.errors import NotFoundError, SsrfBlocked
+from ragz.core.net import assert_public_host
 from ragz.modules.audit.service import record_audit
 from ragz.modules.email.errors import EmailError
 from ragz.modules.email.schemas import EmailConfig, EmailMessage
@@ -42,6 +43,14 @@ async def _build_sender(
     session: AsyncSession, config: EmailConfig, *, settings: Settings
 ) -> SmtpSender | SesSender:
     if config.provider == "smtp":
+        # sec RAGZ-PUB-11: guard again at the actual connect path, not just
+        # at `PUT /admin/email` -- the stored config could predate the
+        # guard (or the deployment could have flipped dev -> production
+        # without a re-save). No-op in dev/test; production/staging only.
+        try:
+            await assert_public_host(config.smtp_host, settings)
+        except SsrfBlocked as exc:
+            raise EmailError(f"SMTP host is not permitted: {exc.detail}") from exc
         try:
             password = await secrets_service._get_secret_decrypted(  # noqa: SLF001
                 session, name=_SMTP_SECRET, settings=settings
