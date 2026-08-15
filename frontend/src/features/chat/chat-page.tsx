@@ -174,6 +174,11 @@ export function ChatPage() {
 
   const busy = stream.status === 'retrieving' || stream.status === 'streaming';
   const showStreamBlock = stream.status !== 'idle' && !streamedInTree;
+  // A form's submit re-enters the same send path as the composer (see
+  // onSend above) -- gate it the same way ChatInput/MessageActions already
+  // gate other send-triggering actions while a turn is in flight, so a form
+  // submit can't fire a second concurrent stream.
+  const onFormSubmit = busy || sendMessage.sending ? undefined : onSend;
 
   return (
     <>
@@ -237,6 +242,7 @@ export function ChatPage() {
                 grounding={m.grounding}
                 validationFailed={m.validation_failed}
                 onOpenDocument={openDocument}
+                onFormSubmit={onFormSubmit}
                 footer={
                   <MessageActions
                     entry={entry}
@@ -252,7 +258,9 @@ export function ChatPage() {
               />
             );
           })}
-          {showStreamBlock ? <StreamingMessage stream={stream} /> : null}
+          {showStreamBlock ? (
+            <StreamingMessage stream={stream} onFormSubmit={onFormSubmit} />
+          ) : null}
           {!chatId && path.length === 0 && stream.status === 'idle' ? (
             <p className="pt-16 text-center text-[15px] text-secondary">
               Ask a question about the documents in this workspace.

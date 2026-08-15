@@ -118,6 +118,13 @@ export type CalloutBlock = components['schemas']['CalloutBlock'];
 export type TableBlock = components['schemas']['TableBlock'];
 export type TabsBlock = components['schemas']['TabsBlock'];
 export type TabItem = components['schemas']['TabItem'];
+// Phase 3 (interactive in-chat forms, 2026-08-15 design): a `form` block --
+// the model asks for structured input; submission is a NORMAL chat message
+// composed client-side (features/chat/blocks/form-block.tsx), never a new
+// endpoint or stateful form engine. Allowed at top level and inside
+// TabItem.blocks.
+export type FormBlock = components['schemas']['FormBlock'];
+export type FormField = components['schemas']['FormField'];
 export type Block =
   | TextBlock
   | ChartBlock
@@ -127,7 +134,8 @@ export type Block =
   | TagBadgesBlock
   | CalloutBlock
   | TableBlock
-  | TabsBlock;
+  | TabsBlock
+  | FormBlock;
 
 export type DocumentStatus = DocumentOut['status'];
 

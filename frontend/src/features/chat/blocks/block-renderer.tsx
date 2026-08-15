@@ -29,6 +29,7 @@ import type {
   TabsBlock as TabsBlockT,
   TagBadgesBlock as TagBadgesBlockT,
 } from '@/api/types';
+import { FormBlockView } from './form-block';
 import { DonutChart } from '@/components/charts/donut-chart';
 import { GroupedBar } from '@/components/charts/grouped-bar';
 import { RadarChart } from '@/components/charts/radar-chart';
@@ -285,7 +286,15 @@ function TableView({ block }: { block: TableBlockT }) {
   );
 }
 
-function TabsView({ block, depth }: { block: TabsBlockT; depth: number }) {
+function TabsView({
+  block,
+  depth,
+  onFormSubmit,
+}: {
+  block: TabsBlockT;
+  depth: number;
+  onFormSubmit?: (message: string) => void;
+}) {
   // Backend types nesting out statically (TabItem.blocks excludes
   // TabsBlock), but this whitelist guards defensively anyway rather than
   // trust the server-validated shape blindly.
@@ -303,14 +312,22 @@ function TabsView({ block, depth }: { block: TabsBlockT; depth: number }) {
       </TabsList>
       {block.tabs.map((tab, i) => (
         <TabsContent key={i} value={String(i)} className="pt-3">
-          <BlockRenderer blocks={tab.blocks} depth={depth + 1} />
+          <BlockRenderer blocks={tab.blocks} depth={depth + 1} onFormSubmit={onFormSubmit} />
         </TabsContent>
       ))}
     </Tabs>
   );
 }
 
-function RenderBlock({ block, depth }: { block: Block; depth: number }): ReactNode {
+function RenderBlock({
+  block,
+  depth,
+  onFormSubmit,
+}: {
+  block: Block;
+  depth: number;
+  onFormSubmit?: (message: string) => void;
+}): ReactNode {
   switch (block.type) {
     case 'text':
       return <Markdown content={block.markdown} />;
@@ -329,19 +346,33 @@ function RenderBlock({ block, depth }: { block: Block; depth: number }): ReactNo
     case 'table':
       return <TableView block={block} />;
     case 'tabs':
-      return <TabsView block={block} depth={depth} />;
+      return <TabsView block={block} depth={depth} onFormSubmit={onFormSubmit} />;
+    case 'form':
+      return <FormBlockView block={block} onSubmit={onFormSubmit} />;
     default:
       // Unknown block type -- strict whitelist, render nothing.
       return null;
   }
 }
 
-export function BlockRenderer({ blocks, depth = 0 }: { blocks: Block[]; depth?: number }) {
+export function BlockRenderer({
+  blocks,
+  depth = 0,
+  onFormSubmit,
+}: {
+  blocks: Block[];
+  depth?: number;
+  // Phase 3: a `form` block's submit composes a normal chat message and
+  // sends it through the SAME send path as the composer (wired from
+  // chat-page.tsx down through AssistantMessage). Absent in contexts with
+  // no send path -- the form still renders but submit is a disabled no-op.
+  onFormSubmit?: (message: string) => void;
+}) {
   if (blocks.length === 0) return null;
   return (
     <div className="mt-3 flex flex-col gap-3">
       {blocks.map((block, i) => (
-        <RenderBlock key={i} block={block} depth={depth} />
+        <RenderBlock key={i} block={block} depth={depth} onFormSubmit={onFormSubmit} />
       ))}
     </div>
   );

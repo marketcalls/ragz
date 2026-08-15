@@ -18,7 +18,15 @@ function stepLabel(step: AgentStepInfo): string {
   return (STEP_LABELS[step.tool] ?? ((q: string) => `Working: ${q}`))(step.query);
 }
 
-export function StreamingMessage({ stream }: { stream: ChatStreamState }) {
+export function StreamingMessage({
+  stream,
+  onFormSubmit,
+}: {
+  stream: ChatStreamState;
+  // Phase 3: a live-turn form block (arrives via the `blocks` SSE frame) is
+  // submittable the same way a persisted one is -- same send path.
+  onFormSubmit?: (message: string) => void;
+}) {
   const lastStep = stream.agentSteps.at(-1);
   return (
     <>
@@ -39,6 +47,7 @@ export function StreamingMessage({ stream }: { stream: ChatStreamState }) {
           validationFailed={stream.validationFailed}
           agentSteps={stream.agentSteps}
           toolResults={stream.toolResults}
+          onFormSubmit={onFormSubmit}
         />
       ) : null}
       {stream.status === 'error' ? (

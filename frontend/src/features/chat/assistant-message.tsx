@@ -21,6 +21,7 @@ export function AssistantMessage({
   toolResults = [],
   footer,
   onOpenDocument,
+  onFormSubmit,
 }: {
   content: string;
   sources: SourceChipData[];
@@ -41,6 +42,11 @@ export function AssistantMessage({
   // Citation -> source-document drawer (chip click and inline [n] marker
   // click both route through here; web citations are excluded below).
   onOpenDocument?: (source: SourceChipData) => void;
+  // Phase 3 (interactive in-chat forms): a `form` block's submit composes a
+  // normal chat message and sends it through the SAME send path as the
+  // composer (wired from chat-page.tsx). Absent (e.g. read-only contexts) --
+  // BlockRenderer/FormBlockView render the form with submit disabled.
+  onFormSubmit?: (message: string) => void;
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
 
@@ -65,7 +71,9 @@ export function AssistantMessage({
       <CitationProvider onCitationClick={handleCitationClick} sources={sources}>
         <Markdown content={content} />
       </CitationProvider>
-      {blocks && blocks.length > 0 ? <BlockRenderer blocks={blocks} /> : null}
+      {blocks && blocks.length > 0 ? (
+        <BlockRenderer blocks={blocks} onFormSubmit={onFormSubmit} />
+      ) : null}
       {noAnswer ? (
         <NoAnswerNotice />
       ) : (

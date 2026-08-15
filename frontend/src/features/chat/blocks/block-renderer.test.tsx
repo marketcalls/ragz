@@ -179,6 +179,23 @@ test('tabs renders a tab list and shows the first tab’s inner blocks by defaul
   expect(screen.getByText('Details content')).toBeInTheDocument();
 });
 
+test('form routes to FormBlockView and its submit calls onFormSubmit with the composed message', async () => {
+  const blocks: Block[] = [
+    {
+      type: 'form',
+      title: 'Plan your trip',
+      fields: [{ name: 'destination', label: 'Destination', kind: 'text', required: true }],
+    },
+  ];
+  const onFormSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(<BlockRenderer blocks={blocks} onFormSubmit={onFormSubmit} />);
+  expect(screen.getByText('Plan your trip')).toBeInTheDocument();
+  await user.type(screen.getByLabelText('Destination', { exact: false }), 'Tokyo');
+  await user.click(screen.getByRole('button', { name: 'Submit' }));
+  expect(onFormSubmit).toHaveBeenCalledWith('Destination: Tokyo');
+});
+
 test('an unknown block type renders nothing', () => {
   const blocks = [{ type: 'unknown_future_block', anything: true }] as unknown as Block[];
   const { container } = render(<BlockRenderer blocks={blocks} />);
