@@ -15,7 +15,9 @@ import math
 import pytest
 
 from ragz.modules.chat.blocks import (
+    _MAX_TAGS,
     MAX_BLOCKS,
+    ArticleCardBlock,
     CalloutBlock,
     ChartBlock,
     FormBlock,
@@ -786,6 +788,147 @@ def test_ranked_list_item_valid_url_and_image_ref() -> None:
     assert isinstance(out[0], RankedListBlock)
     assert out[0].items[0].url == "https://acme.example.com"
     assert out[0].items[0].image_ref == "img-1"
+
+
+# --- ArticleCardBlock: standard + hero (openui-parity T2) ------------------
+
+
+def test_article_card_standard_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "article_card",
+                "title": "Q3 Roadmap",
+                "tags": [{"label": "product"}, {"label": "urgent", "tone": "danger"}],
+                "url": "https://example.com/roadmap",
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], ArticleCardBlock)
+    assert out[0].layout == "standard"
+    assert out[0].url == "https://example.com/roadmap"
+    assert len(out[0].tags or []) == 2
+
+
+def test_article_card_hero_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "article_card",
+                "title": "Big Launch",
+                "layout": "hero",
+                "badge": "Featured",
+                "image_ref": "hero-img-1",
+            }
+        ]
+    )
+    assert len(out) == 1
+    block = out[0]
+    assert isinstance(block, ArticleCardBlock)
+    assert block.layout == "hero"
+    assert block.badge == "Featured"
+    assert block.image_ref == "hero-img-1"
+    assert block.url is None
+    assert block.document_id is None
+
+
+def test_article_card_document_id_and_page_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "article_card",
+                "title": "Policy Doc",
+                "document_id": "doc-123",
+                "page": 4,
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], ArticleCardBlock)
+    assert out[0].document_id == "doc-123"
+    assert out[0].page == 4
+    assert out[0].url is None
+
+
+def test_article_card_both_url_and_document_id_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "article_card",
+                "title": "x",
+                "url": "https://example.com",
+                "document_id": "doc-1",
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_article_card_page_without_document_id_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "article_card",
+                "title": "x",
+                "url": "https://example.com",
+                "page": 5,
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_article_card_javascript_url_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "article_card", "title": "x", "url": "javascript:alert(1)"}]
+    )
+    assert out == []
+
+
+def test_article_card_too_many_tags_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "article_card",
+                "title": "x",
+                "tags": [{"label": "t"} for _ in range(_MAX_TAGS + 1)],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_article_card_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "article_card", "title": "x", "onclick": "evil()"}]
+    )
+    assert out == []
+
+
+def test_article_card_nested_inside_tab_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "Articles",
+                        "blocks": [
+                            {
+                                "type": "article_card",
+                                "title": "Nested Article",
+                                "url": "https://example.com/nested",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TabsBlock)
+    assert isinstance(out[0].tabs[0].blocks[0], ArticleCardBlock)
 
 
 # --- Malformed top-level shapes: never raise, always [] --------------------

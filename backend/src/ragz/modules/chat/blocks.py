@@ -261,6 +261,36 @@ class TagBadgesBlock(BaseModel):
     tags: list[TagBadge] = Field(max_length=_MAX_TAGS)
 
 
+class ArticleCardBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["article_card"]
+    title: str = Field(max_length=_MAX_TITLE)
+    subtitle: str | None = Field(default=None, max_length=_MAX_SUBTITLE)
+    body: str | None = Field(default=None, max_length=_MAX_BODY)
+    tags: list[TagBadge] | None = Field(default=None, max_length=_MAX_TAGS)
+    image_ref: str | None = Field(default=None, max_length=_MAX_IMAGE_REF)
+    badge: str | None = Field(default=None, max_length=_MAX_BADGE)
+    source: str | None = Field(default=None, max_length=_MAX_SUBTITLE)
+    url: str | None = None
+    document_id: str | None = Field(default=None, max_length=64)
+    page: int | None = Field(default=None, ge=0, le=100000)
+    layout: Literal["standard", "hero"] = "standard"
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str | None) -> str | None:
+        return _valid_http_url(v)
+
+    @model_validator(mode="after")
+    def _at_most_one_of_url_or_document_id(self) -> ArticleCardBlock:
+        if self.url is not None and self.document_id is not None:
+            raise ValueError("at most one of url or document_id may be set")
+        if self.document_id is None and self.page is not None:
+            raise ValueError("page requires document_id to be set")
+        return self
+
+
 class CalloutBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -355,6 +385,7 @@ InnerBlock = Annotated[
     | RankedListBlock
     | SourceRefsBlock
     | TagBadgesBlock
+    | ArticleCardBlock
     | CalloutBlock
     | TableBlock
     | FormBlock,
@@ -386,6 +417,7 @@ Block = Annotated[
     | RankedListBlock
     | SourceRefsBlock
     | TagBadgesBlock
+    | ArticleCardBlock
     | CalloutBlock
     | TableBlock
     | TabsBlock
