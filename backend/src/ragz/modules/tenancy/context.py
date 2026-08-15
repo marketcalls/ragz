@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_or_create_signing_key
+from ragz.core.config import Settings, get_settings
 from ragz.core.db import get_session
 from ragz.core.errors import AuthenticationError, AuthorizationError
 from ragz.core.ratelimit import check_rate_limit
@@ -148,10 +149,11 @@ async def build_verified_principal_context(
 async def get_tenant_context(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> TenantContext:
     if creds is None:
         raise AuthenticationError("missing bearer token")
-    signing_key = await get_or_create_signing_key(session)
+    signing_key = await get_or_create_signing_key(session, settings)
     claims = decode_access_token(creds.credentials, signing_key)
     result = await session.execute(select(User).where(User.id == claims.user_id))
     user = result.scalar_one_or_none()

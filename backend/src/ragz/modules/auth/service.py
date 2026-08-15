@@ -40,7 +40,7 @@ def _hash(raw: str, pepper: str = "") -> str:
 async def _issue_pair(
     session: AsyncSession, user: User, family_id: UUID, settings: Settings
 ) -> TokenPair:
-    signing_key = await get_or_create_signing_key(session)
+    signing_key = await get_or_create_signing_key(session, settings)
     raw_refresh = secrets.token_urlsafe(48)
     ttl = timedelta(seconds=settings.refresh_token_ttl_seconds)
     expires_at = (datetime.now(UTC) + ttl).replace(tzinfo=None)

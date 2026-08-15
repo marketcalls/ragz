@@ -6,13 +6,16 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_or_create_signing_key
+from ragz.core.config import Settings
 from ragz.core.errors import AuthenticationError
 from ragz.modules.auth.tokens import decode_access_token, issue_access_token
 
 
-async def test_signing_key_persisted(session: AsyncSession) -> None:
-    k1 = await get_or_create_signing_key(session)
-    k2 = await get_or_create_signing_key(session)
+async def test_signing_key_persisted(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    k1 = await get_or_create_signing_key(session, test_settings)
+    k2 = await get_or_create_signing_key(session, test_settings)
     assert k1 == k2 and len(k1) >= 43  # 32 bytes urlsafe
 
 
