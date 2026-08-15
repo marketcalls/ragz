@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import type { FormBlock as FormBlockT } from '@/api/types';
@@ -213,6 +213,68 @@ test('a "date" field renders a date input and its value flows into the composed 
 
   await user.click(screen.getByRole('button', { name: 'Submit' }));
   expect(onSubmit).toHaveBeenCalledWith('Start date: 2026-08-20');
+});
+
+test('a "radio" field renders one radio per option with detail subtitles; selecting one composes "label: option"', async () => {
+  const block: FormBlockT = {
+    type: 'form',
+    fields: [
+      {
+        name: 'tier',
+        label: 'Tier',
+        kind: 'radio',
+        options: ['Free', 'Pro'],
+        option_details: ['Basic access', 'Full access'],
+        required: true,
+      },
+    ],
+  };
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(<FormBlockView block={block} onSubmit={onSubmit} />);
+
+  const submitButton = screen.getByRole('button', { name: 'Submit' });
+  expect(submitButton).toBeDisabled();
+
+  const freeRadio = screen.getByRole('radio', { name: /Free/ });
+  const proRadio = screen.getByRole('radio', { name: /Pro/ });
+  expect(screen.getByText('Basic access')).toBeInTheDocument();
+  expect(screen.getByText('Full access')).toBeInTheDocument();
+  expect(freeRadio).not.toBeChecked();
+  expect(proRadio).not.toBeChecked();
+
+  await user.click(proRadio);
+  expect(proRadio).toBeChecked();
+  expect(freeRadio).not.toBeChecked();
+  expect(submitButton).toBeEnabled();
+
+  await user.click(submitButton);
+  expect(onSubmit).toHaveBeenCalledWith('Tier: Pro');
+});
+
+test('a "slider" field renders a range input honoring min/max/step; changing it composes the chosen value; a slider-only form is submittable immediately', async () => {
+  const block: FormBlockT = {
+    type: 'form',
+    fields: [{ name: 'budget', label: 'Budget', kind: 'slider', min: 100, max: 1000, step: 50, required: true }],
+  };
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+  render(<FormBlockView block={block} onSubmit={onSubmit} />);
+
+  // A slider always has a value (defaults to min), so submit is enabled immediately.
+  const submitButton = screen.getByRole('button', { name: 'Submit' });
+  expect(submitButton).toBeEnabled();
+
+  const slider = screen.getByLabelText('Budget', { exact: false });
+  expect(slider).toHaveAttribute('type', 'range');
+  expect(slider).toHaveAttribute('min', '100');
+  expect(slider).toHaveAttribute('max', '1000');
+  expect(slider).toHaveAttribute('step', '50');
+
+  fireEvent.change(slider, { target: { value: '400' } });
+
+  await user.click(submitButton);
+  expect(onSubmit).toHaveBeenCalledWith('Budget: 400');
 });
 
 test('a "daterange" field blocks submit until both dates are set, then composes "start to end"', async () => {

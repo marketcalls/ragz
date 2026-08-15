@@ -21,7 +21,9 @@ type FormValues = Record<string, FormValue>;
 function initialValues(fields: FormField[]): FormValues {
   const values: FormValues = {};
   for (const field of fields) {
-    values[field.name] = field.kind === 'multiselect' ? [] : '';
+    if (field.kind === 'multiselect') values[field.name] = [];
+    else if (field.kind === 'slider') values[field.name] = String(field.min ?? 0);
+    else values[field.name] = '';
   }
   return values;
 }
@@ -32,6 +34,8 @@ const DATERANGE_FILLED = /\S+ to \S+/;
 
 function isFilled(field: FormField, value: FormValue | undefined): boolean {
   if (field.kind === 'multiselect') return Array.isArray(value) && value.length > 0;
+  // A slider always carries a value (defaulted to its min), so it's filled from the start.
+  if (field.kind === 'slider') return true;
   if (field.kind === 'daterange') {
     return typeof value === 'string' && DATERANGE_FILLED.test(value);
   }
@@ -155,6 +159,66 @@ function FieldControl({
         </div>
       );
     }
+    case 'slider': {
+      const min = field.min ?? 0;
+      const max = field.max ?? 100;
+      const step = field.step ?? 1;
+      const current = typeof value === 'string' && value !== '' ? value : String(min);
+      return (
+        <div className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium text-secondary">{current}</span>
+          <input
+            id={id}
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={current}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full accent-accent"
+          />
+        </div>
+      );
+    }
+    case 'radio': {
+      const selected = typeof value === 'string' ? value : '';
+      return (
+        <div className="flex flex-col gap-1.5" role="radiogroup" aria-labelledby={`${id}-label`}>
+          {(field.options ?? []).map((option, i) => {
+            const optionId = `${id}-${i}`;
+            const detail = field.option_details?.[i];
+            const isSelected = selected === option;
+            return (
+              <label
+                key={option}
+                htmlFor={optionId}
+                className={cn(
+                  'flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-[13px] transition-colors',
+                  isSelected
+                    ? 'border-accent bg-accent-soft text-accent-on-soft'
+                    : 'border-line bg-subtle text-secondary hover:text-ink',
+                )}
+              >
+                <input
+                  id={optionId}
+                  type="radio"
+                  name={id}
+                  value={option}
+                  checked={isSelected}
+                  required={field.required}
+                  onChange={() => onChange(option)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium">{option}</span>
+                  {detail ? <span className="mt-0.5 block text-[12px] text-secondary">{detail}</span> : null}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      );
+    }
     case 'card_select': {
       const selected = typeof value === 'string' ? value : '';
       return (
@@ -262,7 +326,7 @@ export function FormBlockView({
             const id = `${idPrefix}-${field.name}`;
             return (
               <div key={field.name}>
-                {field.kind === 'multiselect' || field.kind === 'card_select' ? (
+                {field.kind === 'multiselect' || field.kind === 'card_select' || field.kind === 'radio' ? (
                   <span id={`${id}-label`} className="mb-1 block text-[12px] font-medium text-secondary">
                     {field.label}
                     {field.required ? ' *' : ''}
