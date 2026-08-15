@@ -18,6 +18,7 @@ from ragz.modules.chat.blocks import (
     MAX_BLOCKS,
     CalloutBlock,
     ChartBlock,
+    FormBlock,
     ImageCardBlock,
     InfoCardBlock,
     RankedListBlock,
@@ -148,6 +149,50 @@ def test_tabs_block_valid() -> None:
     assert len(out) == 1
     assert isinstance(out[0], TabsBlock)
     assert len(out[0].tabs) == 2
+
+
+def test_form_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "title": "Plan your trip",
+                "description": "Tell us a bit more",
+                "fields": [
+                    {"name": "name", "label": "Your name", "kind": "text", "required": True},
+                    {"name": "travellers", "label": "Travellers", "kind": "number"},
+                    {
+                        "name": "style",
+                        "label": "Trip style",
+                        "kind": "select",
+                        "options": ["Cultural", "Relaxation"],
+                    },
+                    {
+                        "name": "destinations",
+                        "label": "Destinations",
+                        "kind": "multiselect",
+                        "options": ["Tokyo", "Kyoto", "Osaka"],
+                    },
+                ],
+                "submit_label": "Plan it",
+            }
+        ]
+    )
+    assert len(out) == 1
+    block = out[0]
+    assert isinstance(block, FormBlock)
+    assert len(block.fields) == 4
+    assert block.fields[2].kind == "select"
+    assert block.fields[2].options == ["Cultural", "Relaxation"]
+
+
+def test_form_block_minimal_valid() -> None:
+    out = validate_blocks(
+        [{"type": "form", "fields": [{"name": "q", "label": "Question", "kind": "text"}]}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], FormBlock)
+    assert out[0].fields[0].required is False
 
 
 def test_mixed_list_of_valid_blocks() -> None:
@@ -360,6 +405,227 @@ def test_image_ref_accepted_as_opaque_bounded_string(image_ref: str) -> None:
 def test_image_ref_over_length_dropped() -> None:
     out = validate_blocks([{"type": "image_card", "title": "x", "image_ref": "y" * 5000}])
     assert out == []
+
+
+# --- FormBlock: dropped/bounded, hostile-but-inert -------------------------
+
+
+def test_form_select_without_options_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "style", "label": "Style", "kind": "select"}],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_multiselect_with_empty_options_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "dest",
+                        "label": "Destinations",
+                        "kind": "multiselect",
+                        "options": [],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_too_many_fields_dropped() -> None:
+    fields = [{"name": f"f{i}", "label": "Field", "kind": "text"} for i in range(11)]
+    out = validate_blocks([{"type": "form", "fields": fields}])
+    assert out == []
+
+
+def test_form_zero_fields_dropped() -> None:
+    out = validate_blocks([{"type": "form", "fields": []}])
+    assert out == []
+
+
+def test_form_too_many_options_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "s",
+                        "label": "Select",
+                        "kind": "select",
+                        "options": [f"opt{i}" for i in range(21)],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_oversize_label_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "q", "label": "x" * 121, "kind": "text"}],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_oversize_option_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "s",
+                        "label": "Select",
+                        "kind": "select",
+                        "options": ["y" * 121],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_unknown_field_kind_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "q", "label": "Question", "kind": "checkbox"}],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "q", "label": "Question", "kind": "text"}],
+                "onsubmit": "evil()",
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_hostile_label_validates_and_kept_verbatim() -> None:
+    """Same contract as hostile markdown: a `<script>`/`javascript:` label is
+    a syntactically valid bounded string, so it VALIDATES and is kept as-is;
+    the frontend renders it as inert text, never executes it."""
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "q",
+                        "label": "<script>alert(1)</script>",
+                        "kind": "text",
+                        "placeholder": "javascript:alert(1)",
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], FormBlock)
+    assert out[0].fields[0].label == "<script>alert(1)</script>"
+    assert out[0].fields[0].placeholder == "javascript:alert(1)"
+
+
+def test_form_nested_inside_tab_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "Details",
+                        "blocks": [
+                            {
+                                "type": "form",
+                                "fields": [
+                                    {"name": "q", "label": "Question", "kind": "text"}
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TabsBlock)
+    assert isinstance(out[0].tabs[0].blocks[0], FormBlock)
+
+
+def test_tabs_inside_form_field_impossible_shape_dropped() -> None:
+    """FormField has no nested-block field at all, so a payload trying to
+    smuggle a tabs block into a form field is just an unknown/extra field
+    and the whole form is dropped -- there is no code path for it to nest."""
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "q",
+                        "label": "Question",
+                        "kind": "text",
+                        "blocks": [{"type": "tabs", "tabs": []}],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [{"type": "form"}],
+        [{"type": "form", "fields": "not-a-list"}],
+        [{"type": "form", "fields": None}],
+        [{"type": "form", "fields": [None]}],
+        [{"type": "form", "fields": [{"name": "q", "label": "Q", "kind": "text"}] * 1000}],
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "q", "label": "Q", "kind": "select", "options": None}],
+            }
+        ],
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "q", "label": "Q", "kind": "select", "options": "not-a-list"}],
+            }
+        ],
+        [{"type": "form", "fields": [{"kind": "text"}]}],  # missing name/label
+    ],
+)
+def test_form_shaped_hostile_input_never_raises(raw: object) -> None:
+    result = validate_blocks(raw)
+    assert isinstance(result, list)
 
 
 # --- Malformed top-level shapes: never raise, always [] --------------------

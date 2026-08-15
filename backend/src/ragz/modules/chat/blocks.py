@@ -55,6 +55,16 @@ _MAX_TABLE_CELL_LEN = 500
 _MAX_TABS = 6
 _MAX_BLOCKS_PER_TAB = 12
 
+_MAX_FORM_FIELDS = 10
+_MAX_FORM_OPTIONS = 20
+_MAX_FORM_FIELD_NAME = 40
+_MAX_FORM_FIELD_LABEL = 120
+_MAX_FORM_OPTION_LEN = 120
+_MAX_FORM_PLACEHOLDER = 120
+_MAX_FORM_SUBMIT_LABEL = 40
+
+FormFieldKind = Literal["text", "number", "select", "multiselect"]
+
 # Whitelisted icon names for InfoCardBlock -- an unrecognized value is a
 # validation failure (block dropped), never rendered as arbitrary text/attr.
 IconName = Literal[
@@ -218,6 +228,45 @@ class TableBlock(BaseModel):
         return rows
 
 
+class FormField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=_MAX_FORM_FIELD_NAME)
+    label: str = Field(max_length=_MAX_FORM_FIELD_LABEL)
+    kind: FormFieldKind
+    options: list[str] | None = Field(default=None, max_length=_MAX_FORM_OPTIONS)
+    required: bool = False
+    placeholder: str | None = Field(default=None, max_length=_MAX_FORM_PLACEHOLDER)
+
+    @field_validator("options")
+    @classmethod
+    def _bound_option_length(cls, options: list[str] | None) -> list[str] | None:
+        if options is None:
+            return options
+        for option in options:
+            if len(option) > _MAX_FORM_OPTION_LEN:
+                raise ValueError("form field option too long")
+        return options
+
+
+class FormBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["form"]
+    title: str | None = Field(default=None, max_length=_MAX_TITLE)
+    description: str | None = Field(default=None, max_length=_MAX_SUBTITLE)
+    fields: list[FormField] = Field(min_length=1, max_length=_MAX_FORM_FIELDS)
+    submit_label: str | None = Field(default=None, max_length=_MAX_FORM_SUBMIT_LABEL)
+
+    @field_validator("fields")
+    @classmethod
+    def _require_options_for_choice_fields(cls, fields: list[FormField]) -> list[FormField]:
+        for field in fields:
+            if field.kind in ("select", "multiselect") and not field.options:
+                raise ValueError("select/multiselect form fields require non-empty options")
+        return fields
+
+
 # --- Tabs: depth is bounded STATICALLY, not by a runtime counter ----------
 #
 # `InnerBlock` is the block union usable *inside* a tab. It deliberately
@@ -233,7 +282,8 @@ InnerBlock = Annotated[
     | RankedListBlock
     | TagBadgesBlock
     | CalloutBlock
-    | TableBlock,
+    | TableBlock
+    | FormBlock,
     Field(discriminator="type"),
 ]
 
@@ -263,7 +313,8 @@ Block = Annotated[
     | TagBadgesBlock
     | CalloutBlock
     | TableBlock
-    | TabsBlock,
+    | TabsBlock
+    | FormBlock,
     Field(discriminator="type"),
 ]
 

@@ -67,12 +67,18 @@ _SYSTEM_PROMPT = (
     '- {"type":"callout","tone":"info"|"success"|"warning"|"danger",'
     '"title"?:string,"body":string}\n'
     '- {"type":"table","columns":[string],"rows":[[string or number, ...]]}\n'
+    '- {"type":"form","title"?:string,"description"?:string,"submit_label"?:'
+    'string,"fields":[{"name":string,"label":string,"kind":"text"|"number"|'
+    '"select"|"multiselect","options"?:[string],"required"?:boolean,'
+    '"placeholder"?:string}]} (select/multiselect fields MUST carry '
+    "non-empty options)\n"
     "Only emit a chart/table when the answer/context actually contains "
     "comparable numeric or tabular data; only emit an image_card when the "
     "context names a specific document image (image_ref is an internal id, "
-    "never a URL); otherwise prefer text/info_card/callout, or emit []. "
-    "Never wrap the array in an object, never invent a block type or field "
-    "not listed above."
+    "never a URL); emit a form block ONLY when you genuinely need "
+    "structured input from the user before you can proceed; otherwise "
+    "prefer text/info_card/callout, or emit []. Never wrap the array in an "
+    "object, never invent a block type or field not listed above."
 )
 
 
