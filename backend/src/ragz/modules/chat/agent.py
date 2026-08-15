@@ -21,11 +21,18 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.errors import ConflictError, NotFoundError, UpstreamError, WorkspaceAccessDenied
 from ragz.modules.chat.llm import LLMCompleter, LLMUsage
-from ragz.modules.chat.web import WebResult, WebSearcher
+from ragz.modules.chat.web import (
+    WebResult,
+    WebSearcher,
+    build_web_search_query,
+    has_searchable_content,
+    redact_query,
+)
 from ragz.modules.documents.metadata import build_clauses
 from ragz.modules.models.models import Model
 from ragz.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
@@ -34,6 +41,12 @@ from ragz.modules.tenancy.models import Workspace
 
 AGENT_MAX_ITERATIONS = 4
 PLANNER_TOOLS = ("search", "search_by_metadata", "get_document", "web_search")
+
+# RAGZ-PUB-08 item 4: per-conversation cap on external web searches (a single
+# run_agent_gather call == one planner conversation turn). No per-org/per-user
+# counter here — quotas live in modules/quotas, out of this module's scope;
+# see run_agent_gather's docstring for the TODO on wiring that in at the route.
+DEFAULT_WEB_SEARCH_BUDGET = 3
 
 _JSON_SPANS = (re.compile(r"\{.*\}", re.DOTALL), re.compile(r"\{.*?\}", re.DOTALL))
 
@@ -206,6 +219,20 @@ class ToolOutcome:
     error: str | None = None
 
 
+def _log_web_search_decision(*, allowed: bool, reason: str, redacted_query: str) -> None:
+    """RAGZ-PUB-08 item 4: log the DECISION, never the raw planner-requested
+    query and never document text. `redacted_query` has already been through
+    build_web_search_query (user-question-derived only) and redact_query
+    (secret/PII-stripped) by the time this is called, so it is always safe to
+    log at info level."""
+    structlog.get_logger().info(
+        "chat.web_search.decision",
+        allowed=allowed,
+        reason=reason,
+        redacted_query=redacted_query,
+    )
+
+
 async def execute_tool(
     session: AsyncSession,
     ctx: TenantContext,
@@ -216,13 +243,24 @@ async def execute_tool(
     chunk_reader: ChunkReaderSeam,
     web_searcher: WebSearcher | None,
     collection_name: str,
+    question: str = "",
+    web_search_consented: bool = False,
+    web_search_budget_remaining: int = 0,
 ) -> ToolOutcome:
     """THE tool-execution seam (design §2): all four read-only tools, one
     funnel. Failures come back as ToolOutcome.error — the loop degrades to
     single-shot RAG on them (never a dead end). Isolation holds by
     construction: document reads only ever go through retrieve()/ChunkReader.
     search_by_metadata's filters go through build_clauses (the `meta.` jail)
-    — never constructed here."""
+    — never constructed here.
+
+    RAGZ-PUB-08: `web_search` additionally gates on explicit per-conversation
+    consent and a per-conversation budget (items 2 & 4), and never forwards
+    `action.query` (model output, possibly laundering retrieved document
+    text) to the searcher — it forwards `build_web_search_query(question,
+    action.query)` run through `redact_query` instead (items 1 & 3). `question`
+    is the user's ORIGINAL message, captured once at run_agent_gather's entry,
+    not anything reconstructed from tool results."""
     try:
         if action.action == "search":
             result = await retriever(session, ctx, workspace.id, action.query)
@@ -241,7 +279,32 @@ async def execute_tool(
         if action.action == "web_search":
             if web_searcher is None:
                 return ToolOutcome(error="web search is not enabled for this workspace")
-            results = await web_searcher(session, action.query)
+            if not web_search_consented:
+                _log_web_search_decision(
+                    allowed=False, reason="consent_required", redacted_query="",
+                )
+                return ToolOutcome(
+                    error="web search requires explicit user consent for this conversation"
+                )
+            if web_search_budget_remaining <= 0:
+                _log_web_search_decision(
+                    allowed=False, reason="budget_exhausted", redacted_query="",
+                )
+                return ToolOutcome(
+                    error="web search budget exhausted for this conversation"
+                )
+            # Taint boundary (items 1 & 3): action.query is model output and
+            # NEVER reaches web_searcher directly.
+            outgoing_query = redact_query(build_web_search_query(question, action.query))
+            if not has_searchable_content(outgoing_query):
+                _log_web_search_decision(
+                    allowed=False, reason="redacted_empty", redacted_query=outgoing_query,
+                )
+                return ToolOutcome(
+                    error="web search query had no safe searchable content after redaction"
+                )
+            _log_web_search_decision(allowed=True, reason="ok", redacted_query=outgoing_query)
+            results = await web_searcher(session, outgoing_query)
             return ToolOutcome(web_results=results, grounded=bool(results))
         return ToolOutcome(error=f"unknown tool: {action.action}")
     except (
@@ -351,12 +414,33 @@ async def run_agent_gather(
     web_searcher: WebSearcher | None,
     metadata_field_names: Sequence[str],
     collection_name: str,
+    web_search_consented: bool = False,
+    web_search_budget: int = DEFAULT_WEB_SEARCH_BUDGET,
 ) -> AsyncIterator[AgentStep | AgentGathered]:
     """The gather phase of the hand-rolled loop (design §2): yields an
     AgentStep before each tool execution (mapped to the agent_step SSE frame
     by stream_reply) and terminates with exactly one AgentGathered. The
     synthesize phase stays in stream_reply — production build_messages,
-    production streaming, nothing agent-specific."""
+    production streaming, nothing agent-specific.
+
+    `question` is captured ONCE here, at loop entry, and is the user's
+    original message — never anything derived from a later tool result. It is
+    threaded into execute_tool on every `web_search` action so the outgoing
+    query is always built from it (RAGZ-PUB-08 items 1 & 3), never from the
+    model's raw requested query.
+
+    RAGZ-PUB-08 items 2 & 4 (consent + budget): `web_search_consented` and
+    `web_search_budget` default to "no consent, budget 0-effectively-unused"
+    (False / DEFAULT_WEB_SEARCH_BUDGET, but a search only ever runs if
+    consented is True) so every EXISTING caller that doesn't pass them keeps
+    today's behavior unchanged. TODO(route wiring): stream_reply
+    (modules/chat/service.py) and its route (api/routes/chats.py) are out of
+    this fix's file scope; they currently call run_agent_gather without these
+    two kwargs, so in production `web_search_consented` is always False and
+    every `web_search` action is refused (fail closed) until a real
+    conversation-scoped consent flag is plumbed from the chat request through
+    stream_reply into this call — see execute_tool's "consent_required"
+    refusal path below for where that flag is enforced."""
     tool_names: list[str] = ["search", "search_by_metadata", "get_document"]
     if web_searcher is not None:
         tool_names.append("web_search")
@@ -367,6 +451,7 @@ async def run_agent_gather(
     summaries: list[str] = []
     prompt_tokens = completion_tokens = 0
     grounded = degraded = False
+    web_searches_used = 0
     for n in range(1, AGENT_MAX_ITERATIONS + 1):
         action, usage = await _plan(
             completer, model=model, question=question, summaries=summaries,
@@ -380,8 +465,12 @@ async def run_agent_gather(
         outcome = await execute_tool(
             session, ctx, action, workspace=workspace, retriever=retriever,
             chunk_reader=chunk_reader, web_searcher=web_searcher,
-            collection_name=collection_name,
+            collection_name=collection_name, question=question,
+            web_search_consented=web_search_consented,
+            web_search_budget_remaining=max(web_search_budget - web_searches_used, 0),
         )
+        if action.action == "web_search" and outcome.error is None:
+            web_searches_used += 1
         if outcome.error is not None:
             # Failure posture (design §2): degrade to single-shot RAG on the
             # ORIGINAL question — never a dead end — and stop planning. The

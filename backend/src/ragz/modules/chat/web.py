@@ -13,8 +13,18 @@ WebResults only; they reach the model exclusively through the production
 text + plain hrefs.
 
 Iron rule 1 note: no Qdrant here — pinned by tests/isolation/test_agent_isolation.py.
+
+RAGZ-PUB-08 remediation (stored prompt injection steering the outbound web
+query, items 1 & 3): `build_web_search_query` and `redact_query` are the taint
+boundary between "text the planner LLM produced" (which may be laundering
+retrieved document content — iron rule 5's untrusted DATA) and "text that
+leaves Ragz to a third-party provider". Every caller of TavilySearcher MUST
+route the outgoing query through both before it ever reaches `__call__`;
+`modules/chat/agent.py`'s `execute_tool` is the one production caller and
+does exactly that (see its `web_search` branch).
 """
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -28,6 +38,82 @@ from ragz.modules.secrets import service as secrets_service
 TAVILY_SECRET_NAME = "tavily"  # noqa: S105 - a secret NAME, not a secret
 _MAX_RESULTS = 5
 _SNIPPET_CHARS = 500
+
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def build_web_search_query(user_question: str, requested: str) -> str:
+    """RAGZ-PUB-08 items 1 & 3: build the outgoing query from the user's
+    ORIGINAL question, never from the planner's raw `requested` text.
+    `requested` is model output, and the model's own context window includes
+    retrieved-document summaries (agent.py's `_outcome_summary`) — a stored
+    prompt injection in a document can steer the model into putting document
+    text (or another user's leaked content) into `requested`.
+
+    Constrained transform: keep only whitespace-delimited tokens from
+    `requested` that ALSO occur, case-insensitively, in `user_question`.
+    Tokens the model added that are not already in the user's own words are
+    dropped outright. If nothing survives the intersection, fall back to
+    `user_question` verbatim.
+
+    INVARIANT (the taint boundary): every token in the return value is
+    provably a substring of `user_question` — a token that exists ONLY in
+    `requested` (e.g. because it was copied from a retrieved chunk) can never
+    appear in the output, by construction.
+    """
+    question_tokens = {t.lower() for t in _WORD_RE.findall(user_question)}
+    if not question_tokens:
+        return user_question.strip()
+    seen: set[str] = set()
+    kept: list[str] = []
+    for token in _WORD_RE.findall(requested):
+        low = token.lower()
+        if low in question_tokens and low not in seen:
+            seen.add(low)
+            kept.append(token)
+    return " ".join(kept) if kept else user_question.strip()
+
+
+# Conservative, regex-based secret/PII redaction (item 3). Order matters:
+# specific shapes (bearer tokens, emails, provider-prefixed keys, key=value
+# assignments) run before the generic high-entropy catch-all so their
+# placeholders read cleanly rather than getting partially re-redacted.
+_REDACT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"bearer\s+[a-z0-9._-]{8,}", re.IGNORECASE), "[REDACTED-TOKEN]"),
+    (re.compile(r"[a-z0-9_.+-]+@[a-z0-9-]+\.[a-z0-9.-]+", re.IGNORECASE), "[REDACTED-EMAIL]"),
+    (re.compile(r"sk-[a-z0-9]{10,}", re.IGNORECASE), "[REDACTED-KEY]"),
+    (re.compile(r"ghp_[a-z0-9]{20,}", re.IGNORECASE), "[REDACTED-KEY]"),
+    (
+        re.compile(
+            r"(?:api[_-]?key|api[_-]?secret|access[_-]?token|secret|password|passwd)"
+            r"\s*[:=]\s*\S+",
+            re.IGNORECASE,
+        ),
+        "[REDACTED-SECRET]",
+    ),
+    (re.compile(r"\b[a-z0-9]{32,}\b", re.IGNORECASE), "[REDACTED-TOKEN]"),
+)
+
+
+def redact_query(query: str) -> str:
+    """RAGZ-PUB-08 item 3: strip obvious secret/PII shapes from a query before
+    it leaves Ragz — emails, bearer tokens, provider-prefixed API keys,
+    `key=value`-style secret assignments, and generic high-entropy (32+ char)
+    tokens. Conservative by design: over-redacting is safe, under-redacting
+    is the bug we're fixing. Never logs or returns the pre-redaction text."""
+    redacted = query
+    for pattern, placeholder in _REDACT_PATTERNS:
+        redacted = pattern.sub(placeholder, redacted)
+    return redacted.strip()
+
+
+def has_searchable_content(redacted_query: str) -> bool:
+    """True if `redacted_query` still has a real search term left after
+    redaction — i.e. something other than whitespace and our own
+    `[REDACTED-*]` placeholders. Callers must skip the search (never send a
+    redaction-only or empty query) when this is False."""
+    stripped = re.sub(r"\[REDACTED-[A-Z]+\]", "", redacted_query)
+    return _WORD_RE.search(stripped) is not None
 
 
 @dataclass(frozen=True)
