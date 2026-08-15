@@ -219,6 +219,8 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/admin/sso"): "sso.manage",
     ("PUT", "/api/v1/admin/sso"): "sso.manage",
     ("GET", "/api/v1/admin/orgs"): "platform.orgs.manage",
+    ("POST", "/api/v1/admin/orgs"): "platform.orgs.manage",
+    ("PATCH", "/api/v1/admin/orgs/{org_id}"): "platform.orgs.manage",
     ("PUT", "/api/v1/admin/orgs/{org_id}/sso-domains"): "platform.orgs.manage",
     # NOTE: path is declared with a `:path` converter in admin_secrets.py so it
     # can contain "/" (secret names are dotted-path-like), but FastAPI's
@@ -435,6 +437,10 @@ _ROLE_ONLY_ENFORCEMENT: dict[tuple[str, str], str] = {
     ("PUT", "/api/v1/admin/sso"):
         "superadmin-only (require_role('superadmin')) -- SSO configuration",
     ("GET", "/api/v1/admin/orgs"):
+        "superadmin-only (require_role('superadmin')) -- cross-org platform administration",
+    ("POST", "/api/v1/admin/orgs"):
+        "superadmin-only (require_role('superadmin')) -- cross-org platform administration",
+    ("PATCH", "/api/v1/admin/orgs/{org_id}"):
         "superadmin-only (require_role('superadmin')) -- cross-org platform administration",
     ("PUT", "/api/v1/admin/orgs/{org_id}/sso-domains"):
         "superadmin-only (require_role('superadmin')) -- cross-org platform administration",

@@ -360,6 +360,48 @@ async def list_organizations(session: AsyncSession) -> list[Organization]:
     )
 
 
+async def create_organization(
+    session: AsyncSession, *, actor_id: UUID | None, name: str
+) -> Organization:
+    """Superadmin-only (admin/sso routes): today orgs only exist from first-run
+    bootstrap, making the system effectively single-org. No membership/user
+    creation here -- a superadmin manages orgs platform-wide; users are
+    invited into them separately. Duplicate names 409 via the DB's unique
+    constraint + api/app.py's global IntegrityError handler, same precedent
+    as create_role_template's unique `name` column below."""
+    stripped = name.strip()
+    if not stripped:
+        raise ConflictError("organization name cannot be blank")
+    org = Organization(name=stripped, sso_domains=None)
+    session.add(org)
+    await session.flush()
+    await record_audit(session, org_id=None, actor_id=actor_id,
+                       action="org.created", target_type="organization",
+                       target_id=str(org.id))
+    await session.commit()
+    return org
+
+
+async def rename_organization(
+    session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, name: str
+) -> Organization:
+    """Superadmin-only (admin/sso routes): renames an existing organization."""
+    org = (
+        await session.execute(select(Organization).where(Organization.id == org_id))
+    ).scalar_one_or_none()
+    if org is None:
+        raise NotFoundError("organization not found")
+    stripped = name.strip()
+    if not stripped:
+        raise ConflictError("organization name cannot be blank")
+    org.name = stripped
+    await record_audit(session, org_id=None, actor_id=actor_id,
+                       action="org.renamed", target_type="organization",
+                       target_id=str(org.id))
+    await session.commit()
+    return org
+
+
 async def set_org_sso_domains(
     session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, domains: list[str]
 ) -> Organization:

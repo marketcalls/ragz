@@ -42,6 +42,14 @@ class SsoDomainsIn(BaseModel):
     domains: list[str] = Field(max_length=200)
 
 
+class OrgCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class OrgRename(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
 @router.get("/sso", response_model=SsoConfigOut)
 async def get_sso(session: SessionDep, ctx: SuperDep) -> SsoConfigOut:
     config = await oidc_service.get_sso_config(session)
@@ -77,5 +85,21 @@ async def put_sso_domains(
 ) -> OrgOut:
     org = await tenancy_service.set_org_sso_domains(
         session, actor_id=ctx.user_id, org_id=org_id, domains=body.domains
+    )
+    return OrgOut.model_validate(org)
+
+
+@router.post("/orgs", response_model=OrgOut)
+async def create_org(body: OrgCreate, session: SessionDep, ctx: SuperDep) -> OrgOut:
+    org = await tenancy_service.create_organization(session, actor_id=ctx.user_id, name=body.name)
+    return OrgOut.model_validate(org)
+
+
+@router.patch("/orgs/{org_id}", response_model=OrgOut)
+async def rename_org(
+    org_id: UUID, body: OrgRename, session: SessionDep, ctx: SuperDep
+) -> OrgOut:
+    org = await tenancy_service.rename_organization(
+        session, actor_id=ctx.user_id, org_id=org_id, name=body.name
     )
     return OrgOut.model_validate(org)

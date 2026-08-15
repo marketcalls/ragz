@@ -57,6 +57,70 @@ async def test_sso_admin_requires_superadmin(
     assert (await client.get("/api/v1/admin/sso", headers=h)).status_code == 403
 
 
+async def test_create_org(client: httpx.AsyncClient, seeded_superadmin: User) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.post("/api/v1/admin/orgs", headers=h, json={"name": "New Co"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "New Co"
+    assert body["sso_domains"] is None
+
+    orgs = (await client.get("/api/v1/admin/orgs", headers=h)).json()
+    assert body["id"] in [o["id"] for o in orgs]
+
+
+async def test_rename_org(client: httpx.AsyncClient, seeded_superadmin: User) -> None:
+    h = await auth(client, "root@platform.example")
+    orgs = (await client.get("/api/v1/admin/orgs", headers=h)).json()
+    org_id = orgs[0]["id"]
+
+    r = await client.patch(f"/api/v1/admin/orgs/{org_id}", headers=h, json={"name": "Renamed Co"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed Co"
+
+    orgs = (await client.get("/api/v1/admin/orgs", headers=h)).json()
+    assert "Renamed Co" in [o["name"] for o in orgs]
+
+
+async def test_rename_org_missing_org_404s(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.patch(
+        "/api/v1/admin/orgs/00000000-0000-0000-0000-000000000000",
+        headers=h, json={"name": "Nope"},
+    )
+    assert r.status_code == 404
+
+
+async def test_create_and_rename_org_reject_blank_name(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    orgs = (await client.get("/api/v1/admin/orgs", headers=h)).json()
+    org_id = orgs[0]["id"]
+
+    r = await client.post("/api/v1/admin/orgs", headers=h, json={"name": ""})
+    assert r.status_code == 422
+
+    r = await client.patch(f"/api/v1/admin/orgs/{org_id}", headers=h, json={"name": ""})
+    assert r.status_code == 422
+
+
+async def test_org_crud_requires_superadmin(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    h = await auth(client, "a@acme.com")  # org admin, not superadmin
+    assert (
+        await client.post("/api/v1/admin/orgs", headers=h, json={"name": "Nope Co"})
+    ).status_code == 403
+    assert (
+        await client.patch(
+            f"/api/v1/admin/orgs/{seeded_user.org_id}", headers=h, json={"name": "Nope"}
+        )
+    ).status_code == 403
+
+
 async def test_put_sso_rolls_back_atomically_on_secret_failure(
     client: httpx.AsyncClient,
     seeded_superadmin: User,
