@@ -71,8 +71,10 @@ revision date, department, doc type). Implementation home: Plan H (after Plan G)
 as the parser. `anydoc` (pure-Rust → flat Markdown) has **no page boundaries**, so it
 stamps `page=1` on every chunk — citations then always say page 1. `document_parser`
 app-setting options: **`liteparse`** (default — run-llama, PDFium, self-hosted/offline,
-per-page `page_num`, ~40× faster than Docling: 2.6s vs 103s on a 168-page PDF),
-`docling` (self-hosted, page-accurate, slow), `llamaparse` (cloud, needs a key),
-`anydoc` (fastest, but no page numbers). Page is baked into chunks at PARSE time, so
+per-page `page_num`), `docling` (self-hosted, page-accurate, slow), `llamaparse`
+(cloud, needs a key), `anydoc` (fastest, but no page numbers). **Benchmark** (36 MB /
+168-page PDF, same machine): **liteparse 2.6 s (page-accurate)** · anydoc 0.92 s (NO
+pages) · docling 103 s (page-accurate). liteparse = ~40× faster than docling at equal
+page accuracy, only ~3× slower than page-blind anydoc → the default. Page is baked into chunks at PARSE time, so
 switching parsers requires a **re-parse** of existing docs (`delete_document_points` →
 `build_ingest_chain`), not just a reembed. Current default: `liteparse`.
