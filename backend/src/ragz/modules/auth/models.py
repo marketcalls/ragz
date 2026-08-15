@@ -66,6 +66,18 @@ class Invitation(UUIDPk, Base):
     accepted_at: Mapped[datetime | None] = mapped_column(default=None)
 
 
+class PasswordResetToken(UUIDPk, Base):
+    """Self-service forgot-password token (RAGZ-PUB-06): single-use, hashed,
+    short-TTL. Mirrors Invitation's token_hash/expires_at/accepted_at shape."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(unique=True)
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
 class ApiKey(UUIDPk, Base):
     """Superadmin-controlled external-API key, bound to a (user, workspace)
     pair (iron rule 3: only prefix + peppered hash are stored; see
