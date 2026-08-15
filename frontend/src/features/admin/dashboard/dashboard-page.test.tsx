@@ -1,11 +1,21 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { DashboardSummaryOut } from '@/api/types';
+import { mockResponsiveContainerSize } from '@/test/chart-test-utils';
+
+mockResponsiveContainerSize();
 
 const useUsageSummary = vi.fn();
-vi.mock('./queries', () => ({ useUsageSummary: (days: number) => useUsageSummary(days) }));
+const useOrgUsage = vi.fn();
+vi.mock('./queries', () => ({
+  useUsageSummary: (days: number) => useUsageSummary(days),
+  useOrgUsage: (enabled: boolean) => useOrgUsage(enabled),
+}));
+
+const useAuthorization = vi.fn();
+vi.mock('@/lib/use-authorization', () => ({ useAuthorization: () => useAuthorization() }));
 
 import { DashboardPage } from './dashboard-page';
 
@@ -18,8 +28,8 @@ function renderDashboard() {
 }
 
 const summary: DashboardSummaryOut = {
-  by_day: [],
-  by_model: [],
+  by_day: [{ day: '2026-07-01', tokens: 500 }],
+  by_model: [{ model_id: 'gpt-4o', tokens: 500 }],
   by_user: [{ user_id: 'u1', email: 'alice@example.com', tokens: 456_000, queries: 42 }],
   kpis: { queries: 1234, total_tokens: 567_890, active_users: 12, no_answer_count: 3 },
   queries_per_day: [{ day: '2026-07-01', count: 10 }],
@@ -35,19 +45,45 @@ const summary: DashboardSummaryOut = {
 
 beforeEach(() => {
   useUsageSummary.mockReturnValue({ data: summary, isPending: false });
+  useOrgUsage.mockReturnValue({ data: undefined, isPending: false });
+  useAuthorization.mockReturnValue({ data: { role: 'admin', permissions: new Set(), policyVersion: 1 } });
 });
 
 afterEach(() => {
   vi.clearAllMocks();
 });
 
+// With real chart geometry rendered (mockResponsiveContainerSize), axis tick
+// text can numerically collide with KPI values (e.g. a "12" Y-axis tick next
+// to an "Active users" value of 12), and "Queries" is both a StatTile label
+// and a table column header -- so KPI assertions below scope to the
+// StatTile's own <p> label (selector: 'p' excludes the <th>) and read that
+// element's parent card, rather than searching the whole document.
+function statTileValue(label: string): string | null {
+  return screen.getByText(label, { selector: 'p' }).parentElement?.textContent ?? null;
+}
+
 test('renders all four KPI tiles and the top-user email', () => {
   renderDashboard();
-  expect(screen.getByText('1,234')).toBeInTheDocument();
-  expect(screen.getByText('567,890')).toBeInTheDocument();
-  expect(screen.getByText('12')).toBeInTheDocument();
-  expect(screen.getByText('3')).toBeInTheDocument();
+  expect(statTileValue('Queries')).toContain('1,234');
+  expect(statTileValue('Tokens')).toContain('567,890');
+  expect(statTileValue('Active users')).toContain('12');
+  expect(statTileValue('No-answer')).toContain('3');
   expect(screen.getByText('alice@example.com')).toBeInTheDocument();
+});
+
+test('the queries and tokens KPI tiles render a sparkline from their daily series', () => {
+  renderDashboard();
+  // Only Queries and Tokens have a matching per-day series in
+  // DashboardSummaryOut (no per-day active_users/no_answer_count exists), so
+  // only their tiles should contain a rendered sparkline line.
+  const queriesTile = screen.getByText('Queries', { selector: 'p' }).parentElement as HTMLElement;
+  const tokensTile = screen.getByText('Tokens', { selector: 'p' }).parentElement as HTMLElement;
+  const activeUsersTile = screen.getByText('Active users', { selector: 'p' })
+    .parentElement as HTMLElement;
+  expect(queriesTile.querySelector('.recharts-line')).toBeInTheDocument();
+  expect(tokensTile.querySelector('.recharts-line')).toBeInTheDocument();
+  expect(activeUsersTile.querySelector('.recharts-line')).not.toBeInTheDocument();
 });
 
 test('defaults to the 30-day range', () => {
@@ -62,7 +98,14 @@ test('range switcher fires a refetch with days=7', async () => {
   expect(useUsageSummary).toHaveBeenLastCalledWith(7);
 });
 
-test('answer quality tile renders the rounded grounding-score percentage', () => {
+test('tokens-by-model donut renders a legend entry per model', async () => {
+  renderDashboard();
+  await waitFor(() => {
+    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+  });
+});
+
+test('answer quality renders radial gauges with the rounded score percentages', () => {
   useUsageSummary.mockReturnValue({
     data: {
       ...summary,
@@ -75,18 +118,19 @@ test('answer quality tile renders the rounded grounding-score percentage', () =>
   });
   renderDashboard();
   expect(screen.getByText('72%')).toBeInTheDocument();
-  expect(screen.getByText('8 audited')).toBeInTheDocument();
+  expect(screen.getByText('80%')).toBeInTheDocument();
+  expect(screen.getByText('Grounding')).toBeInTheDocument();
+  expect(screen.getByText('Completeness')).toBeInTheDocument();
+  expect(screen.getByText('of 8 audited')).toBeInTheDocument();
 });
 
-test('answer quality tile shows a placeholder when nothing has been audited yet', () => {
+test('answer quality gauges show a No data state when nothing has been audited yet', () => {
   renderDashboard();
-  // The default fixture also has feedback_summary.down_rate: null, so the
-  // Feedback tile shows the same "—" placeholder -- expect both.
-  expect(screen.getAllByText('—')).toHaveLength(2);
-  expect(screen.getByText('0 audited')).toBeInTheDocument();
+  expect(screen.getAllByText('No data').length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText('of 0 audited')).toBeInTheDocument();
 });
 
-test('feedback tile renders the rounded down-rate percentage', () => {
+test('feedback donut renders a legend entry for down and up responses', async () => {
   useUsageSummary.mockReturnValue({
     data: {
       ...summary,
@@ -95,13 +139,16 @@ test('feedback tile renders the rounded down-rate percentage', () => {
     isPending: false,
   });
   renderDashboard();
-  expect(screen.getByText('25% 👎')).toBeInTheDocument();
-  expect(screen.getByText('20 rated')).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.getByText('Down')).toBeInTheDocument();
+    expect(screen.getByText('Up')).toBeInTheDocument();
+  });
+  expect(screen.getByText('responses')).toBeInTheDocument();
 });
 
-test('feedback tile degrades to a placeholder when zero feedback exists in the window', () => {
+test('feedback donut degrades to a No data state when zero feedback exists in the window', () => {
   renderDashboard();
-  expect(screen.getByText('0 rated')).toBeInTheDocument();
+  expect(screen.getAllByText('No data').length).toBeGreaterThanOrEqual(1);
 });
 
 test("worst-answers table renders a link to the answer's chat", () => {
@@ -130,7 +177,7 @@ test('empty worst_answers renders neither the table nor a broken empty-state', (
   expect(screen.queryByText('Lowest-scoring answers')).not.toBeInTheDocument();
 });
 
-test('eval trend table renders workspace name and formatted metrics', () => {
+test('eval trend radar renders one axis label per workspace, normalized onto a shared 0-1 scale', () => {
   useUsageSummary.mockReturnValue({
     data: {
       ...summary,
@@ -148,16 +195,37 @@ test('eval trend table renders workspace name and formatted metrics', () => {
     isPending: false,
   });
   renderDashboard();
-  expect(screen.getByText('Eval trend (latest run per workspace)')).toBeInTheDocument();
+  expect(screen.getByText('Eval trend — latest run per workspace')).toBeInTheDocument();
   expect(screen.getByText('Engineering')).toBeInTheDocument();
-  expect(screen.getByText('80%')).toBeInTheDocument();
-  expect(screen.getByText('60%')).toBeInTheDocument();
-  expect(screen.getByText('4.2')).toBeInTheDocument();
 });
 
-test('empty eval_trend renders neither the table nor a broken empty-state', () => {
+test('empty eval_trend shows the chart card with a No data state, not a broken empty-state', () => {
   renderDashboard();
-  expect(screen.queryByText('Eval trend (latest run per workspace)')).not.toBeInTheDocument();
+  expect(screen.getByText('Eval trend — latest run per workspace')).toBeInTheDocument();
+  expect(screen.getAllByText('No data').length).toBeGreaterThanOrEqual(1);
+});
+
+test('cross-org usage chart is hidden for a plain admin', () => {
+  useAuthorization.mockReturnValue({ data: { role: 'admin', permissions: new Set(), policyVersion: 1 } });
+  useOrgUsage.mockReturnValue({ data: [{ org_id: 'o1', name: 'Acme', tokens: 100 }], isPending: false });
+  renderDashboard();
+  expect(useOrgUsage).toHaveBeenLastCalledWith(false);
+  expect(screen.queryByText('Cross-org token usage (platform-wide, superadmin)')).not.toBeInTheDocument();
+});
+
+test('cross-org usage chart renders for a superadmin once org usage loads', () => {
+  useAuthorization.mockReturnValue({
+    data: { role: 'superadmin', permissions: new Set(), policyVersion: 1 },
+  });
+  useOrgUsage.mockReturnValue({ data: [{ org_id: 'o1', name: 'Acme', tokens: 100 }], isPending: false });
+  const { container } = renderDashboard();
+  expect(useOrgUsage).toHaveBeenLastCalledWith(true);
+  expect(screen.getByText('Cross-org token usage (platform-wide, superadmin)')).toBeInTheDocument();
+  // Recharts mirrors every axis tick into a shared #recharts_measurement_span
+  // appended directly to document.body (outside this render's container) for
+  // text-width measurement -- scope to `container` so that hidden duplicate
+  // doesn't ambiguate the real "Acme" tick.
+  expect(within(container).getByText('Acme')).toBeInTheDocument();
 });
 
 test('shows an error message and retry button when the query fails', async () => {

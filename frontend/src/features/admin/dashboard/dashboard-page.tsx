@@ -2,16 +2,32 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { ChartCard } from '@/components/charts/chart-card';
-import { StackedBars } from '@/components/charts/stacked-bars';
+import { DonutChart } from '@/components/charts/donut-chart';
+import { GroupedBar } from '@/components/charts/grouped-bar';
+import { RadarChart } from '@/components/charts/radar-chart';
+import { RadialGauge } from '@/components/charts/radial-gauge';
+import { StackedArea } from '@/components/charts/stacked-area';
 import { TimeSeriesLine } from '@/components/charts/time-series-line';
 import { TopBar } from '@/components/layout/top-bar';
 import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatTile } from '@/components/ui/stat-tile';
+import { useAuthorization } from '@/lib/use-authorization';
 
-import { useUsageSummary } from './queries';
+import { useOrgUsage, useUsageSummary } from './queries';
 
 const RANGES = [7, 30, 90] as const;
+
+// The eval-trend radar shares one radial axis across its three series (the
+// dataviz "one axis" rule), but hit_rate/citation_precision are already 0..1
+// fractions while avg_faithfulness is a 1-5 LLM-judge score (see
+// evals/models.py's `avg_faithfulness: ... # 1-5 scale`) -- so it's
+// normalized to 0..1 (÷5) before joining the others, and the series label
+// says so.
+const FAITHFULNESS_SCALE = 5;
+// Past this many workspaces the radar turns into unreadable overlapping
+// polygons -- cap it rather than let it grow unbounded.
+const MAX_RADAR_WORKSPACES = 8;
 
 /** Pivot rows to one object per day; keep top-3 models by total, bucket rest as "Other".
  * Capped at top-3 (not top-4) so that with an "Other" bucket added there are at most 4
@@ -32,12 +48,60 @@ function pivotTokens(rows: { day: string; model_name: string; tokens: number }[]
   return { data: [...byDay.values()], keys };
 }
 
+/** answer_quality scores are documented as 0..1 (chat/service.py's low-score
+ * cutoff is a hardcoded `< 0.5`), but this defends against a future 0..100
+ * scale change anyway: any value already above 1 is treated as a percent,
+ * i.e. its own max. */
+function scoreMax(value: number | null): number {
+  return value != null && value > 1 ? 100 : 1;
+}
+
+function scorePercentLabel(value: number | null): string | undefined {
+  if (value == null) return undefined;
+  return `${Math.round((value / scoreMax(value)) * 100)}%`;
+}
+
 export function DashboardPage() {
   const [days, setDays] = useState<number>(30);
   const query = useUsageSummary(days);
+  const authz = useAuthorization();
+  const isSuperadmin = authz.data?.role === 'superadmin';
+  const orgUsage = useOrgUsage(isSuperadmin);
+
   const pivoted = useMemo(
     () => pivotTokens(query.data?.tokens_by_model_per_day ?? []),
     [query.data],
+  );
+
+  const modelShare = useMemo(
+    () => (query.data?.by_model ?? []).map((m) => ({ name: m.model_id ?? 'Unknown', value: m.tokens })),
+    [query.data],
+  );
+
+  const evalRadarData = useMemo(
+    () =>
+      (query.data?.eval_trend ?? []).slice(0, MAX_RADAR_WORKSPACES).map((t) => ({
+        workspace_name: t.workspace_name,
+        'Hit rate': t.hit_rate ?? 0,
+        'Citation precision': t.citation_precision ?? 0,
+        'Faithfulness (of 5)':
+          t.avg_faithfulness != null ? t.avg_faithfulness / FAITHFULNESS_SCALE : 0,
+      })),
+    [query.data],
+  );
+
+  const feedbackData = useMemo(() => {
+    const f = query.data?.feedback_summary;
+    if (!f || f.total_count === 0) return [];
+    return [
+      { name: 'Down', value: f.down_count },
+      { name: 'Up', value: f.total_count - f.down_count },
+    ];
+  }, [query.data]);
+
+  const orgBarData = useMemo(
+    () => (orgUsage.data ?? []).map((o) => ({ name: o.name, tokens: o.tokens })),
+    [orgUsage.data],
   );
 
   return (
@@ -67,39 +131,89 @@ export function DashboardPage() {
         {query.data ? (
           <div className="mx-auto max-w-5xl space-y-6">
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <StatTile label="Queries" value={query.data.kpis.queries.toLocaleString()} />
-              <StatTile label="Tokens" value={query.data.kpis.total_tokens.toLocaleString()} />
+              <StatTile
+                label="Queries"
+                value={query.data.kpis.queries.toLocaleString()}
+                sparkline={query.data.queries_per_day.map((d) => d.count)}
+              />
+              <StatTile
+                label="Tokens"
+                value={query.data.kpis.total_tokens.toLocaleString()}
+                sparkline={query.data.by_day.map((d) => d.tokens)}
+              />
               <StatTile label="Active users" value={String(query.data.kpis.active_users)} />
               <StatTile
                 label="No-answer"
                 value={String(query.data.kpis.no_answer_count)}
                 sub="content gaps (ADM-4)"
               />
-              <StatTile
-                label="Answer quality"
-                value={
-                  query.data.answer_quality.avg_grounding_score != null
-                    ? `${Math.round(query.data.answer_quality.avg_grounding_score * 100)}%`
-                    : '—'
-                }
-                sub={`${query.data.answer_quality.audited_count} audited`}
-              />
-              <StatTile
-                label="Feedback"
-                value={
-                  query.data.feedback_summary.down_rate != null
-                    ? `${Math.round(query.data.feedback_summary.down_rate * 100)}% 👎`
-                    : '—'
-                }
-                sub={`${query.data.feedback_summary.total_count} rated`}
-              />
             </div>
-            <ChartCard title="Queries per day">
-              <TimeSeriesLine data={query.data.queries_per_day} />
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <ChartCard title="Queries per day">
+                <TimeSeriesLine data={query.data.queries_per_day} />
+              </ChartCard>
+              <ChartCard title="Tokens by model, per day (top 3 + Other)">
+                <StackedArea data={pivoted.data} xKey="day" keys={pivoted.keys} />
+              </ChartCard>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <ChartCard title="Tokens by model, share of total">
+                <DonutChart data={modelShare} centerLabel="tokens" />
+              </ChartCard>
+              <ChartCard title="Feedback — down vs. up, this window">
+                <DonutChart data={feedbackData} centerLabel="responses" />
+              </ChartCard>
+            </div>
+
+            <ChartCard title="Answer quality — avg grounding & completeness (0–1 scale)">
+              <div className="flex h-full items-center justify-around gap-4">
+                <div className="h-40 w-40">
+                  <RadialGauge
+                    value={query.data.answer_quality.avg_grounding_score ?? Number.NaN}
+                    max={scoreMax(query.data.answer_quality.avg_grounding_score)}
+                    label="Grounding"
+                    valueLabel={scorePercentLabel(query.data.answer_quality.avg_grounding_score)}
+                  />
+                </div>
+                <div className="h-40 w-40">
+                  <RadialGauge
+                    value={query.data.answer_quality.avg_completeness_score ?? Number.NaN}
+                    max={scoreMax(query.data.answer_quality.avg_completeness_score)}
+                    label="Completeness"
+                    valueLabel={scorePercentLabel(query.data.answer_quality.avg_completeness_score)}
+                  />
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-semibold tabular-nums text-ink">
+                    {query.data.answer_quality.low_score_count}
+                  </p>
+                  <p className="mt-0.5 text-xs text-secondary">low-scoring</p>
+                  <p className="mt-2 text-xs text-secondary">
+                    {`of ${query.data.answer_quality.audited_count} audited`}
+                  </p>
+                </div>
+              </div>
             </ChartCard>
-            <ChartCard title="Tokens by model per day">
-              <StackedBars data={pivoted.data} keys={pivoted.keys} />
+
+            <ChartCard title="Eval trend — latest run per workspace">
+              <RadarChart
+                data={evalRadarData}
+                categoryKey="workspace_name"
+                keys={['Hit rate', 'Citation precision', 'Faithfulness (of 5)']}
+              />
             </ChartCard>
+
+            {isSuperadmin && orgBarData.length > 0 ? (
+              <ChartCard title="Cross-org token usage (platform-wide, superadmin)">
+                <GroupedBar data={orgBarData} categoryKey="name" keys={['tokens']} />
+              </ChartCard>
+            ) : null}
+
+            {/* Top users stays a table, not a chart: queries and tokens differ by
+                orders of magnitude, so a shared-axis bar would misrepresent one of
+                them, and the email column has nothing chartable to plot it against. */}
             <div className="rounded-lg border border-line">
               <table className="w-full text-sm">
                 <thead>
@@ -152,38 +266,6 @@ export function DashboardPage() {
                   </tbody>
                 </table>
               </div>
-            ) : null}
-            {query.data.eval_trend.length > 0 ? (
-              <ChartCard title="Eval trend (latest run per workspace)">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-raised text-left text-xs text-secondary">
-                      <th className="px-4 py-2 font-medium">Workspace</th>
-                      <th className="px-4 py-2 text-right font-medium">Hit rate</th>
-                      <th className="px-4 py-2 text-right font-medium">Citation precision</th>
-                      <th className="px-4 py-2 text-right font-medium">Faithfulness</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {query.data.eval_trend.map((t) => (
-                      <tr key={t.workspace_id} className="border-t border-line-faint">
-                        <td className="px-4 py-2 text-ink">{t.workspace_name}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {t.hit_rate != null ? `${Math.round(t.hit_rate * 100)}%` : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {t.citation_precision != null
-                            ? `${Math.round(t.citation_precision * 100)}%`
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {t.avg_faithfulness != null ? t.avg_faithfulness.toFixed(1) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </ChartCard>
             ) : null}
           </div>
         ) : null}
