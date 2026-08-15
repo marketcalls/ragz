@@ -278,6 +278,11 @@ async def reset_password(
         raise AuthenticationError("invalid or expired reset token")
 
     user = (await session.execute(select(User).where(User.id == token.user_id))).scalar_one()
+    if not user.active:
+        # Defense-in-depth: a token issued moments before the account was
+        # deactivated must not reset a now-inactive user (mirrors the
+        # issuance-time active guard). Generic rejection, no enumeration.
+        raise AuthenticationError("invalid or expired reset token")
     user.password_hash = hash_password(new_password)
     token.used_at = now.replace(tzinfo=None)
     await _revoke_all_refresh_tokens(session, user.id)
@@ -292,8 +297,10 @@ async def reset_password(
             session, to=user.email, rendered=email_templates.password_changed_email(),
             settings=settings,
         )
-    except EmailError:
-        structlog.get_logger().error("password_changed_email_failed", exc_info=True)
+    except EmailError as exc:
+        # No exc_info: new_password lives in this frame (Rule 3), symmetric
+        # with request_password_reset's send-failure log.
+        structlog.get_logger().error("password_changed_email_failed", error=str(exc))
 
 
 async def change_password(
@@ -303,9 +310,9 @@ async def change_password(
     """Authenticated self-service password change (task 8). Revokes ALL
     refresh-token families rather than attempting to spare the calling
     session -- see `_revoke_all_refresh_tokens` for why "other sessions only"
-    isn't reliably identifiable from a bearer `TenantContext`. `settings` is
-    accepted for interface parity with `reset_password` (no email is sent
-    here in this task's scope)."""
+    isn't reliably identifiable from a bearer `TenantContext`. Sends a
+    best-effort "password changed" notification (account-takeover early
+    warning), symmetric with `reset_password`."""
     user = (await session.execute(select(User).where(User.id == ctx.user_id))).scalar_one()
     if not verify_password(user.password_hash, current_password):
         raise AuthenticationError("current password is incorrect")
@@ -316,6 +323,17 @@ async def change_password(
         target_type="user", target_id=str(user.id),
     )
     await session.commit()
+
+    try:
+        await email_service.send_rendered(
+            session, to=user.email, rendered=email_templates.password_changed_email(),
+            settings=settings,
+        )
+    except EmailError as exc:
+        # Best-effort notification -- a provider outage must not fail the
+        # already-committed change. No exc_info: new_password lives in this
+        # frame and must never reach a traceback (Rule 3).
+        structlog.get_logger().error("password_changed_email_failed", error=str(exc))
 
 
 async def create_invitation(

@@ -1,6 +1,6 @@
 """Provider-selecting email service.
 
-Iron rule 3 note: SIXTH sanctioned caller of `secrets._get_secret_decrypted`
+Iron rule 3 note: newest sanctioned caller of `secrets._get_secret_decrypted`
 (alongside `models/sync.py`, `auth/oidc.py`, `models/keys.py`, `chat/web.py`,
 `retrieval/rerank.py`, `documents/parsers.py`, `bots/service.py`) --
 `smtp_password`/`ses_secret_key`, decrypted in memory for exactly one

@@ -173,6 +173,24 @@ async def test_reset_password_sets_new_hash_old_fails_new_works(
     assert new.status_code == 200
 
 
+async def test_reset_password_rejected_for_deactivated_user(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession, recorder: _Recorder
+) -> None:
+    """Whole-branch review (defense-in-depth): a token issued moments before
+    the account is deactivated must not reset a now-inactive user."""
+    await client.post("/api/v1/auth/forgot-password", json={"email": seeded_user.email})
+    token = recorder.raw_token()
+    # admin deactivates the account after the token was issued
+    seeded_user.active = False
+    await session.commit()
+
+    r = await client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": token, "new_password": "new-password-123"},
+    )
+    assert r.status_code == 401  # generic invalid/expired -- no enumeration
+
+
 async def test_reset_password_token_is_single_use(
     client: httpx.AsyncClient, seeded_user: User, recorder: _Recorder
 ) -> None:

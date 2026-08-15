@@ -1,11 +1,41 @@
-import httpx
+from typing import Any
 
+import httpx
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ragz.core.config import Settings
 from ragz.modules.auth.models import User
+from ragz.modules.email import service as email_service
 
 
 async def _login_headers(client: httpx.AsyncClient, email: str, password: str) -> dict[str, str]:
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def test_change_password_sends_confirmation_email(
+    client: httpx.AsyncClient, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whole-branch review: a successful change sends a best-effort
+    'password changed' notification (account-takeover early warning),
+    symmetric with reset_password."""
+    calls: list[dict[str, Any]] = []
+
+    async def _rec(session: AsyncSession, *, to: str, rendered: tuple[str, str, str],
+                   settings: Settings) -> None:
+        calls.append({"to": to})
+
+    monkeypatch.setattr(email_service, "send_rendered", _rec)
+    headers = await _login_headers(client, seeded_user.email, "pw123456")
+    r = await client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "pw123456", "new_password": "new-password-123"},
+        headers=headers,
+    )
+    assert r.status_code == 204
+    assert len(calls) == 1
+    assert calls[0]["to"] == seeded_user.email
 
 
 async def test_change_password_wrong_current_is_401_no_change(
