@@ -110,6 +110,7 @@ export function useChatStream(chatId: string | null) {
       modelId?: string | null,
       reasoningEffort?: string | null,
       attachmentIds?: string[],
+      webSearchConsented?: boolean,
     ) => {
       if (!chatId) return;
       run(
@@ -124,6 +125,9 @@ export function useChatStream(chatId: string | null) {
             ? { reasoning_effort: reasoningEffort }
             : {}),
           ...(attachmentIds && attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
+          // Fail-closed: only sent when the user explicitly consented on a
+          // web-search-enabled workspace (see chat-page.tsx).
+          ...(webSearchConsented ? { web_search_consented: true } : {}),
         },
         content,
       );

@@ -424,3 +424,29 @@ test('send includes attachment_ids in the body when provided', async () => {
   const [, body] = streamChatSse.mock.calls[0]!;
   expect(body).toMatchObject({ attachment_ids: ['a1', 'a2'] });
 });
+
+test('send includes web_search_consented only when the flag is true', async () => {
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({
+        type: 'done',
+        done: {
+          message_id: 'm1', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+          grounding: 'documents', validation_failed: false,
+        },
+      });
+    },
+  );
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('hi', undefined, 'model-1', 'off', undefined, true);
+  });
+  expect(streamChatSse.mock.calls[0]![1]).toMatchObject({ web_search_consented: true });
+
+  streamChatSse.mockClear();
+  await act(async () => {
+    result.current.send('hi again', undefined, 'model-1', 'off', undefined, false);
+  });
+  expect(streamChatSse.mock.calls[0]![1]).not.toHaveProperty('web_search_consented');
+});

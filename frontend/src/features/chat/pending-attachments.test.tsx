@@ -27,8 +27,10 @@ test('an image file renders a thumbnail; a non-image renders a file chip', () =>
   const doc = attachment({ id: 'doc1' });
   render(<PendingAttachments files={[img, doc]} onRemove={vi.fn()} />);
 
+  // Image card: thumbnail only (filename lives on the remove control).
   expect(screen.getByAltText('')).toHaveAttribute('src', 'blob:mock-1');
-  expect(screen.getByText('photo.png')).toBeInTheDocument();
+  expect(screen.getByLabelText('Remove photo.png')).toBeInTheDocument();
+  // Non-image card: file icon + filename label.
   expect(screen.getByText('notes.txt')).toBeInTheDocument();
 });
 

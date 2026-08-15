@@ -12,7 +12,6 @@ import { useWorkspaces } from '@/features/workspaces/queries';
 import { useWorkspace } from '@/features/workspaces/workspace-context';
 
 import { AssistantMessage } from './assistant-message';
-import { AttachmentUpload } from './attachment-upload';
 import { ChatInput } from './chat-input';
 import { EditMessageForm } from './edit-message-form';
 import { EffortSelector, type ReasoningEffort } from './effort-selector';
@@ -46,6 +45,9 @@ export function ChatPage() {
   const [modelId, setModelId] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('off');
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Composer web-search toggle (fail-closed default). Only meaningful when the
+  // workspace has web_search_enabled; sticky within the chat (ChatGPT pattern).
+  const [webSearch, setWebSearch] = useState(false);
   const pendingAttachments = usePendingAttachments();
 
   // Citation -> source-document drawer (Task: click a citation to open the
@@ -90,6 +92,10 @@ export function ChatPage() {
     }));
 
   const workspace = workspaces?.find((w) => w.id === workspaceId);
+  const webSearchAvailable = workspace?.web_search_enabled ?? false;
+  // Consent is fail-closed: only true when the workspace allows web search AND
+  // the user toggled it on. This is what actually threads into the send body.
+  const webSearchConsented = webSearchAvailable && webSearch;
   // Workspace default model, else first enabled (see task assumption).
   const workspaceDefault =
     (workspace && 'default_model_id' in workspace
@@ -130,10 +136,21 @@ export function ChatPage() {
     workspaceId,
     createChat: (input) => createChat.mutateAsync(input),
     sendToChat: (content, parentMessageId, attachmentIds) =>
-      stream.send(content, parentMessageId, effectiveModelId, reasoningEffort, attachmentIds),
+      stream.send(
+        content,
+        parentMessageId,
+        effectiveModelId,
+        reasoningEffort,
+        attachmentIds,
+        webSearchConsented,
+      ),
     onNewChat: (newChatId, content, attachmentIds) =>
       navigate(`/chat/${newChatId}`, {
-        state: { initialMessage: content, initialAttachmentIds: attachmentIds },
+        state: {
+          initialMessage: content,
+          initialAttachmentIds: attachmentIds,
+          initialWebSearch: webSearchConsented,
+        },
       }),
     pendingFiles: pendingAttachments.files,
     clearPending: pendingAttachments.clear,
@@ -143,14 +160,22 @@ export function ChatPage() {
   // initialMessage/initialAttachmentIds → auto-send once.
   const initialSentRef = useRef(false);
   const handoffState = location.state as
-    | { initialMessage?: string; initialAttachmentIds?: string[] }
+    | { initialMessage?: string; initialAttachmentIds?: string[]; initialWebSearch?: boolean }
     | null;
   const initialMessage = handoffState?.initialMessage;
   const initialAttachmentIds = handoffState?.initialAttachmentIds ?? [];
+  const initialWebSearch = handoffState?.initialWebSearch ?? false;
   useEffect(() => {
     if (chatId && initialMessage && !initialSentRef.current) {
       initialSentRef.current = true;
-      stream.send(initialMessage, undefined, effectiveModelId, reasoningEffort, initialAttachmentIds); // omit parent → append to leaf
+      stream.send(
+        initialMessage,
+        undefined,
+        effectiveModelId,
+        reasoningEffort,
+        initialAttachmentIds,
+        initialWebSearch,
+      ); // omit parent → append to leaf
       navigate(location.pathname, { replace: true, state: null }); // consume the state
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount/handoff
@@ -222,6 +247,7 @@ export function ChatPage() {
                   key={m.id}
                   content={m.content}
                   attachments={m.attachments}
+                  chatId={chatId}
                   footer={
                     <MessageActions
                       entry={entry}
@@ -275,14 +301,16 @@ export function ChatPage() {
           {sendMessage.error ?? pendingAttachments.error}
         </p>
       ) : null}
-      <div className="mx-auto flex w-full max-w-thread items-center gap-2 px-4">
-        <AttachmentUpload onSelect={pendingAttachments.addFiles} disabled={busy || sendMessage.sending} />
-      </div>
       <ChatInput
         onSend={onSend}
         disabled={busy || sendMessage.sending || (!chatId && createChat.isPending)}
         busy={busy}
         onStop={stream.stop}
+        onSelectFiles={pendingAttachments.addFiles}
+        attachDisabled={busy || sendMessage.sending}
+        webSearchAvailable={webSearchAvailable}
+        webSearch={webSearch}
+        onToggleWebSearch={() => setWebSearch((v) => !v)}
       />
       {viewerTarget ? (
         <DocumentViewerDrawer

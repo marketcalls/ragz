@@ -178,6 +178,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions
+         * @description sec RAGZ-PUB-06: session inventory -- the caller's own live
+         *     refresh-token families only (scoped to ctx.user_id, never another
+         *     user's). The family resolved from the caller's OWN refresh_token cookie
+         *     (if any) is marked `current: true`; gracefully falls back to no
+         *     "current" session at all when the cookie is missing or unrecognized.
+         */
+        get: operations["list_sessions_api_v1_auth_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sessions/{family_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Session
+         * @description sec RAGZ-PUB-06: revoke one specific session (refresh-token family),
+         *     scoped to the caller -- service.revoke_session raises NotFoundError
+         *     (non-leaking) if `family_id` doesn't belong to ctx.user_id.
+         */
+        delete: operations["revoke_session_api_v1_auth_sessions__family_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sessions/revoke-others": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke Other Sessions
+         * @description sec RAGZ-PUB-06: revoke every OTHER live session, sparing the one the
+         *     caller's own refresh_token cookie identifies. No cookie (or an
+         *     unrecognized one) means there is nothing to spare -- every live session
+         *     for this user is revoked.
+         */
+        post: operations["revoke_other_sessions_api_v1_auth_sessions_revoke_others_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/oidc/status": {
         parameters: {
             query?: never;
@@ -1420,6 +1489,30 @@ export interface paths {
         put?: never;
         /** Upload Attachment */
         post: operations["upload_attachment_api_v1_chats__chat_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chats/{chat_id}/attachments/{attachment_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment Content
+         * @description Streams a chat attachment's bytes inline (image thumbnails / previews in
+         *     the conversation). Chat-ownership scoped: get_attachment_for_chat ->
+         *     get_chat enforces org_id + user_id, so no cross-user access; the attachment
+         *     must also belong to THIS chat. Mirrors GET /documents/{id}/file -- the read
+         *     path history otherwise exposes attachment METADATA only (no bytes).
+         */
+        get: operations["get_attachment_content_api_v1_chats__chat_id__attachments__attachment_id__content_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3483,6 +3576,36 @@ export interface components {
             /** Value */
             value: string;
         };
+        /**
+         * SessionOut
+         * @description sec RAGZ-PUB-06: one live refresh-token FAMILY, as returned by
+         *     GET /auth/sessions. `current` is true only for the family the caller's
+         *     OWN refresh_token cookie resolves to.
+         */
+        SessionOut: {
+            /**
+             * Family Id
+             * Format: uuid
+             */
+            family_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Last Used At
+             * Format: date-time
+             */
+            last_used_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Current */
+            current: boolean;
+        };
         /** SsoConfigIn */
         SsoConfigIn: {
             /** Issuer */
@@ -4052,6 +4175,95 @@ export interface operations {
                 "application/json": components["schemas"]["ChangePasswordRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_v1_auth_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                refresh_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_session_api_v1_auth_sessions__family_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                family_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_other_sessions_api_v1_auth_sessions_revoke_others_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                refresh_token?: string | null;
+            };
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             204: {
@@ -6881,6 +7093,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attachment_content_api_v1_chats__chat_id__attachments__attachment_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chat_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
