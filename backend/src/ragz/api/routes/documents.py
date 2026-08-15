@@ -1,12 +1,13 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
 from ragz.core.config import get_settings
-from ragz.core.errors import PayloadTooLarge
+from ragz.core.errors import NotFoundError, PayloadTooLarge, WorkspaceAccessDenied
+from ragz.core.storage import build_storage
 from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents import metadata as metadata_service
 from ragz.modules.documents import service
@@ -39,6 +40,12 @@ DeleteDep = Annotated[TenantContext, Depends(require_action("documents.delete"))
 # Task 5 (RBAC-03): document listing had no permission gate at all -- any
 # authenticated member could list regardless of role-template contents.
 ListDep = Annotated[TenantContext, Depends(require_action("documents.list"))]
+# Citation-viewer backend: streams the original file bytes. Gated on the
+# existing "documents.content.read" action (already in PERMISSIONS and
+# DEFAULT_USER_PERMISSIONS) -- the same content-level action a plain member
+# needs to have citations answered from a document's chunks, since this
+# endpoint serves the identical content, just as raw bytes instead of chunks.
+FileReadDep = Annotated[TenantContext, Depends(require_action("documents.content.read"))]
 # sec RAGZ-PUB-01: every route below now ENFORCES exactly the action it
 # DECLARES in api/policy.py. Previously several of these routes were gated on a
 # broader/unrelated action (or auth-only CtxDep), so a custom role denied the
@@ -117,6 +124,40 @@ async def list_workspace_documents(
 ) -> list[DocumentOut]:
     docs = await service.list_documents(session, ctx, workspace_id, folder_id)
     return [_serialize_document(d, ctx) for d in docs]
+
+
+@router.get("/documents/{document_id}/file")
+async def get_document_file(
+    document_id: UUID, session: SessionDep, ctx: FileReadDep
+) -> Response:
+    """Streams the original uploaded file bytes for the citation viewer.
+    ACL-CRITICAL: get_document_checked only gates existence/workspace/org
+    membership (Drive-style -- a restricted document still appears in
+    listings). It is NOT sufficient on its own to authorize the file's
+    CONTENT, so user_can_access_document is re-checked explicitly here, same
+    as it is inside get_document_checked -- a plain member who can SEE a
+    restricted document in a listing but isn't in its ACL group must get the
+    same non-leaking denial as an unknown document, not the bytes."""
+    doc = await service.get_document_checked(session, ctx, document_id)
+    if not service.user_can_access_document(ctx, doc):
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
+    storage = build_storage(get_settings())
+    try:
+        data = await storage.get(doc.storage_key)
+    except NotFoundError as exc:
+        # Map storage's own not-found (which embeds the raw storage key/path)
+        # to a generic message -- the storage layout is an internal detail,
+        # not something to leak into an API response body.
+        raise NotFoundError("document file not found") from exc
+    return Response(
+        content=data,
+        media_type=doc.mime or "application/octet-stream",
+        headers={
+            # inline (not attachment): the frontend viewer renders it (PDF
+            # viewer etc.) rather than the browser force-downloading it.
+            "Content-Disposition": f'inline; filename="{doc.filename}"',
+        },
+    )
 
 
 @router.delete("/documents/{document_id}", status_code=202)

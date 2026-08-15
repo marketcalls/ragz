@@ -146,6 +146,7 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     # documents + folders
     ("POST", "/api/v1/workspaces/{workspace_id}/documents"): "documents.upload",
     ("GET", "/api/v1/workspaces/{workspace_id}/documents"): "documents.list",
+    ("GET", "/api/v1/documents/{document_id}/file"): "documents.content.read",
     ("DELETE", "/api/v1/documents/{document_id}"): "documents.delete",
     # sec RAGZ-PUB-01: the former combined PATCH /documents/{id} (pin AND move
     # under auth-only) is split into two single-action endpoints.
