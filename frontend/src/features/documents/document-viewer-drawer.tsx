@@ -116,7 +116,9 @@ export function DocumentViewerDrawer({
             ) : status === 'not-found' ? (
               <CenteredMessage>
                 <p role="alert" className="text-[13px] text-secondary">
-                  Document not found.
+                  The original file isn&apos;t available to preview. It may need to
+                  be re-uploaded &mdash; the document&apos;s indexed content and
+                  citations are unaffected.
                 </p>
               </CenteredMessage>
             ) : status === 'error' ? (

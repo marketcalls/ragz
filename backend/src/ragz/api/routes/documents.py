@@ -1,6 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,10 +146,21 @@ async def get_document_file(
     try:
         data = await storage.get(doc.storage_key)
     except NotFoundError as exc:
-        # Map storage's own not-found (which embeds the raw storage key/path)
-        # to a generic message -- the storage layout is an internal detail,
-        # not something to leak into an API response body.
-        raise NotFoundError("document file not found") from exc
+        # The document ROW exists (it just passed get_document_checked) but its
+        # original file object is absent from storage -- typically the file was
+        # never stored (seeded/imported without the raw bytes) or object storage
+        # was reset while Postgres/Qdrant kept their data (retrieval still works
+        # from vectors; only the original file is gone). Log the key for the
+        # operator (not leaked to the client) and return an ACTIONABLE message
+        # distinct from a missing-document 404.
+        structlog.get_logger("ragz.documents").warning(
+            "document_file_missing_in_storage",
+            document_id=str(document_id), storage_key=doc.storage_key,
+        )
+        raise NotFoundError(
+            "The original file is not available in storage. It may need to be "
+            "re-uploaded (the document's indexed content is unaffected)."
+        ) from exc
     return Response(
         content=data,
         media_type=doc.mime or "application/octet-stream",
