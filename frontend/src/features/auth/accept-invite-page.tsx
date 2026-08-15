@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,18 @@ export function AcceptInvitePage() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [clientError, setClientError] = useState<string | null>(null);
+
+  // RAGZ-PUB-16 mitigation: the invite token arrives as a query param (the
+  // only way an emailed link can carry it) but must not linger in browser
+  // history or leak via a Referer header on subsequent navigation -- scrub
+  // it from the address bar right after mount. This is a one-time DOM
+  // side-effect, not a data fetch, so it is exempt from the
+  // no-fetch-in-useEffect rule.
+  useEffect(() => {
+    if (token) {
+      window.history.replaceState({}, '', '/invite');
+    }
+  }, [token]);
 
   if (!token) {
     return (

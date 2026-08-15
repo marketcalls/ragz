@@ -15,6 +15,22 @@ function renderPage(url = '/invite?token=inv-tok') {
   );
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+test('scrubs the token from the URL on mount', () => {
+  const spy = vi.spyOn(window.history, 'replaceState');
+  renderPage();
+  expect(spy).toHaveBeenCalledWith({}, '', '/invite');
+});
+
+test('does not scrub when there is no token to begin with', () => {
+  const spy = vi.spyOn(window.history, 'replaceState');
+  renderPage('/invite');
+  expect(spy).not.toHaveBeenCalled();
+});
+
 test('rejects passwords under 12 characters client-side', async () => {
   const user = userEvent.setup();
   renderPage();
