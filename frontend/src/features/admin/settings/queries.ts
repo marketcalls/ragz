@@ -20,6 +20,7 @@ export interface ProviderSettings {
   web_search_provider: WebSearchProvider;
   default_chunk_method: ChunkMethod;
   generative_ui_images: GenerativeUiImages;
+  generative_ui_enabled: boolean;
   llamaparse_key_set: boolean;
   cohere_key_set: boolean;
   tavily_key_set: boolean;
@@ -32,6 +33,7 @@ export interface ProviderSettingsUpdate {
   web_search_provider?: WebSearchProvider;
   default_chunk_method?: ChunkMethod;
   generative_ui_images?: GenerativeUiImages;
+  generative_ui_enabled?: boolean;
   llamaparse_api_key?: string;
   cohere_api_key?: string;
   tavily_api_key?: string;

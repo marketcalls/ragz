@@ -1919,53 +1919,52 @@ async def stream_reply(
                 completion_tokens=usage.completion_tokens,
             )
         yield citations_event(citation_refs)
-        # In-chat generative UI (design 2026-08-15, §2): opt-in per-workspace,
+        # In-chat generative UI (design 2026-08-15, §2): a GLOBAL superadmin
+        # setting (default ON -- see settings_service._GENERATIVE_UI_KEY),
         # AFTER the answer text + citations are already streamed/emitted, so
         # a slow/failed visualize call can never delay or break the answer
         # itself. generate_blocks is best-effort (never raises); only a
-        # completer AND the workspace flag together run it at all -- the
-        # default (flag off) is a no-op, byte-identical to pre-Task-2.
-        if workspace.generative_ui_enabled and completer is not None:
-            _src_by_marker = {s.marker: s for s in kept_sources}
-            # openui-parity Task 8: superadmin-gated (default "off" -- see
-            # settings_service._GENERATIVE_UI_IMAGES_KEY). Only touched inside
-            # this already-opt-in block, so the off path (the common case)
-            # never fetches the setting or looks at web_hits' images at all --
-            # byte-identical to pre-Task-8 behavior.
+        # completer AND the global flag together run it at all.
+        if completer is not None:
+            # openui-parity Task 8: generative_ui_images is superadmin-gated
+            # (default "off") and lives on the same provider settings we fetch
+            # here to read the global generative_ui_enabled gate.
             provider_settings = await settings_service.get_provider_settings(session)
-            image_by_url: dict[str, str] = {}
-            if provider_settings.generative_ui_images == "web_results":
-                image_by_url = {w.url: w.image_url for w in web_hits if w.image_url}
-            source_inputs = []
-            for c in citation_refs:
-                image_ref = None
-                if c.url and c.url in image_by_url:
-                    image_ref = media.mint_image_ref(
-                        image_by_url[c.url], org_id=ctx.org_id, chat_id=chat.id,
-                        message_id=msg.id, settings=settings, now=media._now(),
+            if provider_settings.generative_ui_enabled:
+                _src_by_marker = {s.marker: s for s in kept_sources}
+                image_by_url: dict[str, str] = {}
+                if provider_settings.generative_ui_images == "web_results":
+                    image_by_url = {w.url: w.image_url for w in web_hits if w.image_url}
+                source_inputs = []
+                for c in citation_refs:
+                    image_ref = None
+                    if c.url and c.url in image_by_url:
+                        image_ref = media.mint_image_ref(
+                            image_by_url[c.url], org_id=ctx.org_id, chat_id=chat.id,
+                            message_id=msg.id, settings=settings, now=media._now(),
+                        )
+                    source_inputs.append(
+                        SourceInput(
+                            title=(
+                                _src_by_marker[c.marker].filename
+                                if c.marker in _src_by_marker
+                                else c.chunk_ref
+                            ),
+                            url=c.url,
+                            document_id=None if c.url else (c.document_id or None),
+                            page=None if c.url else c.page,
+                            image_ref=image_ref,
+                        )
                     )
-                source_inputs.append(
-                    SourceInput(
-                        title=(
-                            _src_by_marker[c.marker].filename
-                            if c.marker in _src_by_marker
-                            else c.chunk_ref
-                        ),
-                        url=c.url,
-                        document_id=None if c.url else (c.document_id or None),
-                        page=None if c.url else c.page,
-                        image_ref=image_ref,
-                    )
+                blocks = await generate_blocks(
+                    completer, question=user_message.content, answer=answer,
+                    context=render_data_blocks(kept_sources), model=model,
+                    sources=source_inputs,
                 )
-            blocks = await generate_blocks(
-                completer, question=user_message.content, answer=answer,
-                context=render_data_blocks(kept_sources), model=model,
-                sources=source_inputs,
-            )
-            if blocks:
-                msg.blocks_json = [b.model_dump(mode="json") for b in blocks]
-                await session.commit()
-                yield blocks_event(blocks)
+                if blocks:
+                    msg.blocks_json = [b.model_dump(mode="json") for b in blocks]
+                    await session.commit()
+                    yield blocks_event(blocks)
         yield done_event(
             message_id=str(msg.id),
             prompt_tokens=usage.prompt_tokens if usage else 0,

@@ -19,6 +19,7 @@ const settings: ProviderSettings = {
   web_search_provider: 'duckduckgo',
   default_chunk_method: 'heading',
   generative_ui_images: 'off',
+  generative_ui_enabled: true,
   llamaparse_key_set: false,
   cohere_key_set: false,
   tavily_key_set: false,
@@ -197,6 +198,33 @@ test('changing generative UI images to web results and saving sends it in the PU
 
   expect(putSpy).toHaveBeenCalledWith(
     expect.objectContaining({ generative_ui_images: 'web_results' }),
+  );
+});
+
+test('renders the rich generative UI checkbox from the mocked value (on)', async () => {
+  render(<SettingsPage />);
+
+  expect(await screen.findByLabelText(/rich generative ui/i)).toBeChecked();
+});
+
+test('unchecking rich generative UI and saving sends generative_ui_enabled false', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.click(await screen.findByLabelText(/rich generative ui/i));
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ generative_ui_enabled: false }),
+  );
+});
+
+test('saving unchanged includes generative_ui_enabled true in the PUT body', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ generative_ui_enabled: true }),
   );
 });
 

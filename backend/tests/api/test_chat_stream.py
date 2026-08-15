@@ -91,6 +91,16 @@ async def make_model_and_chat(
     return str(r.json()["id"])
 
 
+async def _disable_generative_ui(client: httpx.AsyncClient, h_super: dict[str, str]) -> None:
+    """Turn OFF the global generative-UI setting (default ON). Used by tests
+    that inject a completer for a NON-generative-UI purpose and must not have
+    the visualize step run (extra completer call / blocks frame / token totals)."""
+    r = await client.put(
+        "/api/v1/admin/settings", json={"generative_ui_enabled": False}, headers=h_super,
+    )
+    assert r.status_code == 200
+
+
 async def test_full_event_sequence_and_persistence(
     chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
     seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,
@@ -688,6 +698,7 @@ async def test_strict_mode_passing_answer_streams_once_unflagged(
             json={"is_utility": True}, headers=h_super,
         )
         assert r_patch.status_code == 200
+        await _disable_generative_ui(client, h_super)
         r = await client.post(f"/api/v1/chats/{chat_id}/messages",
                               json={"content": "what was revenue?"}, headers=h)
     assert r.status_code == 200
@@ -760,6 +771,7 @@ async def test_strict_mode_failing_answer_regenerates_and_flags(
             json={"is_utility": True}, headers=h_super,
         )
         assert r_patch.status_code == 200
+        await _disable_generative_ui(client, h_super)
         r = await client.post(f"/api/v1/chats/{chat_id}/messages",
                               json={"content": "what was revenue?"}, headers=h)
     assert r.status_code == 200
@@ -809,6 +821,8 @@ async def test_strict_mode_without_utility_model_streams_normally(
             json={"strict_mode": True}, headers=h,
         )
         assert r_ws.status_code == 200
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(f"/api/v1/chats/{chat_id}/messages",
                               json={"content": "what was revenue?"}, headers=h)
     assert r.status_code == 200
@@ -923,6 +937,8 @@ async def test_stream_reply_skips_summary_below_threshold(
         chat = await session.get(Chat, UUID(chat_id))
         assert chat is not None
         await _seed_linear_history(session, chat, _SHORT_HISTORY_TURNS)
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(f"/api/v1/chats/{chat_id}/messages",
                               json={"content": "what was revenue?"}, headers=h)
     assert r.status_code == 200
@@ -959,6 +975,8 @@ async def test_stream_reply_falls_back_to_truncation_without_utility_model(
         chat = await session.get(Chat, UUID(chat_id))
         assert chat is not None
         await _seed_linear_history(session, chat, _LONG_HISTORY_TURNS)
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(f"/api/v1/chats/{chat_id}/messages",
                               json={"content": "what was revenue?"}, headers=h)
     assert r.status_code == 200

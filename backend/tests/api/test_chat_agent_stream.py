@@ -16,7 +16,12 @@ from ragz.modules.chat.models import Citation, Message
 from ragz.modules.chat.service import NO_ANSWER_TEXT
 from ragz.modules.chat.web import WebResult
 from ragz.modules.models.models import Model
-from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
+from tests.api.test_chat_stream import (
+    _disable_generative_ui,
+    auth,
+    make_model_and_chat,
+    parse_sse,
+)
 from tests.conftest import (
     FakeChunkReader,
     FakeCompleter,
@@ -109,6 +114,8 @@ async def test_simple_question_never_escalates(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": "What is the muster point?"},
@@ -647,14 +654,13 @@ async def test_web_search_not_offered_when_disabled_or_decline(
 # --- In-chat generative UI (design 2026-08-15): emission + persistence -----
 
 
-async def test_generative_ui_disabled_by_default_no_blocks_frame(
+async def test_generative_ui_disabled_globally_no_blocks_frame(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
 ) -> None:
-    """workspace.generative_ui_enabled defaults False: even with a completer
-    present, the visualize step never runs -- no `blocks` SSE frame, no
-    completer calls, message.blocks_json stays null. Same non-regression
-    shape as test_simple_question_never_escalates above."""
+    """When the GLOBAL generative_ui_enabled setting is turned OFF (it defaults
+    ON), even with a completer present the visualize step never runs -- no
+    `blocks` SSE frame, no completer calls, message.blocks_json stays null."""
     completer = FakeCompleter()
     app = create_app(
         session_factory=build_session_factory(engine), redis_client=redis_client,
@@ -669,6 +675,8 @@ async def test_generative_ui_disabled_by_default_no_blocks_frame(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": "What is the muster point?"},
@@ -689,10 +697,10 @@ async def test_generative_ui_enabled_emits_and_persists_blocks(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
 ) -> None:
-    """workspace.generative_ui_enabled=True + a completer scripted with a
-    valid blocks JSON array: the `blocks` SSE frame is emitted AFTER
-    citations (and before done), message.blocks_json is persisted, and
-    history GET returns the same validated blocks."""
+    """A completer scripted with a valid blocks JSON array (global generative
+    UI is ON by default): the `blocks` SSE frame is emitted AFTER citations
+    (and before done), message.blocks_json is persisted, and history GET
+    returns the same validated blocks."""
     completer = FakeCompleter([
         LLMCompletion(
             text='[{"type": "text", "markdown": "**Revenue grew 20%**"}]',
@@ -712,11 +720,6 @@ async def test_generative_ui_enabled_emits_and_persists_blocks(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
-        r_ws = await client.patch(
-            f"/api/v1/workspaces/{chat_env['workspace'].id}",
-            json={"generative_ui_enabled": True}, headers=h_admin,
-        )
-        assert r_ws.status_code == 200 and r_ws.json()["generative_ui_enabled"] is True
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": "What is the muster point?"},
@@ -771,11 +774,6 @@ async def test_generative_ui_emits_source_refs_block_from_real_citations(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
-        r_ws = await client.patch(
-            f"/api/v1/workspaces/{chat_env['workspace'].id}",
-            json={"generative_ui_enabled": True}, headers=h_admin,
-        )
-        assert r_ws.status_code == 200 and r_ws.json()["generative_ui_enabled"] is True
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": "What is the muster point?"},
@@ -837,7 +835,7 @@ async def test_generative_ui_images_setting_mints_image_ref_for_web_source(
         await _flag_tools_unreliable(client, h_super)
         r_ws = await client.patch(
             f"/api/v1/workspaces/{chat_env['workspace'].id}",
-            json={"web_search_enabled": True, "generative_ui_enabled": True}, headers=h_admin,
+            json={"web_search_enabled": True}, headers=h_admin,
         )
         assert r_ws.status_code == 200
         r_secret = await client.put(
@@ -873,7 +871,7 @@ async def test_generative_ui_hostile_completer_output_never_breaks_answer(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
 ) -> None:
-    """generative_ui_enabled=True but the completer returns non-JSON,
+    """Global generative UI is ON (default) but the completer returns non-JSON,
     hostile-looking garbage: no crash, no `blocks` frame, and the answer/
     citations/done frames stream exactly as they would with the flag off --
     proving the visualize step is truly best-effort (Iron Rule 5)."""
@@ -896,11 +894,6 @@ async def test_generative_ui_hostile_completer_output_never_breaks_answer(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
-        r_ws = await client.patch(
-            f"/api/v1/workspaces/{chat_env['workspace'].id}",
-            json={"generative_ui_enabled": True}, headers=h_admin,
-        )
-        assert r_ws.status_code == 200
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": "What is the muster point?"},
@@ -1004,6 +997,8 @@ async def test_ambiguous_question_without_utility_model_never_escalates(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": _AMBIGUOUS_QUESTION},
@@ -1044,6 +1039,8 @@ async def test_tiebreak_false_verdict_still_meters_usage_without_escalating(
     ) as client:
         h_admin = await auth(client, seeded_user.email)
         chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _disable_generative_ui(client, h_super)
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
             json={"content": _AMBIGUOUS_QUESTION},

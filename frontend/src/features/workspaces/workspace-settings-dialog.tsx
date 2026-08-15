@@ -32,7 +32,6 @@ export function WorkspaceSettingsDialog({
   const [webSearch, setWebSearch] = useState(workspace.web_search_enabled);
   const [strictMode, setStrictMode] = useState(workspace.strict_mode);
   const [enrichment, setEnrichment] = useState(workspace.enrichment_enabled);
-  const [generativeUi, setGenerativeUi] = useState(workspace.generative_ui_enabled);
   const [chunkMethod, setChunkMethod] = useState<'heading' | 'fixed' | 'page' | 'table_qa'>(
     workspace.chunk_method as 'heading' | 'fixed' | 'page' | 'table_qa',
   );
@@ -56,7 +55,6 @@ export function WorkspaceSettingsDialog({
       web_search_enabled?: boolean;
       strict_mode?: boolean;
       enrichment_enabled?: boolean;
-      generative_ui_enabled?: boolean;
       chunk_method?: 'heading' | 'fixed' | 'page' | 'table_qa';
     } = {};
     const nextTopK = Number(topK);
@@ -72,9 +70,6 @@ export function WorkspaceSettingsDialog({
     if (webSearch !== workspace.web_search_enabled) changes.web_search_enabled = webSearch;
     if (strictMode !== workspace.strict_mode) changes.strict_mode = strictMode;
     if (enrichment !== workspace.enrichment_enabled) changes.enrichment_enabled = enrichment;
-    if (generativeUi !== workspace.generative_ui_enabled) {
-      changes.generative_ui_enabled = generativeUi;
-    }
     if (chunkMethod !== workspace.chunk_method) changes.chunk_method = chunkMethod;
 
     if (Object.keys(changes).length === 0) {
@@ -228,16 +223,6 @@ export function WorkspaceSettingsDialog({
                 Enrich chunks for better search recall (uses the utility model) — turning this
                 off stops new enrichment but does not remove enrichment already applied to
                 existing documents
-              </label>
-              <label className="flex items-center gap-2 text-[13px] text-secondary">
-                <input
-                  type="checkbox"
-                  checked={generativeUi}
-                  onChange={(e) => setGenerativeUi(e.target.checked)}
-                  aria-label="Rich generative UI"
-                />
-                Rich generative UI — render answers as visual cards, tables, charts, source
-                cards &amp; follow-ups (openui-style) instead of plain text
               </label>
               <div className="space-y-1">
                 <Label htmlFor="ws-prompt-override">System prompt additions</Label>

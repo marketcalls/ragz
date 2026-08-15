@@ -28,6 +28,8 @@ async def test_defaults_when_nothing_set(session, settings) -> None:
     assert out.cohere_key_set is False
     assert out.tavily_key_set is False
     assert out.generative_ui_images == "off"
+    # Global generative-UI gate defaults ON when unset.
+    assert out.generative_ui_enabled is True
 
 
 async def test_web_search_provider_and_tavily_key_roundtrip(
@@ -107,6 +109,22 @@ async def test_generative_ui_images_roundtrip(session, settings, seeded_user: Us
         patch=ProviderSettingsUpdate(generative_ui_images="web_results"),
     )
     assert out.generative_ui_images == "web_results"
+
+
+async def test_generative_ui_enabled_roundtrip(session, settings, seeded_user: User) -> None:
+    # Default ON; turning it OFF round-trips, and turning it back ON restores.
+    out = await settings_service.update_provider_settings(
+        session, settings, actor_id=seeded_user.id,
+        patch=ProviderSettingsUpdate(generative_ui_enabled=False),
+    )
+    assert out.generative_ui_enabled is False
+    out = await settings_service.get_provider_settings(session)
+    assert out.generative_ui_enabled is False
+    out = await settings_service.update_provider_settings(
+        session, settings, actor_id=seeded_user.id,
+        patch=ProviderSettingsUpdate(generative_ui_enabled=True),
+    )
+    assert out.generative_ui_enabled is True
 
 
 async def test_empty_key_string_rejected(session, settings, seeded_user: User) -> None:

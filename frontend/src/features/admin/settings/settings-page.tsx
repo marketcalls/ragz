@@ -28,6 +28,7 @@ export function SettingsPage() {
   const [cohereModel, setCohereModel] = useState<CohereRerankModel>('rerank-v4.0-fast');
   const [webSearch, setWebSearch] = useState<WebSearchProvider>('duckduckgo');
   const [generativeUiImages, setGenerativeUiImages] = useState<GenerativeUiImages>('off');
+  const [generativeUiEnabled, setGenerativeUiEnabled] = useState(true);
   const [defaultChunk, setDefaultChunk] = useState<ChunkMethod>('heading');
   // API keys are write-only: never populated from the query response, always
   // start blank, and are cleared again after every save attempt.
@@ -42,6 +43,7 @@ export function SettingsPage() {
       setCohereModel(settings.data.cohere_rerank_model);
       setWebSearch(settings.data.web_search_provider);
       setGenerativeUiImages(settings.data.generative_ui_images);
+      setGenerativeUiEnabled(settings.data.generative_ui_enabled);
       setDefaultChunk(settings.data.default_chunk_method);
     }
   }, [settings.data]);
@@ -63,6 +65,7 @@ export function SettingsPage() {
       rerank_provider: rerank,
       web_search_provider: webSearch,
       generative_ui_images: generativeUiImages,
+      generative_ui_enabled: generativeUiEnabled,
       default_chunk_method: defaultChunk,
       // Only sent when Cohere is the selected reranker — matches the spec
       // intent (cohere_rerank_model is a Cohere-only knob) and avoids
@@ -194,6 +197,21 @@ export function SettingsPage() {
                   />
                 </div>
               ) : null}
+              <div>
+                <label className="flex items-center gap-2 text-sm text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={generativeUiEnabled}
+                    onChange={(e) => setGenerativeUiEnabled(e.target.checked)}
+                    aria-label="Rich generative UI"
+                  />
+                  Rich generative UI
+                </label>
+                <p className="mt-1 text-xs text-muted">
+                  Render answers as visual cards, tables, charts, source cards &amp; follow-ups
+                  (openui-style) instead of plain text. Global; applies to every workspace.
+                </p>
+              </div>
               <div>
                 <Label htmlFor="generativeuiimages">Generative UI images</Label>
                 <NativeSelect

@@ -31,6 +31,9 @@ _WEB_SEARCH_PROVIDER_KEY = "web_search_provider"
 _DEFAULT_CHUNK_METHOD_KEY = "default_chunk_method"
 # openui-parity Task 8: gates the generative-UI image pipeline, default "off".
 _GENERATIVE_UI_IMAGES_KEY = "generative_ui_images"
+# Global superadmin gate for in-chat generative UI (the visualize step),
+# default ON. Stored as a string; "false"/"0"/"off" -> False, unset/other -> True.
+_GENERATIVE_UI_KEY = "generative_ui_enabled"
 _LLAMA_SECRET = "llamaparse_api_key"  # noqa: S105 - a secret NAME, not a secret
 _COHERE_SECRET = "cohere_api_key"  # noqa: S105 - a secret NAME, not a secret
 _TAVILY_SECRET = "tavily"  # noqa: S105 - a secret NAME (matches web.TAVILY_SECRET_NAME)
@@ -60,6 +63,12 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
     generative_ui_images: GenerativeUiImages = (
         "web_results" if _raw_generative_ui_images == "web_results" else "off"
     )
+    _raw_generative_ui = await get_app_setting(session, _GENERATIVE_UI_KEY)
+    generative_ui_enabled = (
+        _raw_generative_ui.strip().lower() not in ("false", "0", "off")
+        if _raw_generative_ui is not None
+        else True
+    )
     present = await secrets_service.existing_secret_names(
         session, [_LLAMA_SECRET, _COHERE_SECRET, _TAVILY_SECRET]
     )
@@ -73,6 +82,7 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
         cohere_key_set=_COHERE_SECRET in present,
         tavily_key_set=_TAVILY_SECRET in present,
         generative_ui_images=generative_ui_images,
+        generative_ui_enabled=generative_ui_enabled,
     )
 
 
@@ -100,6 +110,13 @@ async def update_provider_settings(
     if patch.generative_ui_images is not None:
         await set_app_setting(
             session, _GENERATIVE_UI_IMAGES_KEY, patch.generative_ui_images, commit=False
+        )
+    if patch.generative_ui_enabled is not None:
+        await set_app_setting(
+            session,
+            _GENERATIVE_UI_KEY,
+            "true" if patch.generative_ui_enabled else "false",
+            commit=False,
         )
     for value, name in (
         (patch.llamaparse_api_key, _LLAMA_SECRET),

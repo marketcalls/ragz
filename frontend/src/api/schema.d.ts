@@ -3625,6 +3625,8 @@ export interface components {
              * @enum {string}
              */
             generative_ui_images: "off" | "web_results";
+            /** Generative Ui Enabled */
+            generative_ui_enabled: boolean;
         };
         /** ProviderSettingsUpdate */
         ProviderSettingsUpdate: {
@@ -3640,6 +3642,8 @@ export interface components {
             default_chunk_method?: ("heading" | "fixed" | "page" | "table_qa") | null;
             /** Generative Ui Images */
             generative_ui_images?: ("off" | "web_results") | null;
+            /** Generative Ui Enabled */
+            generative_ui_enabled?: boolean | null;
             /** Llamaparse Api Key */
             llamaparse_api_key?: string | null;
             /** Cohere Api Key */

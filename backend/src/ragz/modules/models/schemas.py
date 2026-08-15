@@ -136,6 +136,9 @@ class ProviderSettingsOut(BaseModel):
     llamaparse_key_set: bool
     cohere_key_set: bool
     generative_ui_images: GenerativeUiImages
+    # Global superadmin gate for in-chat generative UI (the visualize step).
+    # Default ON -- answers render as visual cards/tables/charts by default.
+    generative_ui_enabled: bool
 
 
 class ProviderSettingsUpdate(BaseModel):
@@ -145,6 +148,7 @@ class ProviderSettingsUpdate(BaseModel):
     web_search_provider: Literal["duckduckgo", "tavily"] | None = None
     default_chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
     generative_ui_images: GenerativeUiImages | None = None
+    generative_ui_enabled: bool | None = None
     # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has
     # no key fields, only *_key_set booleans).
     llamaparse_api_key: str | None = Field(default=None, max_length=8192)
