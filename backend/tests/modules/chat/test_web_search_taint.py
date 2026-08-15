@@ -290,3 +290,35 @@ async def test_adversarial_injected_document_secret_never_reaches_searcher(
     # What DID go out is user-question-derived (per build_web_search_query's
     # fallback, since none of the injected text overlaps the user's words).
     assert sent_query == user_question
+
+
+async def test_secret_in_user_question_is_redacted_on_the_composed_path(
+    session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext
+) -> None:
+    """RAGZ-PUB-08 review (Imp): when a secret/PII token appears in the user's
+    OWN question and the model echoes it into `action.query`, it survives
+    build_web_search_query's intersection -- so redaction MUST run BEFORE
+    tokenization or the punctuation-bearing patterns (email, sk- key) never
+    fire. Assert the string reaching the searcher has the secrets redacted,
+    not fragmented-but-present."""
+    secret_key = "sk-live-abcdefghij1234567890"  # noqa: S105 - fake shape for the test
+    secret_email = "bob.smith@corp.example.com"  # noqa: S105 - fake PII shape for the test
+    question = f"Is my key {secret_key} or email {secret_email} leaked in a breach?"
+    searcher = FakeWebSearcher()
+    out = await execute_tool(
+        session, ctx,
+        # the model echoes the user's own secret-bearing words back
+        PlannerAction(action="web_search", query=f"{secret_key} {secret_email} breach leaked"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=searcher, collection_name=COLLECTION,
+        question=question, web_search_consented=True, web_search_budget_remaining=5,
+    )
+    assert out.error is None
+    assert len(searcher.queries) == 1
+    sent_query = searcher.queries[0]
+    # Redaction fired on the composed path: raw secrets absent, placeholders present.
+    assert secret_key not in sent_query
+    assert secret_email not in sent_query
+    assert "sk-live" not in sent_query
+    assert "corp.example.com" not in sent_query
+    assert "REDACTED" in sent_query

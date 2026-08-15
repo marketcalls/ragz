@@ -294,8 +294,18 @@ async def execute_tool(
                     error="web search budget exhausted for this conversation"
                 )
             # Taint boundary (items 1 & 3): action.query is model output and
-            # NEVER reaches web_searcher directly.
-            outgoing_query = redact_query(build_web_search_query(question, action.query))
+            # NEVER reaches web_searcher directly. Redact BOTH inputs FIRST so
+            # the punctuation-dependent secret/PII patterns (emails, bearer/
+            # provider keys, key=value) actually fire -- build_web_search_query
+            # tokenizes on [A-Za-z0-9]+ and re-joins with spaces, which would
+            # otherwise strip the very delimiters redact_query relies on
+            # (RAGZ-PUB-08 review). A final redact_query catches any long
+            # unbroken high-entropy token that survives the intersection.
+            outgoing_query = redact_query(
+                build_web_search_query(
+                    redact_query(question), redact_query(action.query)
+                )
+            )
             if not has_searchable_content(outgoing_query):
                 _log_web_search_decision(
                     allowed=False, reason="redacted_empty", redacted_query=outgoing_query,
