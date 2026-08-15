@@ -66,3 +66,12 @@ wins, superseded ignored); citations carry document name, version, section, page
 never answer without sufficient indexed grounding (no-answer mode stays on);
 superadmin-composable custom roles; per-workspace metadata schema (name, version,
 revision date, department, doc type). Implementation home: Plan H (after Plan G).
+
+**Parser ↔ page citations (2026-08-15):** the `page` in a citation is only as good
+as the parser. The default `anydoc` (fast, pure-Rust → flat Markdown) has **no page
+boundaries**, so it stamps `page=1` on every chunk — citations then always say page 1.
+For page-accurate citations set the `document_parser` app-setting to `docling`
+(self-hosted, reads real `page_no`; heavier/slower) or `llamaparse` (cloud, needs a
+key). Page is baked into chunks at PARSE time, so changing the parser requires a
+**re-parse** of existing docs (`delete_document_points` → `build_ingest_chain`), not
+just a reembed. Current default: `docling`.
