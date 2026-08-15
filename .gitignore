@@ -26,4 +26,6 @@ backend/celerybeat-schedule*
 anything-llm/
 openui/
 .claude/
-backend/*.dev.log
+
+# Log files (runtime: uvicorn/celery worker+beat+reindex, *.dev.log, *.run.log) — never commit
+*.log
