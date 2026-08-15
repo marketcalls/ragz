@@ -54,7 +54,7 @@ _EMAIL_SES_ACCESS_KEY_ID_KEY = "email_ses_access_key_id"
 
 
 async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
-    parser = await get_app_setting(session, _PARSER_KEY) or "anydoc"
+    parser = await get_app_setting(session, _PARSER_KEY) or "liteparse"
     rerank = await get_app_setting(session, _RERANK_KEY) or "local"
     cohere_model = await get_app_setting(session, _COHERE_MODEL_KEY) or _COHERE_MODEL_DEFAULT
     web_search = await get_app_setting(session, _WEB_SEARCH_PROVIDER_KEY) or "duckduckgo"

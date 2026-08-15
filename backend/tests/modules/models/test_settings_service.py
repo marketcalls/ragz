@@ -19,7 +19,7 @@ def settings(tmp_path: Path) -> Settings:
 
 async def test_defaults_when_nothing_set(session, settings) -> None:
     out = await settings_service.get_provider_settings(session)
-    assert out.document_parser == "anydoc"
+    assert out.document_parser == "liteparse"
     assert out.rerank_provider == "local"
     assert out.cohere_rerank_model == "rerank-v4.0-fast"
     assert out.web_search_provider == "duckduckgo"
@@ -63,9 +63,9 @@ async def test_empty_tavily_key_rejected(session, settings, seeded_user: User) -
         )
 
 
-async def test_document_parser_defaults_to_anydoc(session, settings) -> None:
+async def test_document_parser_defaults_to_liteparse(session, settings) -> None:
     out = await settings_service.get_provider_settings(session)
-    assert out.document_parser == "anydoc"
+    assert out.document_parser == "liteparse"
 
 
 async def test_update_accepts_anydoc(session, settings, seeded_user: User) -> None:
