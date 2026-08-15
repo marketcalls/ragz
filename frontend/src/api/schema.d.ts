@@ -438,6 +438,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Document File
+         * @description Streams the original uploaded file bytes for the citation viewer.
+         *     ACL-CRITICAL: get_document_checked only gates existence/workspace/org
+         *     membership (Drive-style -- a restricted document still appears in
+         *     listings). It is NOT sufficient on its own to authorize the file's
+         *     CONTENT, so user_can_access_document is re-checked explicitly here, same
+         *     as it is inside get_document_checked -- a plain member who can SEE a
+         *     restricted document in a listing but isn't in its ACL group must get the
+         *     same non-leaking denial as an unknown document, not the bytes.
+         */
+        get: operations["get_document_file_api_v1_documents__document_id__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{document_id}": {
         parameters: {
             query?: never;
@@ -4352,6 +4379,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_file_api_v1_documents__document_id__file_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
