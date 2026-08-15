@@ -24,7 +24,7 @@ dependencies = [
     "aioboto3>=13.0",
     "aiosmtplib>=3.0",
     "python-multipart>=0.0.9",
-    "cryptography>=42.0",
+    "cryptography>=50.0",  # sec RAGZ-PUB-12: >=50.0.0 clears PYSEC-2026-3552
     "tiktoken>=0.9",
     "authlib>=1.3",
     "firecrawl-anydoc>=0.1",
@@ -45,6 +45,15 @@ dev = [
 ]
 loadtest = ["locust>=2.29"]
 observability = ["sentry-sdk>=2.8"]
+
+# sec RAGZ-PUB-12: force fixed versions of transitively-pulled packages that
+# carry known advisories at the versions the resolver would otherwise pick.
+# aiohttp>=3.14.3 clears PYSEC-2026-3545/3546/3547; h2>=4.4.1 clears PYSEC-2026-3628.
+[tool.uv]
+constraint-dependencies = [
+    "aiohttp>=3.14.3",
+    "h2>=4.4.1",
+]
 
 [build-system]
 requires = ["hatchling"]
