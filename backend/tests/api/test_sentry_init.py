@@ -30,7 +30,10 @@ def test_sentry_init_called_with_dsn_and_environment(
     # RAGZ-PUB-05: staging now runs the fail-closed validator, so a "staging"
     # app must be given a fully valid config (non-default DB creds, https
     # origins, >=16-char secrets, a real KEK) or create_app() would raise.
-    monkeypatch.setenv("RAGZ_DATABASE_URL", "postgresql+asyncpg://ragz_stg:s3cret-pw@db:5432/ragz")
+    monkeypatch.setenv(
+        "RAGZ_DATABASE_URL",
+        "postgresql+asyncpg://ragz_stg:s3cret-prod-pw-2026@db:5432/ragz",
+    )
     monkeypatch.setenv("RAGZ_API_KEY_PEPPER", "a-real-random-pepper-value")
     monkeypatch.setenv("RAGZ_MINIO_SECRET_KEY", "a-real-minio-secret-16plus")
     monkeypatch.setenv("RAGZ_LITELLM_MASTER_KEY", "sk-a-real-litellm-master-key")
