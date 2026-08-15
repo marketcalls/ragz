@@ -19,6 +19,7 @@ The allowlist test in tests/modules/models/test_sync.py names this file.
 
 import base64
 import hashlib
+import hmac
 import json
 import secrets as pysecrets
 from dataclasses import dataclass
@@ -42,6 +43,18 @@ OIDC_SECRET_NAME = "oidc:client_secret"  # noqa: S105 - a secret NAME, not a sec
 
 _STATE_TTL_SECONDS = 600
 _jwt = JsonWebToken(["RS256"])
+
+# sec RAGZ-PUB-02: name of the HttpOnly pre-auth cookie the login route sets
+# to bind the OAuth transaction to the browser that started it. Shared with
+# api/routes/oidc.py, which owns setting/clearing the cookie itself; this
+# module only ever sees the raw token value (to hash it) or the stored hash
+# (to compare), never sets/clears cookies directly.
+PREAUTH_COOKIE_NAME = "oidc_preauth"  # noqa: S105 - a cookie NAME, not a secret
+PREAUTH_COOKIE_TTL_SECONDS = _STATE_TTL_SECONDS
+
+
+def _hash_preauth_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -132,13 +145,33 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-async def begin_login(provider: OidcProvider, redis: Redis, *, redirect_uri: str) -> str:
+@dataclass(frozen=True)
+class LoginTransaction:
+    authorize_url: str
+    # Raw pre-auth token for the route to set as an HttpOnly cookie. Only its
+    # SHA-256 hash is persisted (below) -- this value never touches Redis,
+    # logs, or storage; it lives only in the redirect response's Set-Cookie.
+    preauth_token: str
+
+
+async def begin_login(
+    provider: OidcProvider, redis: Redis, *, redirect_uri: str
+) -> LoginTransaction:
     state = pysecrets.token_urlsafe(24)
     nonce = pysecrets.token_urlsafe(24)
     verifier, challenge = _pkce_pair()
+    # sec RAGZ-PUB-02: bind this transaction to the browser that started it.
+    # The token itself is handed back to the route (to set as a cookie); only
+    # its hash is stored server-side, so a leaked/observed Redis record alone
+    # can never satisfy the callback's cookie check.
+    preauth_token = pysecrets.token_urlsafe(32)
     await redis.set(
         f"oidc:state:{state}",
-        json.dumps({"verifier": verifier, "nonce": nonce}),
+        json.dumps({
+            "verifier": verifier,
+            "nonce": nonce,
+            "preauth_hash": _hash_preauth_token(preauth_token),
+        }),
         ex=_STATE_TTL_SECONDS,
     )
     params = httpx.QueryParams({
@@ -151,7 +184,17 @@ async def begin_login(provider: OidcProvider, redis: Redis, *, redirect_uri: str
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     })
-    return f"{provider.authorization_endpoint}?{params}"
+    return LoginTransaction(
+        authorize_url=f"{provider.authorization_endpoint}?{params}",
+        preauth_token=preauth_token,
+    )
+
+
+@dataclass(frozen=True)
+class OidcIdentity:
+    email: str
+    issuer: str
+    subject: str
 
 
 async def complete_login(
@@ -163,13 +206,25 @@ async def complete_login(
     state: str,
     redirect_uri: str,
     settings: Settings,
+    preauth_cookie: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-) -> str:
-    """Exchange the code, verify the ID token, return the verified email."""
+) -> OidcIdentity:
+    """Exchange the code, verify the ID token, return the verified identity."""
     raw = await redis.getdel(f"oidc:state:{state}")  # single use, atomically
     if raw is None:
         raise AuthenticationError("unknown or expired SSO state")
     stashed = json.loads(raw)
+    # sec RAGZ-PUB-02: the transaction must be bound to the SAME browser that
+    # started it. Without this, an attacker can begin their own login, hand
+    # the still-unconsumed callback URL to a victim, and have the victim's
+    # browser walk into the attacker's session (login CSRF / session swap).
+    # Checked BEFORE the code is exchanged with the IdP -- a mismatch or
+    # missing cookie must never reach the token endpoint. Constant-time
+    # compare since both sides are attacker-observable-length hex digests.
+    if preauth_cookie is None or not hmac.compare_digest(
+        _hash_preauth_token(preauth_cookie), stashed.get("preauth_hash", "")
+    ):
+        raise AuthenticationError("SSO transaction not bound to this browser")
     client_secret = await secrets_service._get_secret_decrypted(  # noqa: SLF001
         session, name=OIDC_SECRET_NAME, settings=settings
     )
@@ -207,6 +262,13 @@ async def complete_login(
     if claims.get("nonce") != stashed["nonce"]:
         raise AuthenticationError("SSO nonce mismatch")
     email = claims.get("email")
-    if not email or claims.get("email_verified") is False:
+    # sec RAGZ-PUB-02: require email_verified is True, not merely "not False".
+    # A MISSING claim used to be silently accepted -- an IdP that omits the
+    # claim (or is coerced into omitting it) must not be trusted as if it had
+    # asserted verification.
+    if not email or claims.get("email_verified") is not True:
         raise AuthenticationError("identity provider did not supply a verified email")
-    return str(email).lower()
+    subject = claims.get("sub")
+    if not subject:
+        raise AuthenticationError("identity provider did not supply a subject")
+    return OidcIdentity(email=str(email).lower(), issuer=provider.issuer, subject=str(subject))

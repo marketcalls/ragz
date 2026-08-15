@@ -255,42 +255,94 @@ async def set_user_role(
     return user
 
 
-async def login_oidc(session: AsyncSession, *, email: str, settings: Settings) -> TokenPair:
-    """Session issuance for an OIDC-verified email: existing user logs straight
-    in; unknown emails JIT-provision as role 'user' into the unique org whose
-    sso_domains allowlist contains the email domain (AUTH-2 + AUTH-6)."""
-    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+async def login_oidc(
+    session: AsyncSession, *, email: str, issuer: str, subject: str, settings: Settings
+) -> TokenPair:
+    """Session issuance for an OIDC-verified identity (AUTH-2 + AUTH-6).
+
+    sec RAGZ-PUB-02: users are resolved by the durable (issuer, subject) pair
+    FIRST, never by email alone -- email is IdP-controlled and not guaranteed
+    exclusive, so a global email match cannot be trusted to pick the account
+    to log into.
+
+    - (issuer, subject) already bound to a user: that user logs straight in.
+    - No user bound to this identity yet, but a local user already owns this
+      email:
+        - already bound to a DIFFERENT (issuer, subject): reject. An IdP
+          asserting an email already owned by another bound identity must
+          never silently take over the account (issuer/subject mismatch).
+        - not bound to any (issuer, subject) yet (a password user, or an
+          OIDC account created before this binding existed): the binding may
+          only be established under the SAME org domain-allowlist policy
+          that gates JIT creation below, and only for the org that account
+          already belongs to -- otherwise trusting the IdP's email claim to
+          attach to an arbitrary existing account is exactly the
+          account-takeover this fix closes.
+    - No user at all: JIT-provision as before (role 'user', domain
+      allowlist), now also persisting the (issuer, subject) binding.
+    """
+    user = (
+        await session.execute(
+            select(User).where(User.oidc_issuer == issuer, User.oidc_subject == subject)
+        )
+    ).scalar_one_or_none()
+
     if user is None:
+        existing = (
+            await session.execute(select(User).where(User.email == email))
+        ).scalar_one_or_none()
+        if existing is not None and (
+            existing.oidc_issuer is not None or existing.oidc_subject is not None
+        ):
+            await record_audit(session, org_id=existing.org_id, actor_id=None,
+                               action="login.oidc_denied", target_type="user",
+                               target_id=email)
+            await session.commit()
+            raise AuthenticationError("identity provider mismatch for this account")
+
         domain = email.rsplit("@", 1)[-1]
         orgs = (
             await session.execute(
                 select(Organization).where(Organization.sso_domains.contains([domain]))
             )
         ).scalars().all()
-        if len(orgs) != 1:
-            # Zero matches: no org claims the domain. More than one: the unique-
-            # claim invariant enforced at write time (tenancy.set_org_sso_domains)
-            # was somehow violated anyway (legacy rows, direct DB edits) -- fail
-            # loudly rather than silently picking one. Same generic message and
-            # denial audit action either way: the detail must never reveal
-            # whether zero or multiple orgs matched (no org enumeration).
+        # Zero matches: no org claims the domain. More than one: the unique-
+        # claim invariant enforced at write time (tenancy.set_org_sso_domains)
+        # was somehow violated anyway (legacy rows, direct DB edits) -- fail
+        # loudly rather than silently picking one. An existing user's org must
+        # also be the ONE org claiming the domain -- otherwise the domain was
+        # reassigned since that account was created and binding it now would
+        # silently move it across tenants. Same generic message and denial
+        # audit action in every case: the detail must never reveal whether
+        # zero or multiple orgs matched (no org enumeration), nor whether an
+        # existing account was in play.
+        if len(orgs) != 1 or (existing is not None and orgs[0].id != existing.org_id):
             await record_audit(session, org_id=None, actor_id=None,
                                action="login.oidc_denied", target_type="user",
                                target_id=email)
             await session.commit()
             raise AuthenticationError("no organization accepts this email domain")
         org = orgs[0]
-        user = User(
-            org_id=org.id, email=email,
-            # unusable password: SSO users authenticate only via the IdP
-            password_hash=hash_password(secrets.token_urlsafe(32)),
-            role="user",
-        )
-        session.add(user)
-        await session.flush()
-        await record_audit(session, org_id=org.id, actor_id=user.id,
-                           action="user.oidc_provisioned", target_type="user",
-                           target_id=str(user.id))
+
+        if existing is not None:
+            # Unbound existing user whose email domain the owning org still
+            # claims: safe to establish the (issuer, subject) binding now,
+            # under the same allowlist policy JIT creation uses below.
+            existing.oidc_issuer = issuer
+            existing.oidc_subject = subject
+            user = existing
+        else:
+            user = User(
+                org_id=org.id, email=email,
+                # unusable password: SSO users authenticate only via the IdP
+                password_hash=hash_password(secrets.token_urlsafe(32)),
+                role="user", oidc_issuer=issuer, oidc_subject=subject,
+            )
+            session.add(user)
+            await session.flush()
+            await record_audit(session, org_id=org.id, actor_id=user.id,
+                               action="user.oidc_provisioned", target_type="user",
+                               target_id=str(user.id))
     if not user.active:
         raise AuthenticationError("user inactive")
     await record_audit(session, org_id=user.org_id, actor_id=user.id,

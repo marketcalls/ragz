@@ -167,7 +167,10 @@ async def test_login_oidc_denies_ambiguous_domain_claim(session: AsyncSession) -
     await session.commit()
 
     with pytest.raises(AuthenticationError):
-        await login_oidc(session, email="new.hire@acme.com", settings=SETTINGS)
+        await login_oidc(
+            session, email="new.hire@acme.com",
+            issuer="https://idp.example.com", subject="idp-sub-1", settings=SETTINGS,
+        )
 
     # no user was provisioned into either org as a side effect of the failed attempt
     rows = (

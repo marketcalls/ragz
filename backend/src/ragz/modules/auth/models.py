@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey
+from sqlalchemy import CheckConstraint, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ragz.core.db import Base, UUIDPk
@@ -16,6 +16,12 @@ class User(UUIDPk, Base):
         CheckConstraint(
             "role IN ('superadmin', 'admin', 'user')", name="ck_users_role"
         ),
+        # sec RAGZ-PUB-02: mirrors migration a7c3f9e1b2d4's
+        # uq_users_oidc_identity so create_all (test/dev schema build)
+        # enforces it too. Both columns NULL for password-only users --
+        # Postgres treats NULL as distinct under uniqueness, so any number of
+        # NULL/NULL rows coexist.
+        UniqueConstraint("oidc_issuer", "oidc_subject", name="uq_users_oidc_identity"),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"))
@@ -27,6 +33,12 @@ class User(UUIDPk, Base):
     custom_role_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("role_templates.id", ondelete="SET NULL"), default=None
     )
+    # sec RAGZ-PUB-02: durable IdP identity binding. Set together at OIDC
+    # login-time resolution/linking (modules/auth/service.login_oidc); never
+    # written from an unauthenticated email match alone. NULL/NULL for every
+    # password-only account.
+    oidc_issuer: Mapped[str | None] = mapped_column(default=None)
+    oidc_subject: Mapped[str | None] = mapped_column(default=None)
 
 
 class RefreshToken(UUIDPk, Base):

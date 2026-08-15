@@ -1,7 +1,7 @@
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Cookie, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,29 @@ def _redirect_uri(settings: Settings) -> str:
     return f"{settings.public_api_base_url}/api/v1/auth/oidc/callback"
 
 
+# sec RAGZ-PUB-02: scoped to the callback path only -- the browser has no
+# other reason to send it, and it never leaves this route pair.
+_PREAUTH_COOKIE_PATH = "/api/v1/auth/oidc/callback"
+
+
+def _set_preauth_cookie(response: RedirectResponse, token: str, settings: Settings) -> None:
+    # SameSite=Lax (not Strict): this cookie must survive the top-level
+    # navigation the IdP performs back to our callback -- Strict would drop
+    # it on that cross-site redirect and break every login. Secure follows
+    # the same environment rule as the refresh cookie (api/routes/auth.py
+    # _set_refresh): unconditional outside the "test" environment, where the
+    # ASGI test client talks plain http.
+    response.set_cookie(
+        oidc.PREAUTH_COOKIE_NAME, token, httponly=True, samesite="lax",
+        secure=settings.environment != "test",
+        max_age=oidc.PREAUTH_COOKIE_TTL_SECONDS, path=_PREAUTH_COOKIE_PATH,
+    )
+
+
+def _clear_preauth_cookie(response: RedirectResponse) -> None:
+    response.delete_cookie(oidc.PREAUTH_COOKIE_NAME, path=_PREAUTH_COOKIE_PATH)
+
+
 @router.get(
     "/status",
     dependencies=[Depends(rate_limit("oidc_status", limit=60, window_seconds=60))],
@@ -50,15 +73,18 @@ async def login(request: Request, session: SessionDep, settings: SettingsDep) ->
     provider = await oidc.load_provider(session, transport=request.app.state.oidc_transport)
     if provider is None:
         raise NotFoundError("SSO is not configured")
-    url = await oidc.begin_login(
+    txn = await oidc.begin_login(
         provider, request.app.state.redis, redirect_uri=_redirect_uri(settings)
     )
-    return RedirectResponse(url, status_code=302)
+    response = RedirectResponse(txn.authorize_url, status_code=302)
+    _set_preauth_cookie(response, txn.preauth_token, settings)
+    return response
 
 
 @router.get("/callback")
 async def callback(
-    code: str, state: str, request: Request, session: SessionDep, settings: SettingsDep
+    code: str, state: str, request: Request, session: SessionDep, settings: SettingsDep,
+    oidc_preauth: Annotated[str | None, Cookie(alias=oidc.PREAUTH_COOKIE_NAME)] = None,
 ) -> RedirectResponse:
     # This is a top-level browser navigation (redirect from the IdP), not an
     # API call -- a problem+json body would render as raw JSON to the user.
@@ -77,17 +103,24 @@ async def callback(
         provider = await oidc.load_provider(session, transport=request.app.state.oidc_transport)
         if provider is None:
             raise NotFoundError("SSO is not configured")
-        email = await oidc.complete_login(
+        identity = await oidc.complete_login(
             session, provider, request.app.state.redis,
             code=code, state=state, redirect_uri=_redirect_uri(settings),
-            settings=settings, transport=request.app.state.oidc_transport,
+            settings=settings, preauth_cookie=oidc_preauth,
+            transport=request.app.state.oidc_transport,
         )
-        pair = await auth_service.login_oidc(session, email=email, settings=settings)
+        pair = await auth_service.login_oidc(
+            session, email=identity.email, issuer=identity.issuer,
+            subject=identity.subject, settings=settings,
+        )
     except (AuthenticationError, UpstreamError, NotFoundError, SecretsError, RateLimitExceeded):
         log.warning("oidc_callback_failed", exc_info=True)
-        return RedirectResponse(
+        error_response = RedirectResponse(
             f"{settings.frontend_base_url}/login?sso_error=1", status_code=302
         )
+        _clear_preauth_cookie(error_response)
+        return error_response
     response = RedirectResponse(f"{settings.frontend_base_url}/", status_code=302)
     _set_refresh(response, pair.refresh_token, settings)
+    _clear_preauth_cookie(response)
     return response

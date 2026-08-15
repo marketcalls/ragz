@@ -25,7 +25,7 @@ KEY = JsonWebKey.generate_key("RSA", 2048, is_private=True)
 # ID token with a signature that cannot verify against the published JWKS,
 # simulating a token forged by (or replayed from) a different issuer/key.
 OTHER_KEY = JsonWebKey.generate_key("RSA", 2048, is_private=True)
-_nonce_box: dict[str, str] = {}
+_nonce_box: dict[str, object] = {}
 
 
 def _idp_handler(request: httpx.Request) -> httpx.Response:
@@ -45,15 +45,20 @@ def _idp_handler(request: httpx.Request) -> httpx.Response:
         assert "code_verifier" in form and "client_secret" in form
         now = int(time.time())
         signing_key = _nonce_box.get("key_override", KEY)
-        id_token = jwt.encode(
-            {"alg": "RS256"},
-            {"iss": _nonce_box.get("iss_override", ISSUER),
-             "aud": _nonce_box.get("aud_override", "ragz"), "sub": "idp-user-1",
-             "email": _nonce_box.get("email_override", "New.Hire@acme.com"),
-             "email_verified": True,
-             "nonce": _nonce_box["nonce"], "iat": now, "exp": now + 300},
-            signing_key,
-        ).decode()
+        claims = {
+            "iss": _nonce_box.get("iss_override", ISSUER),
+            "aud": _nonce_box.get("aud_override", "ragz"),
+            "sub": _nonce_box.get("sub_override", "idp-user-1"),
+            "email": _nonce_box.get("email_override", "New.Hire@acme.com"),
+            "nonce": _nonce_box["nonce"], "iat": now, "exp": now + 300,
+        }
+        if "email_verified_override" in _nonce_box:
+            if _nonce_box["email_verified_override"] is not None:
+                claims["email_verified"] = _nonce_box["email_verified_override"]
+            # else: omit the claim entirely
+        else:
+            claims["email_verified"] = True
+        id_token = jwt.encode({"alg": "RS256"}, claims, signing_key).decode()
         return httpx.Response(200, json={"id_token": id_token, "access_token": "at",
                                          "token_type": "Bearer"})
     return httpx.Response(404)
@@ -258,3 +263,185 @@ async def test_nonce_mismatch_rejected(
         follow_redirects=False,
     )
     _assert_sso_error_redirect(r2, test_settings)
+
+
+# --- RAGZ-PUB-02: browser-binding via the pre-auth cookie ------------------
+
+
+async def _begin(sso_client: httpx.AsyncClient) -> tuple[str, dict[str, list[str]]]:
+    r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    assert "oidc_preauth" in r.cookies
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    _nonce_box["nonce"] = q["nonce"][0]
+    return q["state"][0], q
+
+
+async def test_login_sets_httponly_preauth_cookie(sso_client: httpx.AsyncClient) -> None:
+    r = await sso_client.get("/api/v1/auth/oidc/login", follow_redirects=False)
+    raw = r.headers.get("set-cookie", "")
+    assert "oidc_preauth=" in raw
+    assert "HttpOnly" in raw
+    assert "SameSite=lax" in raw or "SameSite=Lax" in raw
+    assert "Path=/api/v1/auth/oidc/callback" in raw
+
+
+async def test_callback_missing_preauth_cookie_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
+    """The different-browser attack this fix closes: an attacker begins their
+    own login and hands the still-unconsumed callback URL to a victim. The
+    victim's browser never held the pre-auth cookie the attacker's session
+    set, so the callback must reject it outright rather than logging the
+    victim into the attacker's flow."""
+    state, _ = await _begin(sso_client)
+    sso_client.cookies.delete("oidc_preauth")
+    r2 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+    )
+    _assert_sso_error_redirect(r2, test_settings)
+
+
+async def test_callback_mismatched_preauth_cookie_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
+    state, _ = await _begin(sso_client)
+    sso_client.cookies.set("oidc_preauth", "attacker-controlled-value")
+    r2 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+    )
+    _assert_sso_error_redirect(r2, test_settings)
+
+
+async def test_preauth_cookie_cleared_on_success(sso_client: httpx.AsyncClient) -> None:
+    state, _ = await _begin(sso_client)
+    r2 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+    )
+    assert r2.status_code == 302
+    assert sso_client.cookies.get("oidc_preauth") is None
+
+
+async def test_preauth_cookie_cleared_on_failure(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
+    state, _ = await _begin(sso_client)
+    _nonce_box["email_verified_override"] = False
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+        )
+        _assert_sso_error_redirect(r2, test_settings)
+        assert sso_client.cookies.get("oidc_preauth") is None
+    finally:
+        _nonce_box.pop("email_verified_override", None)
+
+
+# --- RAGZ-PUB-02: email_verified must be exactly True -----------------------
+
+
+async def test_email_verified_missing_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
+    state, _ = await _begin(sso_client)
+    _nonce_box["email_verified_override"] = None  # sentinel: omit the claim entirely
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+        )
+        _assert_sso_error_redirect(r2, test_settings)
+    finally:
+        _nonce_box.pop("email_verified_override", None)
+
+
+async def test_email_verified_false_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings
+) -> None:
+    state, _ = await _begin(sso_client)
+    _nonce_box["email_verified_override"] = False
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+        )
+        _assert_sso_error_redirect(r2, test_settings)
+    finally:
+        _nonce_box.pop("email_verified_override", None)
+
+
+async def test_email_verified_true_accepted(
+    sso_client: httpx.AsyncClient, session: AsyncSession
+) -> None:
+    state, _ = await _begin(sso_client)
+    r2 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+    )
+    assert r2.status_code == 302
+    assert "refresh_token" in r2.cookies
+
+
+# --- RAGZ-PUB-02: durable (issuer, subject) identity binding ---------------
+
+
+async def test_issuer_subject_mismatch_for_existing_email_rejected(
+    sso_client: httpx.AsyncClient, test_settings: Settings, session: AsyncSession
+) -> None:
+    """A user already bound to (issuer, sub A) must never be silently logged
+    into by a token asserting the SAME email under a DIFFERENT subject --
+    that would let an IdP (or an attacker who can get a lookalike email
+    verified elsewhere) take over an existing account."""
+    state1, _ = await _begin(sso_client)
+    r1 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={state1}", follow_redirects=False
+    )
+    assert r1.status_code == 302
+    user = (
+        await session.execute(select(User).where(User.email == "new.hire@acme.com"))
+    ).scalar_one()
+    assert user.oidc_subject == "idp-user-1"
+
+    state2, _ = await _begin(sso_client)
+    _nonce_box["sub_override"] = "idp-user-2"  # same email, different IdP subject
+    try:
+        r2 = await sso_client.get(
+            f"/api/v1/auth/oidc/callback?code=abc&state={state2}", follow_redirects=False
+        )
+        _assert_sso_error_redirect(r2, test_settings)
+    finally:
+        _nonce_box.pop("sub_override", None)
+
+    # no rebind occurred
+    reloaded = (
+        await session.execute(select(User).where(User.email == "new.hire@acme.com"))
+    ).scalar_one()
+    assert reloaded.oidc_subject == "idp-user-1"
+
+
+async def test_fresh_identity_under_allowed_domain_links_existing_password_user(
+    sso_client: httpx.AsyncClient, session: AsyncSession, test_settings: Settings
+) -> None:
+    """An existing LOCAL (password) user with no (issuer, subject) binding yet,
+    whose email domain the org still claims via the SSO allowlist, may have
+    the binding established -- this is the safe linking path, distinct from
+    a silent rebind across a mismatch."""
+    from ragz.modules.auth.passwords import hash_password
+
+    org = (
+        await session.execute(select(Organization).where(Organization.name == "Acme"))
+    ).scalar_one()
+    local_user = User(
+        org_id=org.id, email="new.hire@acme.com",
+        password_hash=hash_password("irrelevant-pw1"), role="user",
+    )
+    session.add(local_user)
+    await session.commit()
+    assert local_user.oidc_issuer is None and local_user.oidc_subject is None
+
+    state, _ = await _begin(sso_client)
+    r2 = await sso_client.get(
+        f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
+    )
+    assert r2.status_code == 302
+    assert "refresh_token" in r2.cookies
+
+    await session.refresh(local_user)
+    assert local_user.oidc_issuer == ISSUER
+    assert local_user.oidc_subject == "idp-user-1"
