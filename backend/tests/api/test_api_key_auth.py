@@ -122,3 +122,51 @@ async def test_revoked_key_401(
         "/__test/api-key-ctx", headers={"Authorization": f"Bearer {raw}"}
     )
     assert r.status_code == 401
+
+
+async def test_expired_key_401(
+    api_key_client: httpx.AsyncClient, session, seeded_user: User, test_settings: Settings
+) -> None:
+    # sec RAGZ-PUB-13: an expired key must not authenticate, non-leaking (401
+    # -- same generic error as any other bad key, no "expired" detail).
+    from datetime import UTC, datetime, timedelta
+
+    ws = Workspace(org_id=seeded_user.org_id, name="WS3")
+    session.add(ws)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=seeded_user.id, role="contributor"))
+    await session.commit()
+    _, raw = await generate_api_key(
+        session, test_settings, actor_id=seeded_user.id, name="k3",
+        user_id=seeded_user.id, workspace_id=ws.id,
+        expires_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    r = await api_key_client.get(
+        "/__test/api-key-ctx", headers={"Authorization": f"Bearer {raw}"}
+    )
+    assert r.status_code == 401
+
+
+async def test_valid_unexpired_key_authenticates_and_passes_rbac02(
+    api_key_client: httpx.AsyncClient, session, seeded_user: User, test_settings: Settings
+) -> None:
+    # sec RAGZ-PUB-13 + RBAC-02: a key within its (now-mandatory) lifetime
+    # still authenticates and the RBAC-02 membership/chat.generate
+    # revalidation still runs (narrowed context reflects current membership).
+    from datetime import UTC, datetime, timedelta
+
+    ws = Workspace(org_id=seeded_user.org_id, name="WS4")
+    session.add(ws)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=seeded_user.id, role="contributor"))
+    await session.commit()
+    _, raw = await generate_api_key(
+        session, test_settings, actor_id=seeded_user.id, name="k4",
+        user_id=seeded_user.id, workspace_id=ws.id,
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    r = await api_key_client.get(
+        "/__test/api-key-ctx", headers={"Authorization": f"Bearer {raw}"}
+    )
+    assert r.status_code == 200
+    assert r.json()["workspace_ids"] == [str(ws.id)]

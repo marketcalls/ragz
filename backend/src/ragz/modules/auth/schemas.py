@@ -76,6 +76,9 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     user_id: UUID
     workspace_id: UUID
+    # sec RAGZ-PUB-13: no perpetual keys. Omitted -> server defaults to
+    # now + api_key_max_lifetime_days; supplied further out than that ceiling
+    # -> silently capped to it (see auth.api_keys_service._bound_expiry).
     expires_at: datetime | None = None
 
 

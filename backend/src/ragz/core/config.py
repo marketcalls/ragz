@@ -137,6 +137,15 @@ class Settings(BaseSettings):
     # ("tavily", iron rule 3) — only the endpoint URL lives in config.
     tavily_url: str = "https://api.tavily.com"
 
+    # sec RAGZ-PUB-13: external API keys must never be perpetual. Any key
+    # created with no explicit expires_at is bounded to now + this many days;
+    # any caller-supplied expires_at further out than that is capped to the
+    # same ceiling (modules/auth/api_keys_service.generate_api_key). Also used
+    # at auth time as the grace window for legacy pre-fix rows that still
+    # carry a NULL expires_at (resolve_api_key treats those as expiring at
+    # created_at + this many days, not never).
+    api_key_max_lifetime_days: int = 90
+
     @model_validator(mode="after")
     def _production_fails_closed(self) -> "Settings":
         """RAGZ-PUB-05: production/staging must not silently run with dev

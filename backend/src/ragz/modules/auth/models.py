@@ -101,6 +101,10 @@ class ApiKey(UUIDPk, Base):
     user_id: Mapped[UUID]
     workspace_id: Mapped[UUID]
     created_by: Mapped[UUID]
+    # sec RAGZ-PUB-13: nullable only for legacy pre-fix rows -- generate_api_key
+    # (auth.api_keys_service) always writes a bounded value now (no perpetual
+    # keys). resolve_api_key treats a NULL here as created_at + max lifetime,
+    # not "never expires".
     expires_at: Mapped[datetime | None] = mapped_column(default=None)
     last_used_at: Mapped[datetime | None] = mapped_column(default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(default=None)

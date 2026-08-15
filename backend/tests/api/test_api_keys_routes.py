@@ -52,6 +52,27 @@ async def test_generate_returns_raw_once_then_masked(
     assert all("api_key" not in k and "key_hash" not in k for k in lst)  # never in list
 
 
+async def test_create_with_no_expiry_returns_bounded_expires_at_and_list_surfaces_it(
+    client: httpx.AsyncClient, super_headers: dict[str, str],
+    ws_and_member: tuple[UUID, UUID],
+) -> None:
+    # sec RAGZ-PUB-13: no perpetual keys -- omitting expires_at must still
+    # produce a bounded (non-null) value, visible both on create and in the
+    # admin list (without ever exposing the raw key/hash there).
+    ws_id, user_id = ws_and_member
+    r = await client.post(
+        "/api/v1/admin/api-keys", headers=super_headers,
+        json={"name": "k-noexp", "user_id": str(user_id), "workspace_id": str(ws_id)},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["expires_at"] is not None
+
+    lst = (await client.get("/api/v1/admin/api-keys", headers=super_headers)).json()
+    created = next(k for k in lst if k["id"] == body["id"])
+    assert created["expires_at"] == body["expires_at"]
+
+
 async def test_revoke(
     client: httpx.AsyncClient, super_headers: dict[str, str],
     ws_and_member: tuple[UUID, UUID],

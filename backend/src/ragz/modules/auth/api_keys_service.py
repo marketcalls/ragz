@@ -1,11 +1,21 @@
 """Superadmin-controlled API keys for the external API (iron rule 3). The raw
 key is returned exactly once by generate_api_key; only a lookup prefix + a
 peppered SHA-256 hash are stored. resolve_api_key is the single verification
-path (prefix lookup -> constant-work hash compare -> revoked/expired gate)."""
+path (prefix lookup -> constant-work hash compare -> revoked/expired gate).
+
+sec RAGZ-PUB-13: no key may be perpetual. generate_api_key bounds every
+created key to settings.api_key_max_lifetime_days -- a caller who supplies no
+expires_at gets one defaulted to now + max lifetime; a caller who supplies
+one further out than that gets it CAPPED to the same ceiling (silently, not
+rejected -- friendlier for callers who over-ask, and still fully closes the
+"perpetual key" gap). resolve_api_key enforces expiry at auth time, and
+additionally treats a legacy NULL expires_at (rows written before this fix)
+as expiring at created_at + max lifetime rather than never -- so pre-fix keys
+age out too instead of staying perpetually valid."""
 
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -54,7 +64,8 @@ async def generate_api_key(
         prefix=raw[:KEY_PREFIX_LEN],
         key_hash=_hash(raw, settings.api_key_pepper),
         name=name, org_id=ws.org_id, user_id=user_id, workspace_id=workspace_id,
-        created_by=actor_id, expires_at=_naive(expires_at),
+        created_by=actor_id,
+        expires_at=_bound_expiry(expires_at, settings.api_key_max_lifetime_days),
     )
     session.add(row)
     await session.commit()
@@ -102,7 +113,16 @@ async def resolve_api_key(
         return None
     if row.revoked_at is not None:
         return None
-    if row.expires_at is not None and row.expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
+    now = datetime.now(UTC)
+    # sec RAGZ-PUB-13: bound rows always have an expires_at (see
+    # generate_api_key/_bound_expiry) and are rejected once it passes. Legacy
+    # rows written before this fix can still carry a NULL expires_at -- treat
+    # those as expiring at created_at + max lifetime rather than never, so
+    # pre-fix keys age out instead of staying perpetually valid.
+    effective_expiry = row.expires_at
+    if effective_expiry is None:
+        effective_expiry = row.created_at + timedelta(days=settings.api_key_max_lifetime_days)
+    if effective_expiry.replace(tzinfo=UTC) < now:
         return None
     row.last_used_at = naive_utc()
     await session.commit()
@@ -111,5 +131,16 @@ async def resolve_api_key(
     )
 
 
-def _naive(dt: datetime | None) -> datetime | None:
-    return None if dt is None else dt.astimezone(UTC).replace(tzinfo=None)
+def _bound_expiry(expires_at: datetime | None, max_lifetime_days: int) -> datetime:
+    """sec RAGZ-PUB-13: no key may be created non-expiring. No caller-supplied
+    expiry -> default to now + max lifetime. A caller-supplied expiry further
+    out than that ceiling -> capped to it (not rejected: friendlier, and
+    equally closes the perpetual-key gap). Always returns a naive-UTC
+    datetime -- never None."""
+    ceiling = datetime.now(UTC) + timedelta(days=max_lifetime_days)
+    if expires_at is None:
+        bounded = ceiling
+    else:
+        requested = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
+        bounded = min(requested, ceiling)
+    return bounded.astimezone(UTC).replace(tzinfo=None)
