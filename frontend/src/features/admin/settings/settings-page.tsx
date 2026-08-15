@@ -18,7 +18,9 @@ export function SettingsPage() {
   const settings = useProviderSettings();
   const update = useUpdateProviderSettings();
 
-  const [parser, setParser] = useState<'anydoc' | 'docling' | 'llamaparse'>('anydoc');
+  const [parser, setParser] = useState<'anydoc' | 'docling' | 'llamaparse' | 'liteparse'>(
+    'liteparse',
+  );
   const [rerank, setRerank] = useState<'local' | 'cohere'>('local');
   const [cohereModel, setCohereModel] = useState<CohereRerankModel>('rerank-v4.0-fast');
   // API keys are write-only: never populated from the query response, always
@@ -75,14 +77,18 @@ export function SettingsPage() {
                   id="parser"
                   value={parser}
                   onChange={(e) =>
-                    setParser(e.target.value as 'anydoc' | 'docling' | 'llamaparse')
+                    setParser(e.target.value as 'anydoc' | 'docling' | 'llamaparse' | 'liteparse')
                   }
                 >
+                  <option value="liteparse">
+                    liteparse (recommended — local, page-accurate citations, ~40× faster than
+                    Docling)
+                  </option>
                   <option value="anydoc">
                     anydoc (fastest — office + text PDFs; scans use Docling OCR; section-level
-                    citations)
+                    citations only, no page numbers)
                   </option>
-                  <option value="docling">Docling (local)</option>
+                  <option value="docling">Docling (local, page-accurate, slow)</option>
                   <option value="llamaparse">LlamaParse (cloud, PPTX + OCR)</option>
                 </NativeSelect>
               </div>

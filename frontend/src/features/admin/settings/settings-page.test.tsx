@@ -111,6 +111,21 @@ test('offers anydoc as a parser option and selects it when reported by the backe
   expect(screen.getByLabelText(/document parser/i)).toHaveValue('anydoc');
 });
 
+test('offers liteparse (the recommended default) as a parser option', async () => {
+  useProviderSettings.mockReturnValue({
+    data: { ...settings, document_parser: 'liteparse' },
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  });
+
+  render(<SettingsPage />);
+
+  expect(await screen.findByRole('option', { name: /liteparse/i })).toBeInTheDocument();
+  expect(screen.getByLabelText(/document parser/i)).toHaveValue('liteparse');
+});
+
 test('shows an error message and retry button when the settings query fails', async () => {
   const refetch = vi.fn();
   useProviderSettings.mockReturnValue({

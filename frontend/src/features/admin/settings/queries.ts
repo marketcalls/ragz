@@ -11,7 +11,7 @@ import { api } from '@/api/client';
 export type CohereRerankModel = 'rerank-v4.0-fast' | 'rerank-v4.0-pro';
 
 export interface ProviderSettings {
-  document_parser: 'anydoc' | 'docling' | 'llamaparse';
+  document_parser: 'anydoc' | 'docling' | 'llamaparse' | 'liteparse';
   rerank_provider: 'local' | 'cohere';
   cohere_rerank_model: CohereRerankModel;
   llamaparse_key_set: boolean;
@@ -19,7 +19,7 @@ export interface ProviderSettings {
 }
 
 export interface ProviderSettingsUpdate {
-  document_parser?: 'anydoc' | 'docling' | 'llamaparse';
+  document_parser?: 'anydoc' | 'docling' | 'llamaparse' | 'liteparse';
   rerank_provider?: 'local' | 'cohere';
   cohere_rerank_model?: CohereRerankModel;
   llamaparse_api_key?: string;
