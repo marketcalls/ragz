@@ -1,11 +1,13 @@
-"""Tavily web-search client (Phase 3 D7).
+"""Web-search clients: DuckDuckGo (default, keyless) + Tavily (Phase 3 D7,
+optional, requires a stored API key).
 
-Iron rule 3 note: FIFTH sanctioned caller of secrets._get_secret_decrypted —
-the superadmin-stored key (secret name "tavily", written via the existing
-PUT /api/v1/admin/secrets/tavily) is decrypted in memory for exactly one
-outbound request and never returned, logged, or persisted. Named in the
-allowlist test (tests/modules/models/test_sync.py) — the ONLY allowlist
-change in Phase 3.
+Iron rule 3 note: TavilySearcher is a sanctioned caller of
+secrets._get_secret_decrypted — the superadmin-stored key (secret name
+"tavily", written via the existing PUT /api/v1/admin/secrets/tavily) is
+decrypted in memory for exactly one outbound request and never returned,
+logged, or persisted. Named in the allowlist test
+(tests/modules/models/test_sync.py). DuckDuckGoSearcher is keyless and never
+touches the secrets module at all.
 
 Iron rule 5 note: results are untrusted DATA. This module returns structured
 WebResults only; they reach the model exclusively through the production
@@ -18,22 +20,28 @@ RAGZ-PUB-08 remediation (stored prompt injection steering the outbound web
 query, items 1 & 3): `build_web_search_query` and `redact_query` are the taint
 boundary between "text the planner LLM produced" (which may be laundering
 retrieved document content — iron rule 5's untrusted DATA) and "text that
-leaves Ragz to a third-party provider". Every caller of TavilySearcher MUST
-route the outgoing query through both before it ever reaches `__call__`;
-`modules/chat/agent.py`'s `execute_tool` is the one production caller and
-does exactly that (see its `web_search` branch).
+leaves Ragz to a third-party provider". Every caller of a WebSearcher
+implementation (TavilySearcher or DuckDuckGoSearcher) MUST route the outgoing
+query through both before it ever reaches `__call__`; `modules/chat/agent.py`'s
+`execute_tool` is the one production caller and does exactly that (see its
+`web_search` branch) — this module only changes WHICH provider runs, never
+that taint boundary.
 """
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import Settings
 from ragz.core.errors import UpstreamError
 from ragz.modules.secrets import service as secrets_service
+
+logger = structlog.get_logger()
 
 TAVILY_SECRET_NAME = "tavily"  # noqa: S105 - a secret NAME, not a secret
 _MAX_RESULTS = 5
@@ -172,3 +180,65 @@ class TavilySearcher:
                 )
             )
         return results
+
+
+class DuckDuckGoSearcher:
+    """Default, keyless web-search provider (ddgs, the maintained successor to
+    duckduckgo-search). No secret, no superadmin config, no PUT
+    /api/v1/admin/secrets/* round-trip — this is what makes web search work
+    out of the box (see the use_web gate in modules/chat/service.py, which no
+    longer requires a Tavily secret to offer web_search to the planner).
+
+    Same WebSearcher interface and same WebResult shape as TavilySearcher, so
+    `modules/chat/agent.py`'s execute_tool (the PUB-08 consent/budget/
+    redaction pipeline) treats both identically — this class only supplies
+    the provider call, never the taint boundary.
+
+    ddgs's DDGS().text(...) is a blocking, synchronous call (it shells out to
+    an HTTP client itself, not httpx/asyncio) -- run off the event loop via
+    asyncio.to_thread, the same pattern this codebase already uses for other
+    CPU/blocking work (documents/pipeline.py, retrieval/service.py).
+
+    Graceful-degradation contract (mirrors TavilySearcher's role in
+    execute_tool, but enforced HERE instead of via a raised UpstreamError):
+    any failure -- import error, network error, rate limit, malformed
+    response -- returns an empty list rather than raising. web_search is a
+    best-effort fallback tool; a keyless, unauthenticated, best-effort
+    provider degrading to "no results" (and letting the agent loop fall back
+    to single-shot RAG / no-answer) is safer than surfacing raised errors
+    from an unmonitored third party."""
+
+    def __init__(self, *, max_results: int = _MAX_RESULTS) -> None:
+        self._max_results = max_results
+
+    async def __call__(self, session: AsyncSession, query: str) -> list[WebResult]:
+        try:
+            raw_results = await asyncio.to_thread(self._search_sync, query)
+        except Exception:
+            logger.info("chat.web_search.duckduckgo_failed", query_len=len(query))
+            return []
+        results: list[WebResult] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("href") or "")
+            if not url.startswith(("http://", "https://")):
+                continue  # defense: only real links become citable sources
+            results.append(
+                WebResult(
+                    title=str(item.get("title") or url)[:200],
+                    url=url,
+                    snippet=str(item.get("body") or "")[:_SNIPPET_CHARS],
+                )
+            )
+        return results
+
+    def _search_sync(self, query: str) -> list[dict[str, object]]:
+        # Imported lazily inside the thread call (not at module top-level) so
+        # a broken/missing ddgs install degrades this ONE provider to "no
+        # results" via the except-Exception above, rather than making the
+        # whole chat module fail to import.
+        from ddgs import DDGS
+
+        with DDGS() as ddgs:
+            return ddgs.text(query, max_results=self._max_results)

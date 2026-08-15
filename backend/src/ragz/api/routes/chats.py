@@ -27,7 +27,7 @@ from ragz.modules.chat.schemas import (
     MessageSend,
     RegenerateRequest,
 )
-from ragz.modules.chat.web import TavilySearcher
+from ragz.modules.chat.web import DuckDuckGoSearcher
 from ragz.modules.models import keys
 from ragz.modules.models import service as models_service
 from ragz.modules.models.models import Model
@@ -250,7 +250,12 @@ async def send_message(
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
-        web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
+        # DDG-01: DuckDuckGo is the DEFAULT, keyless web-search provider --
+        # web search works out of the box with no superadmin secret setup.
+        # Tavily stays available/optional: inject a TavilySearcher via
+        # app.state.web_searcher (create_app's web_searcher= kwarg) to opt a
+        # deployment into it instead.
+        web_searcher=request.app.state.web_searcher or DuckDuckGoSearcher(),
         reasoning_effort=reasoning_effort, attachment_sources=attachment_sources,
         image_attachments=image_attachments,
         web_search_consented=body.web_search_consented,
@@ -286,7 +291,12 @@ async def regenerate(
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
-        web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
+        # DDG-01: DuckDuckGo is the DEFAULT, keyless web-search provider --
+        # web search works out of the box with no superadmin secret setup.
+        # Tavily stays available/optional: inject a TavilySearcher via
+        # app.state.web_searcher (create_app's web_searcher= kwarg) to opt a
+        # deployment into it instead.
+        web_searcher=request.app.state.web_searcher or DuckDuckGoSearcher(),
         reasoning_effort=reasoning_effort,
         web_search_consented=body.web_search_consented if body is not None else False,
     ))

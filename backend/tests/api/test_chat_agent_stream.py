@@ -353,16 +353,23 @@ async def test_web_search_not_offered_when_disabled_or_decline(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
 ) -> None:
-    """Three sub-cases against the planner prompt (FakeCompleter.calls):
+    """Sub-cases against the planner prompt (FakeCompleter.calls):
     (a) toggle off -> planner system prompt contains no 'web_search';
     (b) toggle on but workspace decline -> no 'web_search';
-    (c) toggle on, general_knowledge, but NO tavily secret -> no 'web_search'.
+    (c) toggle on, general_knowledge, NO tavily secret stored -> 'web_search'
+        IS offered (DDG-01): the use_web gate in service.py no longer
+        requires a Tavily secret, since the default provider
+        (DuckDuckGoSearcher, wired in routes/chats.py) is keyless. This test
+        injects a FakeWebSearcher directly (not the real DuckDuckGoSearcher),
+        so (c) is really pinning "the gate itself doesn't block on a missing
+        secret" -- who the real default provider is is covered by
+        test_web.py's DuckDuckGoSearcher unit tests instead.
 
-    One chat/app/model shared across all three sub-cases (each PATCHes the
+    One chat/app/model shared across all sub-cases (each PATCHes the
     workspace, then sends another message on the SAME chat -- a fresh
     make_model_and_chat per sub-case would collide on the unique
     litellm_model_name it always uses). The tavily secret is deliberately
-    NEVER stored in this test, so (c) is satisfied for free."""
+    NEVER stored in this test."""
     completer = FakeCompleter(
         [_search_completion("muster point") for _ in range(3)]
     )
@@ -409,11 +416,13 @@ async def test_web_search_not_offered_when_disabled_or_decline(
         prompt_b = await _patch_and_ask(web_search_enabled=True, fallback_policy="decline")
         assert "web_search" not in prompt_b
 
-        # (c) toggle on, general_knowledge, but NO tavily secret (never stored above)
+        # (c) toggle on, general_knowledge, NO tavily secret (never stored
+        # above) -- DDG-01: still offered, since availability no longer
+        # depends on a stored Tavily secret (the default provider is keyless).
         prompt_c = await _patch_and_ask(
             web_search_enabled=True, fallback_policy="general_knowledge"
         )
-        assert "web_search" not in prompt_c
+        assert "web_search" in prompt_c
 
 
 # --- In-chat generative UI (design 2026-08-15): emission + persistence -----

@@ -68,7 +68,7 @@ from ragz.modules.chat.validation import (
     parse_auditor_scores,
     synthesize_with_gatekeeper,
 )
-from ragz.modules.chat.web import TAVILY_SECRET_NAME, WebResult, WebSearcher
+from ragz.modules.chat.web import WebResult, WebSearcher
 from ragz.modules.documents import metadata as metadata_service
 from ragz.modules.documents import service as documents_service
 from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch
@@ -88,7 +88,6 @@ from ragz.modules.retrieval.service import (
     search_ephemeral_attachments,
     upsert_ephemeral_chunks,
 )
-from ragz.modules.secrets import service as secrets_service
 from ragz.modules.tenancy import service as tenancy_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Workspace
@@ -1382,16 +1381,20 @@ async def stream_reply(
         )
         web_hits: list[WebResult] = []
         if run_loop and completer is not None:
-            # D7/Task 11: the web_search tool is offered to the planner only
-            # when a searcher is injected AND the workspace opted in AND its
-            # policy isn't decline AND the tavily secret is actually stored
-            # (existence-only check -- decryption happens inside the
-            # searcher itself, on actual use).
+            # D7/Task 11, DDG-01: the web_search tool is offered to the
+            # planner whenever a searcher is injected AND the workspace
+            # opted in AND its policy isn't decline. No secret-existence
+            # check here anymore -- DuckDuckGoSearcher (the default,
+            # app.state.web_searcher's fallback in routes/chats.py) is
+            # keyless, so gating availability on a Tavily secret would block
+            # web search out of the box. A route wired with TavilySearcher
+            # instead still degrades gracefully (UpstreamError -> execute_tool's
+            # typed-exception catch) if ITS secret is missing -- that failure
+            # mode is unchanged, just no longer pre-checked here.
             use_web = (
                 web_searcher is not None
                 and workspace.web_search_enabled
                 and workspace.fallback_policy != "decline"
-                and bool(await secrets_service.existing_secret_names(session, [TAVILY_SECRET_NAME]))
             )
             gathered: AgentGathered | None = None
             async for gather_item in run_agent_gather(
