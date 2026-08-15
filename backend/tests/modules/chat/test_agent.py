@@ -447,6 +447,51 @@ async def test_gathered_counts_performed_web_searches(  # type: ignore[no-untype
     assert gathered is not None and gathered.web_searches == 1
 
 
+async def test_force_web_first_overrides_planner_docs_choice(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """Regression (explicit toggle answered from docs): with force_web_first,
+    step 1 is a web_search on the ORIGINAL question even though the planner is
+    scripted to pick local `search` -- the planner is bypassed for the first
+    step, so the user's toggle actually reaches the web. The scripted local
+    search is only consumed on step 2, proving step 1 didn't come from the
+    planner."""
+    completer = FakeCompleter([_search_completion("nifty futures ltp")])
+    web_searcher = FakeWebSearcher()
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="Get latest nifty future value",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, metadata_field_names=[],
+        collection_name=COLLECTION, web_search_consented=True, force_web_first=True,
+    ))
+    # Step 1 is the forced web search on the original question, NOT the planner's
+    # scripted local `search`:
+    assert steps[0].tool == "web_search"
+    assert steps[0].query == "Get latest nifty future value"
+    assert web_searcher.queries != []  # the web was actually searched
+    # The planner's scripted local search was consumed on a LATER step, so the
+    # first step bypassed the planner entirely (planner ran once for step 2):
+    assert [s.tool for s in steps] == ["web_search", "search"]
+
+
+async def test_force_web_first_off_leaves_planner_in_control(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """Control for the regression above: same consented setup but
+    force_web_first defaults off -> the planner's scripted local `search` is
+    the first step (a plain consented turn never forces web-first)."""
+    completer = FakeCompleter([_search_completion("nifty futures ltp")])
+    steps, _ = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="Get latest nifty future value",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=FakeWebSearcher(), metadata_field_names=[],
+        collection_name=COLLECTION, web_search_consented=True,  # no force_web_first
+    ))
+    assert steps[0].tool == "search"  # planner in control
+
+
 async def test_non_web_search_step_never_yields_tool_result(  # type: ignore[no-untyped-def]
     session, chat_env, ctx, flagged_model
 ) -> None:

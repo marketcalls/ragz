@@ -1557,6 +1557,11 @@ async def stream_reply(
                 chunk_reader=chunk_reader, web_searcher=web_searcher if use_web else None,
                 metadata_field_names=field_names, collection_name=collection_name,
                 web_search_consented=web_search_consented,
+                # Explicit web-search toggle forces the loop's FIRST step to be
+                # a web_search (agent.py) -- otherwise the planner, told to
+                # answer from workspace docs, picks local `search` and the
+                # toggle looks ignored even though the loop is running.
+                force_web_first=force_web,
                 redis=redis,
                 web_search_daily_limit=settings.web_search_daily_limit_per_user,
                 web_search_daily_org_limit=settings.web_search_daily_limit_per_org,

@@ -337,10 +337,14 @@ async def test_web_search_records_usage_for_billable_provider(
     """Cost reporting (design 2026-08-15 §2): a billable web-search provider
     (Tavily) records ONE feature='web_search' usage row (units=1, 0 tokens) per
     performed search, attributed to the asking user. Clones the citation flow
-    above but injects a billable searcher and asserts the metered row."""
+    above but injects a billable searcher and asserts the metered row.
+
+    The explicit toggle (web_search_consented + web_search_enabled) forces the
+    loop's FIRST step to be the web search, so the planner script is left empty
+    -- exactly one web search runs, hence exactly one billable unit."""
     from ragz.modules.quotas.models import UsageRecord
 
-    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    completer = FakeCompleter([])  # forced first web_search is the only search
     web_searcher = FakeWebSearcher(billable=True)
     app = create_app(
         session_factory=build_session_factory(engine), redis_client=redis_client,
@@ -510,8 +514,10 @@ async def test_consent_forces_loop_even_when_retrieval_grounds(
     escalation heuristic nor the post-retrieval general-knowledge trigger can
     start the loop; only web_search_consented (the force_web gate in
     service.py) can. Asserts the loop ran, the searcher was actually called,
-    and the web url reaches the citations -- not a docs-only answer."""
-    completer = FakeCompleter([_web_search_completion("nifty future")])
+    and the web url reaches the citations -- not a docs-only answer. The
+    planner is scripted to pick a LOCAL search (the exact behavior that made
+    the toggle look ignored); the forced first step must still hit the web."""
+    completer = FakeCompleter([_search_completion("nifty futures ltp expiry")])
     web_searcher = FakeWebSearcher()
     app = create_app(
         session_factory=build_session_factory(engine), redis_client=redis_client,
@@ -550,9 +556,12 @@ async def test_consent_forces_loop_even_when_retrieval_grounds(
     assert step["tool"] == "web_search"
     # The external searcher was actually invoked (not a docs-only answer):
     assert web_searcher.queries != []
-    # The web url reaches the citations:
-    citations = next(d for n, d in frames if n == "citations")["citations"]
-    assert any(c.get("url") == web_searcher.results[0].url for c in citations)
+    # The web result reached grounding -- it appears among the turn's sources.
+    # (Whether the synthesized answer cites [web] vs [doc] is down to the
+    # FakeStreamer's fixed "[1]." marker; the grounding fact is the sources
+    # frame, which is what "searched the web, not the docs" actually means.)
+    sources = next(d for n, d in frames if n == "sources")["sources"]
+    assert any(s.get("url") == web_searcher.results[0].url for s in sources)
 
 
 async def test_web_search_not_offered_when_disabled_or_decline(

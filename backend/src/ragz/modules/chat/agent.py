@@ -512,6 +512,7 @@ async def run_agent_gather(
     metadata_field_names: Sequence[str],
     collection_name: str,
     web_search_consented: bool = False,
+    force_web_first: bool = False,
     web_search_budget: int = DEFAULT_WEB_SEARCH_BUDGET,
     redis: Redis | None = None,
     web_search_daily_limit: int = 0,
@@ -557,10 +558,28 @@ async def run_agent_gather(
     grounded = degraded = False
     web_searches_used = 0
     for n in range(1, AGENT_MAX_ITERATIONS + 1):
-        action, usage = await _plan(
-            completer, model=model, question=question, summaries=summaries,
-            tool_names=tool_names, metadata_field_names=metadata_field_names,
-        )
+        if n == 1 and force_web_first and web_searcher is not None:
+            # Explicit web-search toggle: the user deliberately asked to search
+            # the web THIS turn, so the first step is a web search on the
+            # original question -- deterministically, not left to the planner.
+            # planner_system_prompt frames the task as answering "from this
+            # workspace's documents", so the model reliably picks local `search`
+            # first and the toggle appears ignored. execute_tool still builds
+            # the outgoing query from `question` itself (RAGZ-PUB-08 items 1 &
+            # 3), so the forced action's query is only what the agent_step frame
+            # displays. Steps 2+ fall back to the planner, which may then search
+            # docs or answer once the web results are in -- web-first, not
+            # web-only. Gated on force_web_first (not web_search_consented) so a
+            # plain consented turn still lets the planner decide tool order.
+            action, usage = (
+                PlannerAction(action="web_search", query=question),
+                LLMUsage(prompt_tokens=0, completion_tokens=0),
+            )
+        else:
+            action, usage = await _plan(
+                completer, model=model, question=question, summaries=summaries,
+                tool_names=tool_names, metadata_field_names=metadata_field_names,
+            )
         prompt_tokens += usage.prompt_tokens
         completion_tokens += usage.completion_tokens
         if action.action == "answer":
