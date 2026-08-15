@@ -2606,6 +2606,43 @@ export interface components {
              */
             email: string;
         };
+        /** FormBlock */
+        FormBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "form";
+            /** Title */
+            title?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Fields */
+            fields: components["schemas"]["FormField"][];
+            /** Submit Label */
+            submit_label?: string | null;
+        };
+        /** FormField */
+        FormField: {
+            /** Name */
+            name: string;
+            /** Label */
+            label: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "text" | "number" | "select" | "multiselect";
+            /** Options */
+            options?: string[] | null;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /** Placeholder */
+            placeholder?: string | null;
+        };
         /** GoldenQueryCreate */
         GoldenQueryCreate: {
             /** Question */
@@ -2834,7 +2871,7 @@ export interface components {
             citations: components["schemas"]["CitationOut"][];
             feedback: components["schemas"]["FeedbackOut"] | null;
             /** Blocks */
-            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"])[] | null;
+            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"])[] | null;
             /** Children */
             children: components["schemas"]["MessageNode"][];
         };
@@ -3442,7 +3479,7 @@ export interface components {
             /** Label */
             label: string;
             /** Blocks */
-            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"])[];
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"])[];
         };
         /** TableBlock */
         TableBlock: {
