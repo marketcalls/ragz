@@ -72,7 +72,9 @@ _MAX_FORM_OPTION_LEN = 120
 _MAX_FORM_PLACEHOLDER = 120
 _MAX_FORM_SUBMIT_LABEL = 40
 
-FormFieldKind = Literal["text", "number", "select", "multiselect"]
+FormFieldKind = Literal[
+    "text", "number", "select", "multiselect", "date", "daterange", "card_select"
+]
 
 # Whitelisted icon names for InfoCardBlock -- an unrecognized value is a
 # validation failure (block dropped), never rendered as arbitrary text/attr.
@@ -338,6 +340,12 @@ class FormField(BaseModel):
     label: str = Field(max_length=_MAX_FORM_FIELD_LABEL)
     kind: FormFieldKind
     options: list[str] | None = Field(default=None, max_length=_MAX_FORM_OPTIONS)
+    # Per-option subtitle text for card_select tiles (openui-parity T10).
+    # Bounded and validated the same way as `options`, but not required to
+    # be present, and not required to match `options` in length -- an
+    # absent or mismatched entry just means the frontend renders no
+    # subtitle for that tile.
+    option_details: list[str] | None = Field(default=None, max_length=_MAX_FORM_OPTIONS)
     required: bool = False
     placeholder: str | None = Field(default=None, max_length=_MAX_FORM_PLACEHOLDER)
 
@@ -350,6 +358,16 @@ class FormField(BaseModel):
             if len(option) > _MAX_FORM_OPTION_LEN:
                 raise ValueError("form field option too long")
         return options
+
+    @field_validator("option_details")
+    @classmethod
+    def _bound_option_details_length(cls, option_details: list[str] | None) -> list[str] | None:
+        if option_details is None:
+            return option_details
+        for detail in option_details:
+            if len(detail) > _MAX_FORM_OPTION_LEN:
+                raise ValueError("form field option detail too long")
+        return option_details
 
 
 class FormBlock(BaseModel):
@@ -365,8 +383,10 @@ class FormBlock(BaseModel):
     @classmethod
     def _require_options_for_choice_fields(cls, fields: list[FormField]) -> list[FormField]:
         for field in fields:
-            if field.kind in ("select", "multiselect") and not field.options:
-                raise ValueError("select/multiselect form fields require non-empty options")
+            if field.kind in ("select", "multiselect", "card_select") and not field.options:
+                raise ValueError(
+                    "select/multiselect/card_select form fields require non-empty options"
+                )
         return fields
 
 

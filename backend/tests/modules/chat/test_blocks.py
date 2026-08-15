@@ -203,6 +203,123 @@ def test_form_block_minimal_valid() -> None:
     assert out[0].fields[0].required is False
 
 
+def test_form_date_field_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "start", "label": "Start date", "kind": "date"}],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], FormBlock)
+    assert out[0].fields[0].kind == "date"
+
+
+def test_form_daterange_field_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "trip", "label": "Trip dates", "kind": "daterange"}],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], FormBlock)
+    assert out[0].fields[0].kind == "daterange"
+
+
+def test_form_card_select_field_with_option_details_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "style",
+                        "label": "Trip style",
+                        "kind": "card_select",
+                        "options": ["Cultural", "Relaxation"],
+                        "option_details": ["Museums & history", "Spas & beaches"],
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    block = out[0]
+    assert isinstance(block, FormBlock)
+    assert block.fields[0].kind == "card_select"
+    assert block.fields[0].options == ["Cultural", "Relaxation"]
+    assert block.fields[0].option_details == ["Museums & history", "Spas & beaches"]
+
+
+def test_form_card_select_without_options_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "style", "label": "Trip style", "kind": "card_select"}],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_option_details_oversize_string_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "style",
+                        "label": "Trip style",
+                        "kind": "card_select",
+                        "options": ["Cultural"],
+                        "option_details": ["y" * 121],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_option_details_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {
+                        "name": "style",
+                        "label": "Trip style",
+                        "kind": "card_select",
+                        "options": ["Cultural"],
+                        "option_details": [f"detail{i}" for i in range(21)],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_form_unknown_field_kind_slider_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [{"name": "volume", "label": "Volume", "kind": "slider"}],
+            }
+        ]
+    )
+    assert out == []
+
+
 def test_mixed_list_of_valid_blocks() -> None:
     out = validate_blocks(
         [
