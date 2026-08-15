@@ -50,6 +50,7 @@ test('a superadmin sees every admin card', () => {
     'Feedback',
     'Roles',
     'Models',
+    'Organizations',
     'Settings',
     'API Keys',
     'Bots',

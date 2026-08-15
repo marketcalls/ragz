@@ -63,6 +63,9 @@ export type RoleTemplateOut = components['schemas']['RoleTemplateOut'];
 // eval fixtures — a question plus the document ids retrieval should hit.
 export type GoldenQueryOut = components['schemas']['GoldenQueryOut'];
 export type GoldenQueryCreate = components['schemas']['GoldenQueryCreate'];
+// GET/POST/PATCH /api/v1/admin/orgs (M1): superadmin-only org list/create/rename.
+// sso_domains is null|string[] (see PUT .../sso-domains in features/admin/sso).
+export type OrgOut = components['schemas']['OrgOut'];
 // GET/PUT /api/v1/admin/orgs/{org_id}/quota (QUOTA-1, K-C11): superadmin-only
 // org-wide monthly allocation + default per-user allocation + reset day.
 export type OrgQuotaOut = components['schemas']['OrgQuotaOut'];

@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  Building2,
   Fingerprint,
   KeyRound,
   LayoutDashboard,
@@ -71,6 +72,13 @@ export function AdminHubPage() {
       label: 'Models',
       description: 'Providers, models, catalog sync',
       icon: Settings2,
+      visible: isSuperadmin,
+    },
+    {
+      to: '/admin/organizations',
+      label: 'Organizations',
+      description: 'Create and manage organizations',
+      icon: Building2,
       visible: isSuperadmin,
     },
     {

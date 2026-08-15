@@ -1234,7 +1234,8 @@ export interface paths {
         /** List Orgs */
         get: operations["list_orgs_api_v1_admin_orgs_get"];
         put?: never;
-        post?: never;
+        /** Create Org */
+        post: operations["create_org_api_v1_admin_orgs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1256,6 +1257,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/orgs/{org_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename Org */
+        patch: operations["rename_org_api_v1_admin_orgs__org_id__patch"];
         trace?: never;
     };
     "/api/v1/admin/roles": {
@@ -3596,6 +3614,11 @@ export interface components {
             /** Total Tokens */
             total_tokens: number;
         };
+        /** OrgCreate */
+        OrgCreate: {
+            /** Name */
+            name: string;
+        };
         /** OrgOut */
         OrgOut: {
             /**
@@ -3633,6 +3656,11 @@ export interface components {
             default_user_monthly_tokens: number | null;
             /** Reset Day */
             reset_day: number;
+        };
+        /** OrgRename */
+        OrgRename: {
+            /** Name */
+            name: string;
         };
         /** OrgUsage */
         OrgUsage: {
@@ -6806,6 +6834,39 @@ export interface operations {
             };
         };
     };
+    create_org_api_v1_admin_orgs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     put_sso_domains_api_v1_admin_orgs__org_id__sso_domains_put: {
         parameters: {
             query?: never;
@@ -6818,6 +6879,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SsoDomainsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_org_api_v1_admin_orgs__org_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgRename"];
             };
         };
         responses: {

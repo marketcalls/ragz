@@ -11,6 +11,7 @@ import { EmailSettingsPage } from '@/features/admin/email/email-settings-page';
 import { FeedbackPage } from '@/features/admin/feedback/feedback-page';
 import { HealthPage } from '@/features/admin/health/health-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
+import { OrganizationsPage } from '@/features/admin/organizations/organizations-page';
 import { RolesPage } from '@/features/admin/roles/roles-page';
 import { SettingsPage } from '@/features/admin/settings/settings-page';
 import { SsoSettingsPage } from '@/features/admin/sso/sso-settings-page';
@@ -60,6 +61,7 @@ export const router = createBrowserRouter([
             element: <RequireRole role="superadmin" />,
             children: [
               { path: '/admin/models', element: <ModelsPage /> },
+              { path: '/admin/organizations', element: <OrganizationsPage /> },
               { path: '/admin/settings', element: <SettingsPage /> },
               { path: '/admin/api-keys', element: <ApiKeysPage /> },
               { path: '/admin/bots', element: <BotsPage /> },
