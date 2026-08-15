@@ -146,6 +146,17 @@ class Settings(BaseSettings):
     # created_at + this many days, not never).
     api_key_max_lifetime_days: int = 90
 
+    # sec RAGZ-PUB-08 (residual): run_agent_gather's web_search budget
+    # (DEFAULT_WEB_SEARCH_BUDGET) resets every planner turn, so consent + a
+    # per-turn cap alone still let a user run unlimited external searches
+    # across a conversation/day. These add a PERSISTENT, Redis-backed
+    # fixed-window cap enforced in agent.execute_tool BEFORE the searcher is
+    # ever called (modules/chat/agent.py). 0 disables the given cap
+    # (unlimited). Per-org is an additional, opt-in belt-and-braces layer --
+    # off by default so a fresh install only pays for the per-user cap.
+    web_search_daily_limit_per_user: int = 50
+    web_search_daily_limit_per_org: int = 0
+
     @model_validator(mode="after")
     def _production_fails_closed(self) -> "Settings":
         """RAGZ-PUB-05: production/staging must not silently run with dev

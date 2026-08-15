@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import structlog
+from redis.asyncio import Redis
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -1224,6 +1225,7 @@ async def stream_reply(
     attachment_sources: Sequence[PromptSource] = (),
     image_attachments: Sequence[ChatAttachment] = (),
     web_search_consented: bool = False,
+    redis: Redis | None = None,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -1244,6 +1246,13 @@ async def stream_reply(
     the model directly instead. Every other attachment (documents, and images
     on a non-vision model) is unaffected and keeps flowing through
     attachment_sources exactly as Task 5 built it.
+
+    `redis` (RAGZ-PUB-08 residual): the app's shared Redis client, forwarded
+    into run_agent_gather -> execute_tool so a web_search's persistent
+    per-user/day (and optional per-org/day) cap can be checked and
+    incremented -- see agent.execute_tool's docstring. Defaults to None
+    (no persistent cap) so any caller that doesn't have a Redis client keeps
+    prior behavior; both chats.py routes pass `request.app.state.redis`.
     """
     conversational = classify_query(user_message.content) == "conversational"
     if not conversational:
@@ -1441,6 +1450,9 @@ async def stream_reply(
                 chunk_reader=chunk_reader, web_searcher=web_searcher if use_web else None,
                 metadata_field_names=field_names, collection_name=collection_name,
                 web_search_consented=web_search_consented,
+                redis=redis,
+                web_search_daily_limit=settings.web_search_daily_limit_per_user,
+                web_search_daily_org_limit=settings.web_search_daily_limit_per_org,
             ):
                 if isinstance(gather_item, AgentStep):
                     yield agent_step_event(

@@ -12,6 +12,7 @@ from ragz.modules.chat.agent import (
     AgentStep,
     AgentToolResult,
     PlannerAction,
+    _daily_web_search_key,
     execute_tool,
     native_tool_specs,
     parse_planner_action,
@@ -461,3 +462,156 @@ async def test_web_search_without_consent_never_yields_tool_result(  # type: ign
         if isinstance(item, AgentToolResult):
             tool_results.append(item)
     assert tool_results == []
+
+
+# --- RAGZ-PUB-08 residual: persistent per-user/day web-search cap ---------
+# The per-turn budget above (web_search_budget/web_searches_used) resets on
+# every run_agent_gather call -- these tests pin the SEPARATE, Redis-backed
+# cap that does NOT reset between calls (i.e. survives across turns/
+# messages/regenerations), enforced in execute_tool before the searcher.
+
+
+async def test_daily_cap_blocks_before_searcher_when_already_at_limit(
+    session, chat_env, ctx, redis_client
+) -> None:
+    """The whole point: pre-seed the Redis key AT the limit (simulating usage
+    from earlier turns) and confirm a fresh execute_tool call refuses the
+    search BEFORE the provider is ever called -- consent and the per-turn
+    budget both pass, only the persistent cap blocks."""
+    web_searcher = FakeWebSearcher()
+    key = _daily_web_search_key(ctx.user_id)
+    await redis_client.set(key, "2")
+    out = await execute_tool(
+        session, ctx, PlannerAction(action="web_search", query="iso 45001"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, collection_name=COLLECTION,
+        question="what is iso 45001?", web_search_consented=True,
+        web_search_budget_remaining=3,
+        redis=redis_client, web_search_daily_limit=2,
+    )
+    assert out.error is not None
+    assert web_searcher.queries == []  # never reached the provider
+
+
+async def test_daily_cap_persists_across_separate_calls_not_reset_per_turn(
+    session, chat_env, ctx, redis_client
+) -> None:
+    """Two SEPARATE execute_tool calls (standing in for two separate chat
+    turns/messages, each with its own fresh per-turn budget) sharing the same
+    Redis key: the first is under the daily limit and proceeds; the second
+    -- even though it is a brand-new call with a brand-new per-turn budget --
+    is refused because the persistent counter carried over."""
+    web_searcher = FakeWebSearcher()
+    kwargs: dict[str, object] = dict(
+        session=session, ctx=ctx, action=PlannerAction(action="web_search", query="q"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, collection_name=COLLECTION,
+        question="q?", web_search_consented=True, web_search_budget_remaining=3,
+        redis=redis_client, web_search_daily_limit=1,
+    )
+    turn1 = await execute_tool(**kwargs)  # type: ignore[arg-type]
+    assert turn1.error is None
+    assert len(web_searcher.queries) == 1
+
+    turn2 = await execute_tool(**kwargs)  # type: ignore[arg-type]
+    assert turn2.error is not None  # STAYS rejected on the next turn
+    assert len(web_searcher.queries) == 1  # no second provider call
+
+
+async def test_daily_cap_under_limit_search_proceeds_and_counter_increments(
+    session, chat_env, ctx, redis_client
+) -> None:
+    web_searcher = FakeWebSearcher()
+    key = _daily_web_search_key(ctx.user_id)
+    assert await redis_client.get(key) is None
+    out = await execute_tool(
+        session, ctx, PlannerAction(action="web_search", query="q"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, collection_name=COLLECTION,
+        question="q?", web_search_consented=True, web_search_budget_remaining=3,
+        redis=redis_client, web_search_daily_limit=5,
+    )
+    assert out.error is None
+    assert len(web_searcher.queries) == 1
+    assert int(await redis_client.get(key)) == 1
+
+
+async def test_daily_cap_disabled_when_limit_zero_is_unlimited(
+    session, chat_env, ctx, redis_client
+) -> None:
+    web_searcher = FakeWebSearcher()
+    key = _daily_web_search_key(ctx.user_id)
+    await redis_client.set(key, "999999")  # already way "over" any real cap
+    out = await execute_tool(
+        session, ctx, PlannerAction(action="web_search", query="q"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, collection_name=COLLECTION,
+        question="q?", web_search_consented=True, web_search_budget_remaining=3,
+        redis=redis_client, web_search_daily_limit=0,
+    )
+    assert out.error is None
+    assert len(web_searcher.queries) == 1
+
+
+async def test_daily_cap_no_redis_means_no_persistent_cap(
+    session, chat_env, ctx
+) -> None:
+    """Every EXISTING caller of execute_tool that doesn't pass `redis`
+    (default None) must keep behaving exactly as before this fix -- no
+    persistent cap enforced, even with a nonzero limit configured."""
+    web_searcher = FakeWebSearcher()
+    out = await execute_tool(
+        session, ctx, PlannerAction(action="web_search", query="q"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, collection_name=COLLECTION,
+        question="q?", web_search_consented=True, web_search_budget_remaining=3,
+        web_search_daily_limit=1,  # would block if redis were provided
+    )
+    assert out.error is None
+    assert len(web_searcher.queries) == 1
+
+
+async def test_run_agent_gather_daily_cap_blocks_web_search_end_to_end(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model, redis_client
+) -> None:
+    """Full threading check: run_agent_gather -> execute_tool with `redis`
+    and `web_search_daily_limit` wired through refuses the search before the
+    provider call and degrades to single-shot fallback (same failure posture
+    as any other tool error), exactly like test_tool_error_degrades_to_
+    single_shot above."""
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    web_searcher = FakeWebSearcher()
+    retriever = FakeRetriever(chat_env["document"].id)
+    key = _daily_web_search_key(ctx.user_id)
+    await redis_client.set(key, "1")
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer, retriever=retriever,
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, metadata_field_names=[],
+        collection_name=COLLECTION, web_search_consented=True,
+        redis=redis_client, web_search_daily_limit=1,
+    ))
+    assert web_searcher.queries == []  # refused before the provider call
+    assert gathered.degraded is True  # tool error -> single-shot fallback
+    assert retriever.calls[-1]["query"] == "q?"
+
+
+async def test_daily_org_cap_blocks_even_when_user_cap_is_fine(
+    session, chat_env, ctx, redis_client
+) -> None:
+    """Nice-to-have org-level cap: a fresh user (no per-user usage yet) is
+    still refused once the shared per-org counter is at its own limit."""
+    web_searcher = FakeWebSearcher()
+    org_key = f"web_search_day:org:{ctx.org_id}:" + _daily_web_search_key(ctx.user_id).rsplit(
+        ":", 1
+    )[-1]
+    await redis_client.set(org_key, "1")
+    out = await execute_tool(
+        session, ctx, PlannerAction(action="web_search", query="q"),
+        workspace=chat_env["workspace"], retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=web_searcher, collection_name=COLLECTION,
+        question="q?", web_search_consented=True, web_search_budget_remaining=3,
+        redis=redis_client, web_search_daily_limit=50, web_search_daily_org_limit=1,
+    )
+    assert out.error is not None
+    assert web_searcher.queries == []

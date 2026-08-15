@@ -18,13 +18,16 @@ import json
 import re
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
 import structlog
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.errors import ConflictError, NotFoundError, UpstreamError, WorkspaceAccessDenied
+from ragz.core.ratelimit import peek_daily_cap, record_daily_usage
 from ragz.modules.chat.llm import LLMCompleter, LLMUsage
 from ragz.modules.chat.web import (
     WebResult,
@@ -43,10 +46,32 @@ AGENT_MAX_ITERATIONS = 4
 PLANNER_TOOLS = ("search", "search_by_metadata", "get_document", "web_search")
 
 # RAGZ-PUB-08 item 4: per-conversation cap on external web searches (a single
-# run_agent_gather call == one planner conversation turn). No per-org/per-user
-# counter here — quotas live in modules/quotas, out of this module's scope;
-# see run_agent_gather's docstring for the TODO on wiring that in at the route.
+# run_agent_gather call == one planner conversation turn). This resets every
+# turn by design (it bounds one planner loop's fan-out) -- it is NOT a
+# substitute for a persistent cap. That persistent, cross-turn cap is the
+# Redis-backed daily counter below (_daily_web_search_key /
+# _daily_web_search_org_key + peek_daily_cap/record_daily_usage), enforced in
+# execute_tool's web_search branch alongside this per-turn budget.
 DEFAULT_WEB_SEARCH_BUDGET = 3
+
+# RAGZ-PUB-08 residual fix: persistent per-user (and optional per-org) daily
+# web-search cap, so consent + the per-turn budget above can't be bypassed by
+# just sending another message/regenerating. Fixed UTC-day window; TTL is 2
+# days (not 1) so a key created moments before UTC midnight still outlives
+# the day it counts -- self-healing against the exact clock-skew edge that
+# bit RAGZ-PUB-08's per-turn budget in the first place.
+_DAILY_WEB_SEARCH_TTL_SECONDS = 2 * 24 * 60 * 60
+
+
+def _daily_web_search_key(user_id: UUID, *, now: datetime | None = None) -> str:
+    day = (now or datetime.now(UTC)).strftime("%Y%m%d")
+    return f"web_search_day:{user_id}:{day}"
+
+
+def _daily_web_search_org_key(org_id: UUID, *, now: datetime | None = None) -> str:
+    day = (now or datetime.now(UTC)).strftime("%Y%m%d")
+    return f"web_search_day:org:{org_id}:{day}"
+
 
 _JSON_SPANS = (re.compile(r"\{.*\}", re.DOTALL), re.compile(r"\{.*?\}", re.DOTALL))
 
@@ -246,6 +271,9 @@ async def execute_tool(
     question: str = "",
     web_search_consented: bool = False,
     web_search_budget_remaining: int = 0,
+    redis: Redis | None = None,
+    web_search_daily_limit: int = 0,
+    web_search_daily_org_limit: int = 0,
 ) -> ToolOutcome:
     """THE tool-execution seam (design §2): all four read-only tools, one
     funnel. Failures come back as ToolOutcome.error — the loop degrades to
@@ -260,7 +288,19 @@ async def execute_tool(
     text) to the searcher — it forwards `build_web_search_query(question,
     action.query)` run through `redact_query` instead (items 1 & 3). `question`
     is the user's ORIGINAL message, captured once at run_agent_gather's entry,
-    not anything reconstructed from tool results."""
+    not anything reconstructed from tool results.
+
+    RAGZ-PUB-08 residual: after consent + the per-turn budget both pass, and
+    BEFORE the searcher is ever called, `web_search` also checks the
+    persistent per-user (and, if configured, per-org) daily cap via
+    `redis`/`web_search_daily_limit`/`web_search_daily_org_limit`. This is
+    the cap that survives across turns/messages/regenerations -- the budget
+    above resets every planner loop, this does not. `redis is None` or a
+    limit `<= 0` disables the corresponding check (so every existing caller
+    that doesn't pass these keeps today's behavior unchanged). The
+    corresponding daily counter is incremented ONLY once the searcher call
+    actually succeeds -- a downstream provider failure must not burn the
+    caller's quota."""
     try:
         if action.action == "search":
             result = await retriever(session, ctx, workspace.id, action.query)
@@ -293,6 +333,26 @@ async def execute_tool(
                 return ToolOutcome(
                     error="web search budget exhausted for this conversation"
                 )
+            # RAGZ-PUB-08 residual: the persistent, cross-turn cap. Checked
+            # (never post-filtered) BEFORE the provider call, same posture as
+            # every gate above it. `redis is None` or a limit <= 0 disables
+            # the respective check -- production always passes real values
+            # (stream_reply -> run_agent_gather -> here); only tests that
+            # don't care about this cap omit them.
+            if redis is not None and web_search_daily_limit > 0:
+                user_key = _daily_web_search_key(ctx.user_id)
+                if not await peek_daily_cap(redis, user_key, web_search_daily_limit):
+                    _log_web_search_decision(
+                        allowed=False, reason="daily_limit_reached", redacted_query="",
+                    )
+                    return ToolOutcome(error="daily web search limit reached")
+            if redis is not None and web_search_daily_org_limit > 0:
+                org_key = _daily_web_search_org_key(ctx.org_id)
+                if not await peek_daily_cap(redis, org_key, web_search_daily_org_limit):
+                    _log_web_search_decision(
+                        allowed=False, reason="daily_org_limit_reached", redacted_query="",
+                    )
+                    return ToolOutcome(error="daily web search limit reached")
             # Taint boundary (items 1 & 3): action.query is model output and
             # NEVER reaches web_searcher directly. Redact BOTH inputs FIRST so
             # the punctuation-dependent secret/PII patterns (emails, bearer/
@@ -315,6 +375,17 @@ async def execute_tool(
                 )
             _log_web_search_decision(allowed=True, reason="ok", redacted_query=outgoing_query)
             results = await web_searcher(session, outgoing_query)
+            # Increment ONLY on an actually-performed search (the call above
+            # already succeeded) -- never on a refusal, and never before the
+            # call, so a provider error never burns the caller's daily quota.
+            if redis is not None and web_search_daily_limit > 0:
+                await record_daily_usage(
+                    redis, _daily_web_search_key(ctx.user_id), _DAILY_WEB_SEARCH_TTL_SECONDS
+                )
+            if redis is not None and web_search_daily_org_limit > 0:
+                await record_daily_usage(
+                    redis, _daily_web_search_org_key(ctx.org_id), _DAILY_WEB_SEARCH_TTL_SECONDS
+                )
             return ToolOutcome(web_results=results, grounded=bool(results))
         return ToolOutcome(error=f"unknown tool: {action.action}")
     except (
@@ -441,6 +512,9 @@ async def run_agent_gather(
     collection_name: str,
     web_search_consented: bool = False,
     web_search_budget: int = DEFAULT_WEB_SEARCH_BUDGET,
+    redis: Redis | None = None,
+    web_search_daily_limit: int = 0,
+    web_search_daily_org_limit: int = 0,
 ) -> AsyncIterator[AgentStep | AgentToolResult | AgentGathered]:
     """The gather phase of the hand-rolled loop (design §2): yields an
     AgentStep before each tool execution (mapped to the agent_step SSE frame
@@ -456,18 +530,20 @@ async def run_agent_gather(
     query is always built from it (RAGZ-PUB-08 items 1 & 3), never from the
     model's raw requested query.
 
-    RAGZ-PUB-08 items 2 & 4 (consent + budget): `web_search_consented` and
-    `web_search_budget` default to "no consent, budget 0-effectively-unused"
-    (False / DEFAULT_WEB_SEARCH_BUDGET, but a search only ever runs if
-    consented is True) so every EXISTING caller that doesn't pass them keeps
-    today's behavior unchanged. TODO(route wiring): stream_reply
-    (modules/chat/service.py) and its route (api/routes/chats.py) are out of
-    this fix's file scope; they currently call run_agent_gather without these
-    two kwargs, so in production `web_search_consented` is always False and
-    every `web_search` action is refused (fail closed) until a real
-    conversation-scoped consent flag is plumbed from the chat request through
-    stream_reply into this call — see execute_tool's "consent_required"
-    refusal path below for where that flag is enforced."""
+    RAGZ-PUB-08 items 2 & 4 (consent + per-turn budget): `web_search_consented`
+    and `web_search_budget` default to "no consent, budget 0-effectively-
+    unused" (False / DEFAULT_WEB_SEARCH_BUDGET, but a search only ever runs
+    if consented is True) so every EXISTING caller that doesn't pass them
+    keeps today's behavior unchanged. stream_reply (modules/chat/service.py)
+    threads the request's real `web_search_consented` flag through here.
+
+    RAGZ-PUB-08 residual (persistent daily cap): `redis`,
+    `web_search_daily_limit`, and `web_search_daily_org_limit` are forwarded
+    unchanged into every `execute_tool` call this loop makes -- see that
+    function's docstring for the enforcement details. Defaulting to
+    `redis=None` / limits `0` again means every EXISTING caller that doesn't
+    pass them keeps today's behavior (no persistent cap) unchanged; production
+    (stream_reply) passes real values so the cap survives across turns."""
     tool_names: list[str] = ["search", "search_by_metadata", "get_document"]
     if web_searcher is not None:
         tool_names.append("web_search")
@@ -495,6 +571,9 @@ async def run_agent_gather(
             collection_name=collection_name, question=question,
             web_search_consented=web_search_consented,
             web_search_budget_remaining=max(web_search_budget - web_searches_used, 0),
+            redis=redis,
+            web_search_daily_limit=web_search_daily_limit,
+            web_search_daily_org_limit=web_search_daily_org_limit,
         )
         if action.action == "web_search" and outcome.error is None:
             web_searches_used += 1

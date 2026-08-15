@@ -259,6 +259,10 @@ async def send_message(
         reasoning_effort=reasoning_effort, attachment_sources=attachment_sources,
         image_attachments=image_attachments,
         web_search_consented=body.web_search_consented,
+        # RAGZ-PUB-08 residual: threads the shared Redis client through so
+        # the persistent per-user/day web-search cap (settings.web_search_
+        # daily_limit_per_user) survives across turns, not just this request.
+        redis=request.app.state.redis,
     ))
 
 
@@ -299,6 +303,8 @@ async def regenerate(
         web_searcher=request.app.state.web_searcher or DuckDuckGoSearcher(),
         reasoning_effort=reasoning_effort,
         web_search_consented=body.web_search_consented if body is not None else False,
+        # RAGZ-PUB-08 residual: same persistent daily cap as send_message.
+        redis=request.app.state.redis,
     ))
 
 

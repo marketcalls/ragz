@@ -47,6 +47,34 @@ async def record_failure(redis: Redis, key: str, window_seconds: int) -> None:
     await pipe.execute()
 
 
+async def peek_daily_cap(redis: Redis, key: str, limit: int) -> bool:
+    """Read-only: True iff usage recorded under `key` is still BELOW `limit`
+    (another use may proceed). `limit <= 0` disables the cap entirely (always
+    True -- unlimited).
+
+    Split from `record_daily_usage` the same way `peek_rate_limit` is split
+    from `record_failure` above: callers check BEFORE doing the gated work
+    and increment ONLY once the work was actually carried out, so a call that
+    fails downstream (e.g. the gated provider errors) never burns the
+    caller's quota (RAGZ-PUB-08 item 4 follow-up: persistent per-user/day web
+    search cap)."""
+    if limit <= 0:
+        return True
+    raw = await redis.get(key)
+    return raw is None or int(raw) < limit
+
+
+async def record_daily_usage(redis: Redis, key: str, ttl_seconds: int) -> None:
+    """INCR `key` and arm its TTL (nx, self-healing) in one pipeline -- same
+    fixed-window mechanics as `record_failure`, generalized to any
+    persistent per-period usage counter (not just failures). Pairs with
+    `peek_daily_cap`."""
+    pipe = redis.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, ttl_seconds, nx=True)
+    await pipe.execute()
+
+
 def rate_limit(
     scope: str, limit: int = 10, window_seconds: int = 60
 ) -> Callable[[Request], Awaitable[None]]:
