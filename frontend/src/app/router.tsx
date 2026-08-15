@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { ApiKeysPage } from '@/features/admin/api-keys/api-keys-page';
@@ -16,11 +16,13 @@ import { LoginPage } from '@/features/auth/login-page';
 import { ChatPage } from '@/features/chat/chat-page';
 import { DocumentsPage } from '@/features/documents/documents-page';
 
+import { LandingGate } from './landing-gate';
 import { RequireAction } from './require-action';
 import { RequireAuth } from './require-auth';
 import { RequireRole } from './require-role';
 
 export const router = createBrowserRouter([
+  { path: '/', element: <LandingGate /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/invite', element: <AcceptInvitePage /> },
   {
@@ -29,7 +31,6 @@ export const router = createBrowserRouter([
       {
         element: <AppShell />,
         children: [
-          { path: '/', element: <Navigate to="/chat" replace /> },
           { path: '/chat', element: <ChatPage /> },
           { path: '/chat/:chatId', element: <ChatPage /> },
           { path: '/documents', element: <DocumentsPage /> },
