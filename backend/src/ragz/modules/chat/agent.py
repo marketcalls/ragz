@@ -426,6 +426,7 @@ class AgentGathered:
     completion_tokens: int
     grounded: bool
     degraded: bool                    # a tool error forced the single-shot fallback
+    web_searches: int = 0             # actually-performed web_search calls (cost reporting)
 
 
 _SUMMARY_SNIPPET = 80
@@ -614,5 +615,5 @@ async def run_agent_gather(
     yield AgentGathered(
         chunks=chunks, web_results=web_results,
         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-        grounded=grounded, degraded=degraded,
+        grounded=grounded, degraded=degraded, web_searches=web_searches_used,
     )

@@ -32,6 +32,10 @@ class UsageRecord(UUIDPk, Base):
     org_id: Mapped[UUID]
     user_id: Mapped[UUID]
     model_id: Mapped[UUID | None] = mapped_column(default=None)
-    feature: Mapped[str]  # chat | ingestion
+    feature: Mapped[str]  # chat | ingestion | embedding | rerank | web_search
     prompt_tokens: Mapped[int]
     completion_tokens: Mapped[int]
+    # Per-call features (rerank search-units, web_search calls) count here.
+    # Token features leave it 0. NEVER summed into any token aggregation:
+    # units are calls, not tokens, and must not inflate a token budget.
+    units: Mapped[int] = mapped_column(default=0, server_default="0")

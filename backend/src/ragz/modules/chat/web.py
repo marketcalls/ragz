@@ -135,10 +135,17 @@ class WebSearcher(Protocol):
     """Injectable seam (mirrors Retriever/LLMStreamer): tests fake it, the
     routes construct TavilySearcher."""
 
+    # Cost reporting (design 2026-08-15): True for a paid provider whose calls
+    # should be metered (feature="web_search", units=1/call); False for a free
+    # provider (DuckDuckGo) that records nothing.
+    billable: bool
+
     async def __call__(self, session: AsyncSession, query: str) -> list[WebResult]: ...
 
 
 class TavilySearcher:
+    billable = True  # paid provider -- each call is a metered web_search unit
+
     def __init__(
         self, *, settings: Settings, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
@@ -207,6 +214,8 @@ class DuckDuckGoSearcher:
     provider degrading to "no results" (and letting the agent loop fall back
     to single-shot RAG / no-answer) is safer than surfacing raised errors
     from an unmonitored third party."""
+
+    billable = False  # keyless, free provider -- never metered for cost
 
     def __init__(self, *, max_results: int = _MAX_RESULTS) -> None:
         self._max_results = max_results

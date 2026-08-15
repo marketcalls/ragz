@@ -201,10 +201,17 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
             )
         any_batch_enriched = False
 
+        # Cost reporting (design 2026-08-15 §2): billed dense-embedding tokens
+        # per performed call are appended here (hosted providers only; TEI
+        # reports 0). Summed into ONE embedding usage record per document run
+        # below -- one row, not one per batch, to stay cheap.
+        embed_token_sink: list[int] = []
         done = 0
         for i in range(0, len(chunks), _BATCH_SIZE):
             batch = chunks[i : i + _BATCH_SIZE]
-            dense, sparse = await embed_batch([c.text for c in batch], dense_embedder)
+            dense, sparse = await embed_batch(
+                [c.text for c in batch], dense_embedder, usage_sink=embed_token_sink
+            )
 
             summaries: list[str | None] = [None] * len(batch)
             if completer is not None and utility_model is not None:
@@ -219,7 +226,8 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                         for c, e in zip(batch, enrichments, strict=True)
                     ]
                     dense, sparse = await embed_batch(
-                        [c.text for c in batch], dense_embedder, sparse_texts=sparse_texts
+                        [c.text for c in batch], dense_embedder,
+                        sparse_texts=sparse_texts, usage_sink=embed_token_sink,
                     )
                     hq_by_chunk = [e.hypothetical_questions for e in enrichments]
                     if any(hq_by_chunk):
@@ -230,7 +238,9 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                                 hq_dense.append([])
                                 hq_sparse.append([])
                                 continue
-                            d, s = await embed_batch(qs, dense_embedder)
+                            d, s = await embed_batch(
+                                qs, dense_embedder, usage_sink=embed_token_sink
+                            )
                             hq_dense.append(d)
                             hq_sparse.append(s)
                         await upsert_hq_points(
@@ -251,7 +261,9 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                     # that enrichment did not actually happen (Task 7's
                     # backfill selector relies on this to retry later).
                     log.warning("chunk_enrichment_failed", exc_info=True)
-                    dense, sparse = await embed_batch([c.text for c in batch], dense_embedder)
+                    dense, sparse = await embed_batch(
+                        [c.text for c in batch], dense_embedder, usage_sink=embed_token_sink
+                    )
 
             await upsert_points(
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
@@ -301,6 +313,19 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         await update_document_metadata(
             org_id, document_id, still_exists.meta or {}, collection_name=collection_name
         )
+
+        # Cost reporting (design 2026-08-15 §2): a hosted embedder's ACTUAL
+        # billed tokens for this doc run, attributed to the workspace embedding
+        # model so reporting can price it off model_catalog cost/token. TEI is
+        # self-hosted -> sink sums to 0 -> free, skip the row. commit=False
+        # rides the ingestion record's commit just below (one commit, not two).
+        embed_tokens = sum(embed_token_sink)
+        if embed_tokens > 0:
+            await quota_service.record_usage(
+                session, org_id=doc.org_id, user_id=doc.created_by,
+                model_id=embedding_model.id, feature="embedding",
+                prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
+            )
 
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.

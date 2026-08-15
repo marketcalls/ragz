@@ -96,6 +96,20 @@ COHERE_RERANK_MODELS = ("rerank-v4.0-fast", "rerank-v4.0-pro")
 COHERE_RERANK_DEFAULT = "rerank-v4.0-fast"
 
 
+def _search_units(body: dict[str, object]) -> int:
+    """Billed search-units from a Cohere v2 rerank response
+    (meta.billed_units.search_units). Any absence/malformation falls back to 1:
+    a performed rerank call bills at least one unit, so under-reporting to 0
+    would silently hide real cost."""
+    meta = body.get("meta")
+    billed = meta.get("billed_units") if isinstance(meta, dict) else None
+    raw = billed.get("search_units") if isinstance(billed, dict) else None
+    try:
+        return int(raw) if raw is not None else 1
+    except (TypeError, ValueError):
+        return 1
+
+
 class CohereReranker:
     """Cohere Rerank v4 API (rerank-v4.0-fast | rerank-v4.0-pro). Same
     [0,1]-scores-aligned-to-input contract as TeiReranker so retrieve() is
@@ -109,6 +123,12 @@ class CohereReranker:
         self._api_key = api_key
         self._model = model
         self._transport = transport
+        # Cost reporting (design 2026-08-15): Cohere bills in "search units".
+        # Set from the response's meta.billed_units on each call; the retrieval
+        # call site reads it to record feature="rerank" usage. Instance state is
+        # safe here (unlike the lru_cached embedder) -- get_reranker builds a
+        # fresh CohereReranker per retrieve() call, so it is never shared.
+        self.last_search_units: int = 0
 
     async def rerank(self, query: str, texts: list[str]) -> list[float]:
         try:
@@ -126,12 +146,17 @@ class CohereReranker:
                     },
                 )
                 r.raise_for_status()
+            body = r.json()
             scores = [0.0] * len(texts)
-            for item in r.json()["results"]:  # sorted by score; realign to input
+            for item in body["results"]:  # sorted by score; realign to input
                 idx = int(item["index"])
                 if idx < 0 or idx >= len(texts):
                     raise IndexError(f"cohere returned out-of-bounds index {idx}")
                 scores[idx] = float(item["relevance_score"])
+            # meta.billed_units.search_units is the billed count; a v2 response
+            # that omits it (or ships a non-int) falls back to 1 -- one call
+            # billed at least one unit, never zero.
+            self.last_search_units = _search_units(body)
             return scores
         except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
             raise RerankUnavailable("cohere reranker returned an unusable response") from exc

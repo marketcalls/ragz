@@ -84,6 +84,52 @@ async def test_litellm_embedder_posts_and_parses_embeddings() -> None:
     assert str(captured["url"]).endswith("/v1/embeddings")
 
 
+async def test_litellm_embedder_reports_billed_tokens() -> None:
+    # Cost reporting (design 2026-08-15): embed_with_usage surfaces the hosted
+    # provider's usage.total_tokens, summed across batches, for the recording
+    # call site. Same vectors as embed().
+    def handler(request: httpx.Request) -> httpx.Response:
+        n = len(json.loads(request.content)["input"])
+        return httpx.Response(200, json={
+            "data": [{"index": i, "embedding": [0.1, 0.2]} for i in range(n)],
+            "usage": {"total_tokens": 11 * n},
+        })
+
+    embedder = LiteLLMEmbedder(
+        base_url="http://litellm.test", master_key="sk-master",
+        model="text-embedding-3-small", batch_size=2,
+        transport=httpx.MockTransport(handler),
+    )
+    vecs, tokens = await embedder.embed_with_usage(["a", "b", "c"])
+    assert vecs == [[0.1, 0.2]] * 3
+    assert tokens == 11 * 3  # 22 (batch of 2) + 11 (batch of 1)
+
+
+async def test_litellm_embedder_missing_usage_degrades_to_zero_tokens() -> None:
+    # A response without a usage block must not fail -- undercount to 0.
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.1]}]})
+    )
+    embedder = LiteLLMEmbedder(
+        base_url="http://litellm.test", master_key="sk-master",
+        model="text-embedding-3-small", transport=transport,
+    )
+    _vecs, tokens = await embedder.embed_with_usage(["hello"])
+    assert tokens == 0
+
+
+async def test_self_hosted_embedders_report_zero_tokens() -> None:
+    # TEI and the hash backend are free -> 0 billed tokens.
+    tei = TeiDenseEmbedder(
+        "http://tei",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[[0.1, 0.2]])),
+    )
+    _v, tei_tokens = await tei.embed_with_usage(["a"])
+    assert tei_tokens == 0
+    _v2, hash_tokens = await HashDenseEmbedder(dim=8).embed_with_usage(["a"])
+    assert hash_tokens == 0
+
+
 async def test_litellm_embedder_non_200_raises_upstream_error() -> None:
     from ragz.core.errors import UpstreamError
 

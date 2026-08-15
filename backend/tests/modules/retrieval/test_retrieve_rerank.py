@@ -1,7 +1,9 @@
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
+from ragz.modules.quotas.models import UsageRecord
 from ragz.modules.retrieval.service import retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace, upsert_texts
 
@@ -47,6 +49,61 @@ async def test_rerank_min_score_reads_in_reranker_space(
     result = await retrieve(session, ctx, ws.id, "launch checklist")
     assert result.no_answer is True
     assert len(result.chunks) == 1 and result.chunks[0].score == 0.5
+
+
+class _BilledReranker:
+    """Stands in for a Cohere reranker: returns aligned scores and exposes a
+    billed search-unit count for the retrieval call site to record."""
+
+    def __init__(self, units: int) -> None:
+        self.last_search_units = units
+
+    async def rerank(self, query: str, texts: list[str]) -> list[float]:
+        return [1.0] * len(texts)
+
+
+async def test_rerank_records_usage_with_billed_units(
+    session: AsyncSession, qdrant_collection: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cost reporting (design 2026-08-15 §2): a billable reranker's search-units
+    are recorded as a feature='rerank' row (units>0, 0 tokens) on the retrieval
+    path -- staged on the session (commit=False), so it is visible in-session."""
+    ctx, ws = await seed_workspace(session, "rerankUsageOrg", rerank_enabled=True, top_k=2)
+    await upsert_texts(ctx, ws, ["alpha report one", "alpha report two"])
+
+    async def _fake_get_reranker(_session, _settings):  # type: ignore[no-untyped-def]
+        return _BilledReranker(units=5)
+
+    monkeypatch.setattr("ragz.modules.retrieval.service.get_reranker", _fake_get_reranker)
+    await retrieve(session, ctx, ws.id, "alpha report")
+
+    rows = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == ctx.org_id, UsageRecord.feature == "rerank"
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].units == 5
+    assert rows[0].prompt_tokens == 0 and rows[0].completion_tokens == 0
+
+
+async def test_local_reranker_records_no_rerank_usage(
+    session: AsyncSession, qdrant_collection: None,
+) -> None:
+    """The local lexical/TEI reranker exposes no billed units (getattr -> 0),
+    so the retrieval path records no rerank usage row for it."""
+    ctx, ws = await seed_workspace(session, "rerankLocalOrg", rerank_enabled=True, top_k=2)
+    await upsert_texts(ctx, ws, ["alpha report one", "alpha report two"])
+    await retrieve(session, ctx, ws.id, "alpha report")  # stack_env -> lexical backend
+
+    rows = (
+        await session.execute(
+            select(UsageRecord).where(UsageRecord.feature == "rerank")
+        )
+    ).scalars().all()
+    assert rows == []
 
 
 async def test_reranker_down_degrades_to_fusion_order(

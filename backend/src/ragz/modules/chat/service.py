@@ -1563,6 +1563,23 @@ async def stream_reply(
                 agent_prompt_tokens += gathered.prompt_tokens
                 agent_completion_tokens += gathered.completion_tokens
                 web_hits = gathered.web_results
+                # Cost reporting (design 2026-08-15 §2): meter each performed
+                # web search as one unit, but ONLY for a paid provider (Tavily);
+                # the default keyless DuckDuckGo is free (billable=False) and
+                # records nothing. commit=False stages the row so it rides this
+                # turn's end-of-turn record_usage commit rather than adding a
+                # blocking write on the streaming path.
+                if (
+                    gathered.web_searches > 0
+                    and web_searcher is not None
+                    and getattr(web_searcher, "billable", False)
+                ):
+                    await quota_service.record_usage(
+                        session, org_id=ctx.org_id, user_id=ctx.user_id,
+                        model_id=None, feature="web_search",
+                        prompt_tokens=0, completion_tokens=0,
+                        units=gathered.web_searches, commit=False,
+                    )
                 result = RetrievalResult(
                     # Loop findings outrank the stale weak single shot for the
                     # budget fit; merge_chunks dedupes on chunk identity.

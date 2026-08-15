@@ -208,7 +208,7 @@ async def test_embed_upsert_stamps_final_acl_after_race(
     real_embed_batch = ingest_module.embed_batch
     calls = 0
 
-    async def racing_embed_batch(texts, dense_embedder):  # type: ignore[no-untyped-def]
+    async def racing_embed_batch(texts, dense_embedder, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -221,7 +221,7 @@ async def test_embed_upsert_stamps_final_acl_after_race(
                 ).scalar_one()
                 race_doc.acl_group_ids = new_acl
                 await race_session.commit()
-        return await real_embed_batch(texts, dense_embedder)
+        return await real_embed_batch(texts, dense_embedder, **kwargs)
 
     monkeypatch.setattr(ingest_module, "embed_batch", racing_embed_batch)
 
@@ -266,7 +266,7 @@ async def test_embed_upsert_stamps_final_metadata_after_race(
     real_embed_batch = ingest_module.embed_batch
     calls = 0
 
-    async def racing_embed_batch(texts, dense_embedder):  # type: ignore[no-untyped-def]
+    async def racing_embed_batch(texts, dense_embedder, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -279,7 +279,7 @@ async def test_embed_upsert_stamps_final_metadata_after_race(
                 ).scalar_one()
                 race_doc.meta = {"doc_type": "policy"}
                 await race_session.commit()
-        return await real_embed_batch(texts, dense_embedder)
+        return await real_embed_batch(texts, dense_embedder, **kwargs)
 
     monkeypatch.setattr(ingest_module, "embed_batch", racing_embed_batch)
     await run_embed_upsert(doc.id)
@@ -426,3 +426,84 @@ async def test_run_embed_upsert_skips_enrichment_when_no_utility_model(
     await session.refresh(doc)
     assert doc.status == "indexed"
     assert doc.enriched is False
+
+
+# --- Cost reporting (design 2026-08-15 §2): embedding token attribution ------
+
+
+class _TokenReportingEmbedder:
+    """Wraps the deterministic hash embedder (so upserted vectors stay valid)
+    but reports a fixed hosted-provider token count per call, standing in for a
+    LiteLLM-routed embedder that returns usage.total_tokens."""
+
+    def __init__(self, dim: int, tokens_per_call: int) -> None:
+        from ragz.modules.retrieval.embeddings import HashDenseEmbedder
+
+        self._inner = HashDenseEmbedder(dim=dim)
+        self._tokens = tokens_per_call
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return await self._inner.embed(texts)
+
+    async def embed_with_usage(self, texts: list[str]) -> tuple[list[list[float]], int]:
+        return await self._inner.embed(texts), self._tokens
+
+
+async def test_run_embed_upsert_records_embedding_token_usage(
+    session: AsyncSession, qdrant_collection: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hosted embedder's billed tokens land as ONE feature='embedding' usage
+    row per document run, attributed to the workspace embedding model, with
+    units=0 (embedding is a token feature, never a per-call one)."""
+    from ragz.modules.quotas.models import UsageRecord
+    from ragz.modules.tenancy.models import Workspace
+
+    _ctx, ws, doc = await _upload_with_chunks(session, "embcost", enrichment_enabled=False)
+    workspace = await session.get(Workspace, ws.id)
+    assert workspace is not None
+    fake = _TokenReportingEmbedder(get_settings().embedding_dim, tokens_per_call=123)
+    monkeypatch.setattr(ingest_module, "get_dense_embedder", lambda *a, **k: fake)
+
+    await run_embed_upsert(doc.id)
+
+    rows = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == doc.org_id, UsageRecord.feature == "embedding"
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].prompt_tokens == 123  # TEXT is a single batch -> one embed call
+    assert rows[0].completion_tokens == 0
+    assert rows[0].units == 0
+    assert rows[0].model_id == workspace.embedding_model_id
+    # The pre-existing ingestion attribution row is still written alongside it.
+    ingestion_rows = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == doc.org_id, UsageRecord.feature == "ingestion"
+            )
+        )
+    ).scalars().all()
+    assert len(ingestion_rows) == 1
+
+
+async def test_run_embed_upsert_skips_embedding_row_when_no_tokens(
+    session: AsyncSession, qdrant_collection: None,
+) -> None:
+    """Self-hosted TEI / the hash test backend report 0 tokens -> no embedding
+    usage row (free), while the ingestion attribution row is unaffected."""
+    from ragz.modules.quotas.models import UsageRecord
+
+    _ctx, _ws, doc = await _upload_with_chunks(session, "embcost0", enrichment_enabled=False)
+    await run_embed_upsert(doc.id)  # default hash backend -> embed_with_usage tokens=0
+
+    embedding_rows = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == doc.org_id, UsageRecord.feature == "embedding"
+            )
+        )
+    ).scalars().all()
+    assert embedding_rows == []

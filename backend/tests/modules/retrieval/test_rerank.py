@@ -52,6 +52,36 @@ async def test_cohere_reranker_aligns_scores_to_input_order() -> None:
     assert scores == [0.4, 0.1, 0.9]
 
 
+async def test_cohere_reranker_captures_billed_search_units() -> None:
+    # Cost reporting (design 2026-08-15): meta.billed_units.search_units is
+    # surfaced on the instance for the retrieval call site to record.
+    payload = {
+        "results": [
+            {"index": 0, "relevance_score": 0.7},
+            {"index": 1, "relevance_score": 0.3},
+        ],
+        "meta": {"billed_units": {"search_units": 3}},
+    }
+    r = CohereReranker(
+        base_url="https://api.cohere.com", api_key="ck-test",
+        model="rerank-v4.0-fast", transport=_cohere_transport(payload),
+    )
+    await r.rerank("q", ["a", "b"])
+    assert r.last_search_units == 3
+
+
+async def test_cohere_reranker_search_units_defaults_to_one_when_absent() -> None:
+    # A response without meta.billed_units still bills at least one unit -- a
+    # performed call under-reporting to 0 would silently hide real cost.
+    payload = {"results": [{"index": 0, "relevance_score": 0.9}]}
+    r = CohereReranker(
+        base_url="https://api.cohere.com", api_key="ck-test",
+        model="rerank-v4.0-fast", transport=_cohere_transport(payload),
+    )
+    await r.rerank("q", ["a"])
+    assert r.last_search_units == 1
+
+
 async def test_cohere_reranker_maps_http_error_to_rerank_unavailable() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "invalid api token"})

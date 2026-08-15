@@ -366,12 +366,17 @@ class FakeWebSearcher:
     hit so a scripted {"action":"web_search",...} planner step always finds
     something to cite."""
 
-    def __init__(self, results: list[WebResult] | None = None) -> None:
+    def __init__(
+        self, results: list[WebResult] | None = None, *, billable: bool = False
+    ) -> None:
         self.results = results if results is not None else [
             WebResult(title="ISO 45001 overview", url="https://example.test/iso",
                       snippet="ISO 45001 is an OHS standard."),
         ]
         self.queries: list[str] = []
+        # Cost reporting: mirrors the real searchers' `billable` flag so tests
+        # can exercise both the metered (Tavily) and free (DuckDuckGo) paths.
+        self.billable = billable
 
     async def __call__(self, session, query):  # type: ignore[no-untyped-def]
         self.queries.append(query)

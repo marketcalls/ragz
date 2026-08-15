@@ -111,6 +111,13 @@ class Settings(BaseSettings):
     # tokens of allocation. 0 disables max_budget (local-only installs).
     litellm_usd_per_million_tokens: float = 5.0
 
+    # Cost reporting (design 2026-08-15 §2): estimated $ for per-call features.
+    # Rerank bills in Cohere "search units"; web search bills per Tavily call.
+    # 0.0 (default) hides $ for these features -- token features price off the
+    # model_catalog cost/token instead. Reporting-only; never on the hot path.
+    rerank_usd_per_call: float = 0.0
+    web_search_usd_per_call: float = 0.0
+
     # Plan G Task 3: connection-pool sizing (was hardcoded; now tunable per deployment).
     db_pool_size: int = 10
     db_max_overflow: int = 20

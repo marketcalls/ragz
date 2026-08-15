@@ -56,14 +56,25 @@ async def record_usage(
     feature: str,
     prompt_tokens: int,
     completion_tokens: int,
+    units: int = 0,
+    commit: bool = True,
 ) -> None:
+    """Append one usage-ledger row. `units` is for per-call features (rerank,
+    web_search); token features leave it 0 and it is never summed as tokens.
+
+    `commit=False` only stages the row (session.add) so a best-effort cost
+    record incurred mid-request (embedding/rerank/web_search) rides the flow's
+    next real commit -- the end-of-turn chat/ingestion record -- instead of
+    adding its own blocking round-trip on the hot path (design Phase 1 §5)."""
     session.add(
         UsageRecord(
             org_id=org_id, user_id=user_id, model_id=model_id, feature=feature,
             prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            units=units,
         )
     )
-    await session.commit()
+    if commit:
+        await session.commit()
 
 
 _TOKENS = UsageRecord.prompt_tokens + UsageRecord.completion_tokens

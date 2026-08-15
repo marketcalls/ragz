@@ -340,14 +340,24 @@ def chunk_document(
 
 
 async def embed_batch(
-    texts: list[str], dense_embedder: DenseEmbedder, *, sparse_texts: list[str] | None = None
+    texts: list[str], dense_embedder: DenseEmbedder, *,
+    sparse_texts: list[str] | None = None, usage_sink: list[int] | None = None,
 ) -> tuple[list[list[float]], list[models.SparseVector]]:
     """Embed one batch dense + sparse (spec §3.2 stage 3). `sparse_texts`
     (Plan K §4) lets keyword-augmented text feed ONLY the sparse/BM25 side —
     dense embeddings stay semantically anchored to the chunk's real content;
     keywords are a lexical-match aid, not a meaning shift. Defaults to
-    `texts` so every pre-K caller is byte-identical."""
-    dense = await dense_embedder.embed(texts)
+    `texts` so every pre-K caller is byte-identical.
+
+    `usage_sink` (cost reporting, design 2026-08-15): when provided, this
+    batch's billed dense-embedding token count is appended to it so the caller
+    can sum one embedding usage record per document run. Omitted (the default)
+    -> byte-identical to the pre-cost-reporting call: plain `embed`, no usage."""
+    if usage_sink is not None:
+        dense, tokens = await dense_embedder.embed_with_usage(texts)
+        usage_sink.append(tokens)
+    else:
+        dense = await dense_embedder.embed(texts)
     sparse = await asyncio.to_thread(embed_sparse, sparse_texts or texts)
     return dense, sparse
 

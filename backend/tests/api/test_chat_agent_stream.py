@@ -317,6 +317,79 @@ async def test_web_search_tool_produces_url_citations(
         )
         assert assistant_node["citations"][-1]["url"] == web_searcher.results[0].url
 
+        # Cost reporting (design 2026-08-15): the default FakeWebSearcher is
+        # NOT billable (mirrors the free DuckDuckGo default), so this metered
+        # web_search flow records NO web_search usage row.
+        from ragz.modules.quotas.models import UsageRecord
+
+        web_rows = (
+            await session.execute(
+                select(UsageRecord).where(UsageRecord.feature == "web_search")
+            )
+        ).scalars().all()
+        assert web_rows == []
+
+
+async def test_web_search_records_usage_for_billable_provider(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """Cost reporting (design 2026-08-15 §2): a billable web-search provider
+    (Tavily) records ONE feature='web_search' usage row (units=1, 0 tokens) per
+    performed search, attributed to the asking user. Clones the citation flow
+    above but injects a billable searcher and asserts the metered row."""
+    from ragz.modules.quotas.models import UsageRecord
+
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    web_searcher = FakeWebSearcher(billable=True)
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer, web_searcher=web_searcher,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _flag_tools_unreliable(client, h_super)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"web_search_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200
+        r_secret = await client.put(
+            "/api/v1/admin/secrets/tavily", json={"value": "tvly-test-key"}, headers=h_super,
+        )
+        assert r_secret.status_code == 200
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={
+                "content": "What is the muster point and when was it approved?",
+                "web_search_consented": True,
+            },
+            headers=h_admin,
+        )
+        frames = parse_sse(r.text)
+        assert "agent_step" in [n for n, _ in frames]
+
+        web_rows = (
+            await session.execute(
+                select(UsageRecord).where(
+                    UsageRecord.org_id == seeded_user.org_id,
+                    UsageRecord.feature == "web_search",
+                )
+            )
+        ).scalars().all()
+        assert len(web_rows) == 1
+        assert web_rows[0].units == 1
+        assert web_rows[0].prompt_tokens == 0 and web_rows[0].completion_tokens == 0
+        assert web_rows[0].user_id == seeded_user.id
+
 
 async def test_web_search_tool_result_frame_bounded_and_hostname_parsed(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],

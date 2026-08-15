@@ -19,6 +19,15 @@ class DenseEmbedder(Protocol):
 
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
+    async def embed_with_usage(self, texts: list[str]) -> tuple[list[list[float]], int]:
+        """Cost-reporting seam: same vectors as `embed`, plus the hosted API's
+        billed token count for THIS call (0 for self-hosted TEI / the test
+        hash backend, which cost nothing). Returned, never stashed on the
+        instance -- get_dense_embedder lru_caches one shared embedder across
+        concurrent requests, so per-call usage must not live in instance
+        state (it would race)."""
+        ...
+
 
 class TeiDenseEmbedder:
     """Dense embeddings via a TEI server (bge-m3). Batched HTTP POST /embed."""
@@ -49,6 +58,10 @@ class TeiDenseEmbedder:
                 out.extend(r.json())
         return out
 
+    async def embed_with_usage(self, texts: list[str]) -> tuple[list[list[float]], int]:
+        # Self-hosted TEI bills nothing -- report 0 tokens (free).
+        return await self.embed(texts), 0
+
 
 class LiteLLMEmbedder:
     """Dense embeddings via the SAME LiteLLM gateway chat already uses (DOC-10),
@@ -72,8 +85,13 @@ class LiteLLMEmbedder:
         self._batch_size = batch_size
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        vectors, _ = await self.embed_with_usage(texts)
+        return vectors
+
+    async def embed_with_usage(self, texts: list[str]) -> tuple[list[list[float]], int]:
         headers = {"Authorization": f"Bearer {self._master_key}"}
         out: list[list[float]] = []
+        total_tokens = 0
         try:
             async with httpx.AsyncClient(
                 base_url=self._base_url, transport=self._transport,
@@ -97,9 +115,16 @@ class LiteLLMEmbedder:
                         raise UpstreamError("malformed embedding response from gateway") from exc
                     ordered = sorted(body.get("data", []), key=lambda d: d["index"])
                     out.extend([d["embedding"] for d in ordered])
+                    # Hosted providers return billed usage; missing/malformed
+                    # usage degrades to 0 (a cost undercount is never a failure).
+                    usage = body.get("usage") or {}
+                    try:
+                        total_tokens += int(usage.get("total_tokens") or 0)
+                    except (TypeError, ValueError):
+                        pass
         except httpx.HTTPError as exc:
             raise UpstreamError("embedding gateway unreachable") from exc
-        return out
+        return out, total_tokens
 
 
 class HashDenseEmbedder:
@@ -113,6 +138,10 @@ class HashDenseEmbedder:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return [self._one(t) for t in texts]
+
+    async def embed_with_usage(self, texts: list[str]) -> tuple[list[list[float]], int]:
+        # Deterministic test/dev backend: no hosted API, no billed tokens.
+        return await self.embed(texts), 0
 
     def _one(self, text: str) -> list[float]:
         vec = [0.0] * self._dim

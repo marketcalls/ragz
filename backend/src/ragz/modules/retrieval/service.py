@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.core.config import get_settings
 from ragz.core.errors import NotFoundError, WorkspaceAccessDenied
 from ragz.modules.documents.pipeline import Chunk
+from ragz.modules.quotas import service as quota_service
 from ragz.modules.retrieval.client import EPHEMERAL_COLLECTION, get_qdrant
 from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
 from ragz.modules.retrieval.rerank import RerankUnavailable, get_reranker
@@ -481,7 +482,20 @@ async def retrieve(
         embedding_model.id, provider_kind=embedding_model.provider_kind,
         litellm_model_name=embedding_model.litellm_model_name,
     )
-    dense_vec = (await dense_embedder.embed([query]))[0]
+    dense_vecs, embed_tokens = await dense_embedder.embed_with_usage([query])
+    dense_vec = dense_vecs[0]
+    # Cost reporting (design 2026-08-15 §2): the query embedding's billed tokens
+    # (hosted providers only; self-hosted TEI / the hash test backend report 0).
+    # commit=False stages the row so it rides this turn's end-of-turn commit
+    # (the chat/no-answer/general-knowledge record_usage) rather than adding a
+    # blocking round-trip before the LLM even starts streaming. Zero tokens ->
+    # nothing to bill, skip the row entirely.
+    if embed_tokens > 0:
+        await quota_service.record_usage(
+            session, org_id=ctx.org_id, user_id=ctx.user_id,
+            model_id=embedding_model.id, feature="embedding",
+            prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
+        )
     sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
     flt = _tenant_filter(
         org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx),
@@ -516,6 +530,19 @@ async def retrieve(
                 workspace_id=str(workspace_id), error=str(exc),
             )
         else:
+            # Cost reporting (design 2026-08-15 §2): a billable reranker (Cohere)
+            # exposes its billed search-units; local TEI/lexical rerankers don't
+            # (getattr -> 0) and record nothing. units are calls, not tokens.
+            # commit=False -> rides this turn's end-of-turn commit (same hot-path
+            # reasoning as the query-embedding record above).
+            rerank_units = getattr(reranker, "last_search_units", 0)
+            if rerank_units > 0:
+                await quota_service.record_usage(
+                    session, org_id=ctx.org_id, user_id=ctx.user_id,
+                    model_id=None, feature="rerank",
+                    prompt_tokens=0, completion_tokens=0,
+                    units=rerank_units, commit=False,
+                )
             order = sorted(range(len(candidates)), key=lambda i: scores[i], reverse=True)
             top = order[:k]
             reranked = [replace(candidates[i], score=scores[i]) for i in top]

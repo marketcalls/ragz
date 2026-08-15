@@ -427,6 +427,26 @@ async def test_web_search_step_yields_tool_result_with_results(  # type: ignore[
     assert [r.url for r in result.web_results] == [web_searcher.results[0].url]
 
 
+async def test_gathered_counts_performed_web_searches(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """Cost reporting (design 2026-08-15): AgentGathered.web_searches counts
+    actually-performed web_search calls so stream_reply can meter them. A single
+    consented, successful search -> web_searches == 1."""
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    gathered: AgentGathered | None = None
+    async for item in run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=FakeWebSearcher(), metadata_field_names=[],
+        collection_name=COLLECTION, web_search_consented=True,
+    ):
+        if isinstance(item, AgentGathered):
+            gathered = item
+    assert gathered is not None and gathered.web_searches == 1
+
+
 async def test_non_web_search_step_never_yields_tool_result(  # type: ignore[no-untyped-def]
     session, chat_env, ctx, flagged_model
 ) -> None:

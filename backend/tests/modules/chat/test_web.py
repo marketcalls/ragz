@@ -50,6 +50,14 @@ async def test_search_parses_results_and_sends_bearer(
     assert seen[0].url.path == "/search"
 
 
+def test_billable_flags_distinguish_paid_from_free_provider(
+    test_settings: Settings,
+) -> None:
+    # Cost reporting (design 2026-08-15): Tavily is metered, DuckDuckGo is free.
+    assert TavilySearcher(settings=test_settings).billable is True
+    assert DuckDuckGoSearcher().billable is False
+
+
 async def test_missing_key_raises_not_found(
     session: AsyncSession, test_settings: Settings
 ) -> None:
