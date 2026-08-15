@@ -1,0 +1,66 @@
+name: Dependency audit (PR gate)
+
+# --------------------------------------------------------------------------
+# RAGZ-PUB-15: supply-chain / deployment-reproducibility gate.
+#
+# Runs on every PR. Two lightweight jobs, one per dependency tree:
+#   - frontend-audit: pnpm audit against frontend/pnpm-lock.yaml
+#   - backend-audit:  pip-audit against the backend/uv.lock-resolved env
+#
+# Both fail the job (blocking the PR) when a known advisory is found.
+# frontend-audit is explicitly scoped to --audit-level=high; pip-audit has
+# no first-class severity threshold flag, so it fails on any advisory it
+# finds (a strict superset of "fail on high").
+#
+# GitHub Actions are pinned to commit SHAs (not mutable major tags) per the
+# same hardening rule as .github/workflows/redteam-nightly.yml.
+# --------------------------------------------------------------------------
+
+on:
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: pnpm audit (prod deps, high+ severity)
+        run: pnpm audit --prod --audit-level=high
+
+  backend-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: pip-audit
+        run: uvx pip-audit --strict --local

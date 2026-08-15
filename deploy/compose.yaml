@@ -1,7 +1,8 @@
 name: ragz
 services:
   postgres:
-    image: postgres:16-alpine
+    # RAGZ-PUB-15: pinned to the digest for postgres:16-alpine as of 2026-08-15 (16.15-alpine3.24)
+    image: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
     environment:
       POSTGRES_USER: ragz
       POSTGRES_PASSWORD: ragz
@@ -17,7 +18,8 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    # RAGZ-PUB-15: pinned to the digest for redis:7-alpine as of 2026-08-15
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     ports: ["127.0.0.1:56379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -26,7 +28,8 @@ services:
       retries: 10
 
   qdrant:
-    image: qdrant/qdrant:v1.18.0
+    # RAGZ-PUB-15: pinned to the digest for qdrant/qdrant:v1.18.0 as of 2026-08-15
+    image: qdrant/qdrant:v1.18.0@sha256:b3063c673f3973877c038eeecc392bad5011f072ee7892b56c9a8e204a3bdea9
     ports: ["127.0.0.1:56333:6333"]
     volumes: [qdrantdata:/qdrant/storage]
     healthcheck:
@@ -37,7 +40,9 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # RAGZ-PUB-15: was floating minio/minio:latest; pinned to the digest that
+    # :latest resolved to on 2026-08-15. Bump deliberately (re-resolve digest), don't float.
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ragz       # dev-only credentials — override in prod env
@@ -53,7 +58,8 @@ services:
   tei:
     # First start downloads the BAAI/bge-m3 model (~2.3 GB) into the teidata volume;
     # start_period below allows for it. CPU image; GPU variants are a prod concern.
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    # RAGZ-PUB-15: pinned to the digest for cpu-1.8 as of 2026-08-15
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8@sha256:8de25e75ce39617f17f2f6c77d60a4f75b65e779ed5005420eb1400072a15c1c
     platform: linux/amd64  # no arm64 build published; runs under emulation on Apple Silicon
     profiles: ["ml"]  # not required for CI/dev without ML; tests use the hash backend
     command: --model-id BAAI/bge-m3 --max-batch-tokens 4096 --auto-truncate --max-client-batch-size 32
@@ -70,7 +76,8 @@ services:
     # Same TEI image serving a cross-encoder instead of an embedder. First start
     # downloads BAAI/bge-reranker-v2-m3 (~2.3 GB) into the teirerankdata volume;
     # start_period allows for it. CPU image; GPU variants are a prod concern.
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    # RAGZ-PUB-15: pinned to the digest for cpu-1.8 as of 2026-08-15
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8@sha256:8de25e75ce39617f17f2f6c77d60a4f75b65e779ed5005420eb1400072a15c1c
     platform: linux/amd64  # no arm64 build published; runs under emulation on Apple Silicon (same as tei)
     profiles: ["ml"]  # not required for CI/dev; tests use the lexical backend
     command: --model-id BAAI/bge-reranker-v2-m3
@@ -84,7 +91,10 @@ services:
       start_period: 180s
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable  # rolling stable; bump policy per PRD MODEL-13 (monthly, behind a probe run)
+    # rolling stable; bump policy per PRD MODEL-13 (monthly, behind a probe run)
+    # RAGZ-PUB-15: pinned to the digest that :main-stable resolved to on 2026-08-15;
+    # bump deliberately (re-resolve digest per the monthly policy), don't float.
+    image: ghcr.io/berriai/litellm:main-stable@sha256:154e23bb5f31b1f10e16392a8ef299bd2cde08de3a64a6849002cfcc25ce3c63
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,7 +115,8 @@ services:
   dex:
     # Manual SSO smoke target (see Plan F Completion Criteria). Not used in CI —
     # the OIDC protocol seam is covered by MockTransport tests.
-    image: dexidp/dex:v2.41.1
+    # RAGZ-PUB-15: pinned to the digest for dexidp/dex:v2.41.1 as of 2026-08-15
+    image: dexidp/dex:v2.41.1@sha256:bc7cfce7c17f52864e2bb2a4dc1d2f86a41e3019f6d42e81d92a301fad0c8a1d
     profiles: ["sso"]
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     volumes: ["./dex-config.yaml:/etc/dex/config.yaml:ro"]
