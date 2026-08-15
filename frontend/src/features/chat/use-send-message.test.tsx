@@ -141,6 +141,31 @@ test('an upload failure on send surfaces an error, keeps pending files, and does
   expect(result.current.sending).toBe(false);
 });
 
+test('a first message before the workspace resolves surfaces an error, never a silent no-op', async () => {
+  const createChat = vi.fn();
+  const onNewChat = vi.fn();
+  const { result } = renderHook(() =>
+    useSendMessage({
+      chatId: null,
+      workspaceId: null, // workspace context not yet resolved
+      createChat,
+      sendToChat: vi.fn(),
+      onNewChat,
+      pendingFiles: [],
+      clearPending: vi.fn(),
+    }),
+  );
+
+  await act(async () => result.current.send('first message'));
+
+  // Nothing is sent, but the user is TOLD why -- not left staring at a chat
+  // where their message silently never appeared (bug report 2026-08-15).
+  expect(createChat).not.toHaveBeenCalled();
+  expect(onNewChat).not.toHaveBeenCalled();
+  expect(result.current.error).toContain('workspace');
+  expect(result.current.sending).toBe(false);
+});
+
 test('a chat-creation failure surfaces an error and never attempts an upload', async () => {
   const createChat = vi.fn().mockRejectedValue(new Error('boom'));
   const { result } = renderHook(() =>

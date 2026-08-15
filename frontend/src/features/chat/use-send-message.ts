@@ -45,7 +45,13 @@ export function useSendMessage({
       try {
         let targetChatId = chatId;
         if (!targetChatId) {
-          if (!workspaceId) return;
+          if (!workspaceId) {
+            // Never a silent no-op: a first message sent before the workspace
+            // has resolved must surface *why* nothing happened, not look like a
+            // dropped message. Retrying once the workspace loads succeeds.
+            setError('Still loading your workspace — please try again in a moment.');
+            return;
+          }
           try {
             const chat = await createChat({ workspace_id: workspaceId });
             targetChatId = chat.id;
