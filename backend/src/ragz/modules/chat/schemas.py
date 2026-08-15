@@ -24,6 +24,12 @@ class MessageSend(BaseModel):
     model_id: UUID | None = None
     reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
     attachment_ids: list[UUID] | None = None
+    # RAGZ-PUB-08 item 2: explicit per-turn user consent to let the agent run
+    # an EXTERNAL web search (the redacted, user-question-derived query leaves
+    # Ragz to a third-party provider). Fail-closed: absent/False => the planner
+    # cannot perform any web_search this turn, even when the workspace has web
+    # search enabled and a Tavily key stored.
+    web_search_consented: bool = False
 
 
 class RegenerateRequest(BaseModel):
@@ -31,6 +37,10 @@ class RegenerateRequest(BaseModel):
 
     model_id: UUID | None = None
     reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
+    # RAGZ-PUB-08 item 2: same explicit external-web-search consent as
+    # MessageSend; fail-closed default means a regenerate never issues a new
+    # external search unless the caller re-consents.
+    web_search_consented: bool = False
 
 
 class ChatCreate(BaseModel):

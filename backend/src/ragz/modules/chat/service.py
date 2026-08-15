@@ -1177,6 +1177,7 @@ async def stream_reply(
     reasoning_effort: str | None = None,
     attachment_sources: Sequence[PromptSource] = (),
     image_attachments: Sequence[ChatAttachment] = (),
+    web_search_consented: bool = False,
 ) -> AsyncIterator[SSEEvent]:
     """The one SSE flow (spec 3.4): retrieval_started -> sources -> token* ->
     citations -> done. Used by both send and regenerate. `model` is resolved by
@@ -1389,6 +1390,7 @@ async def stream_reply(
                 model=model, completer=completer, retriever=retriever,
                 chunk_reader=chunk_reader, web_searcher=web_searcher if use_web else None,
                 metadata_field_names=field_names, collection_name=collection_name,
+                web_search_consented=web_search_consented,
             ):
                 if isinstance(gather_item, AgentStep):
                     yield agent_step_event(

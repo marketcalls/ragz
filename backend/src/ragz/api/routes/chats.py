@@ -253,6 +253,7 @@ async def send_message(
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
         reasoning_effort=reasoning_effort, attachment_sources=attachment_sources,
         image_attachments=image_attachments,
+        web_search_consented=body.web_search_consented,
     ))
 
 
@@ -287,6 +288,7 @@ async def regenerate(
         session_factory=request.app.state.session_factory, completer=completer,
         web_searcher=request.app.state.web_searcher or TavilySearcher(settings=settings),
         reasoning_effort=reasoning_effort,
+        web_search_consented=body.web_search_consented if body is not None else False,
     ))
 
 

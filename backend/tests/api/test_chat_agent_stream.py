@@ -266,7 +266,11 @@ async def test_web_search_tool_produces_url_citations(
         assert r_secret.status_code == 200
         r = await client.post(
             f"/api/v1/chats/{chat_id}/messages",
-            json={"content": "What is the muster point and when was it approved?"},
+            json={
+                "content": "What is the muster point and when was it approved?",
+                # RAGZ-PUB-08 item 2: external web search requires explicit consent.
+                "web_search_consented": True,
+            },
             headers=h_admin,
         )
         frames = parse_sse(r.text)
@@ -296,6 +300,53 @@ async def test_web_search_tool_produces_url_citations(
             m for m in r_hist.json()["messages"][0]["children"] if m["role"] == "assistant"
         )
         assert assistant_node["citations"][-1]["url"] == web_searcher.results[0].url
+
+
+async def test_web_search_without_consent_never_calls_searcher_via_api(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """RAGZ-PUB-08 item 2 (API-level fail-closed): identical setup to
+    test_web_search_tool_produces_url_citations -- web_search_enabled=True, the
+    tavily secret stored, a searcher injected, the planner scripting a
+    web_search action -- but the message body omits web_search_consented. The
+    external searcher must NEVER be called; the consent gate defaults closed at
+    the API boundary, not just in execute_tool's unit tests."""
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    web_searcher = FakeWebSearcher()
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer, web_searcher=web_searcher,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _flag_tools_unreliable(client, h_super)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"web_search_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200
+        r_secret = await client.put(
+            "/api/v1/admin/secrets/tavily", json={"value": "tvly-test-key"}, headers=h_super,
+        )
+        assert r_secret.status_code == 200
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            # no web_search_consented -> defaults False -> fail-closed
+            json={"content": "What is the muster point and when was it approved?"},
+            headers=h_admin,
+        )
+        assert r.status_code == 200
+    # The external provider was never contacted despite full web-search setup.
+    assert web_searcher.queries == []
 
 
 async def test_web_search_not_offered_when_disabled_or_decline(
