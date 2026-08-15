@@ -13,6 +13,7 @@ signed-S3-URL design. These tests pin:
 
 import socket
 import time
+from collections.abc import AsyncIterator
 from io import BytesIO
 from uuid import uuid4
 
@@ -176,6 +177,143 @@ async def test_fetch_rejects_oversize_content_length(monkeypatch: pytest.MonkeyP
         "https://pub.example.com/big.png", transport=httpx.MockTransport(handler), max_bytes=1000
     )
     assert out is None
+
+
+async def test_fetch_rejects_oversize_streamed_no_content_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix 1: a host that OMITS content-length and streams a body larger than
+    max_bytes must be aborted mid-stream (never fully buffered)."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _addrinfo("93.184.216.34"))
+
+    async def _body() -> AsyncIterator[bytes]:
+        yield b"x" * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # An async streaming body yields a response with NO content-length
+        # header, so only the mid-stream size cap can catch it.
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png"},
+            content=_body(),
+        )
+
+    out = await media.fetch_image_safely(
+        "https://pub.example.com/stream.png",
+        transport=httpx.MockTransport(handler),
+        max_bytes=1000,
+    )
+    assert out is None
+
+
+async def test_fetch_rejects_pixel_flood_bomb(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix 2: a small compressed image whose raster exceeds the pixel cap is
+    rejected BEFORE `.convert`. Monkeypatch the cap low + feed a modest image
+    to keep it deterministic and fast."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _addrinfo("93.184.216.34"))
+    monkeypatch.setattr(media, "_MAX_IMAGE_PIXELS", 100)  # 50x50 = 2500 px > 100
+    png = _png_bytes(size=(50, 50))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=png, headers={"content-type": "image/png"})
+
+    out = await media.fetch_image_safely(
+        "https://pub.example.com/bomb.png", transport=httpx.MockTransport(handler)
+    )
+    assert out is None
+
+
+def test_resolve_safe_returns_validated_ips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix 3: the guard hands back the *validated* IPs so the caller can pin
+    the socket to an address it already checked."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _addrinfo("93.184.216.34"))
+    assert media._resolve_safe("pub.example.com") == ["93.184.216.34"]
+
+
+def test_resolve_safe_rejects_mixed_public_private(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix 3: a host that answers BOTH a public and a private record (the
+    classic rebind split) is rejected outright -- any bad IP fails the set."""
+
+    def _multi(*a: object, **k: object) -> list[tuple]:
+        return _addrinfo("93.184.216.34") + _addrinfo("10.0.0.1")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _multi)
+    assert media._resolve_safe("host.example") is None
+    assert media._host_is_blocked("host.example") is True
+
+
+async def test_pinned_transport_pins_ip_keeps_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix 3: the production pin dials the validated literal IP while keeping
+    the hostname for the Host header and TLS SNI (no TLS weakening)."""
+    captured: dict[str, object] = {}
+
+    async def _fake_super(self: object, request: httpx.Request) -> httpx.Response:
+        captured["url_host"] = request.url.host
+        captured["sni"] = request.extensions.get("sni_hostname")
+        captured["host_header"] = request.headers.get("host")
+        return httpx.Response(200, content=b"")
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _fake_super)
+    pinned = media._PinnedTransport("93.184.216.34", "pub.example.com")
+    req = httpx.Request("GET", "https://pub.example.com/x.png")
+    await pinned.handle_async_request(req)
+    assert captured["url_host"] == "93.184.216.34"
+    assert captured["sni"] == "pub.example.com"
+    assert captured["host_header"] == "pub.example.com"
+
+
+def test_host_is_blocked_ipv4_mapped_ipv6(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix 4: `::ffff:169.254.169.254` (IPv4-mapped link-local metadata addr)
+    is blocked even where CPython's is_private/is_reserved misclassify the v6
+    form -- the mapped IPv4 is checked too."""
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: _addrinfo("::ffff:169.254.169.254")
+    )
+    assert media._host_is_blocked("metadata.example") is True
+
+
+async def test_negative_cache_prevents_refetch(
+    test_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix 5: a failing fetch is negatively cached; a second replay of the same
+    ref is served from cache and does NOT re-drive the upstream fetch."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _addrinfo("93.184.216.34"))
+
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.store: dict[str, bytes] = {}
+
+        async def get(self, key: str) -> bytes | None:
+            return self.store.get(key)
+
+        async def set(self, key: str, value: bytes, ex: int | None = None) -> None:
+            self.store[key] = value
+
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        # Non-image content-type -> fetch_image_safely returns None (a failure).
+        return httpx.Response(200, text="nope", headers={"content-type": "text/html"})
+
+    redis = _FakeRedis()
+    transport = httpx.MockTransport(handler)
+    ref = media.mint_image_ref(
+        "https://pub.example.com/fail",
+        org_id=uuid4(), chat_id=uuid4(), message_id=uuid4(),
+        settings=test_settings, now=1_000_000,
+    )
+    first = await media.get_or_fetch_image(
+        ref, redis=redis, settings=test_settings, now=1_000_000, transport=transport
+    )
+    second = await media.get_or_fetch_image(
+        ref, redis=redis, settings=test_settings, now=1_000_000, transport=transport
+    )
+    assert first is None
+    assert second is None
+    assert calls["n"] == 1  # second served from the negative cache
 
 
 async def test_fetch_rejects_private_host(monkeypatch: pytest.MonkeyPatch) -> None:
