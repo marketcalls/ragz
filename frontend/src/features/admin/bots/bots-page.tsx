@@ -1,4 +1,3 @@
-import { Plus } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
 
 import type { BotIntegrationOut } from '@/api/types';
@@ -15,11 +14,12 @@ import { toast } from '@/components/ui/toaster';
 import { useUsers } from '@/features/admin/users/queries';
 import { useWorkspaces } from '@/features/workspaces/queries';
 
+import { BotIcon } from './bot-icon';
 import { useBots, useCreateBot, useDeleteBot, useSetBotEnabled } from './queries';
 
 type Platform = 'telegram' | 'discord' | 'slack';
 
-const PLATFORMS: Platform[] = ['telegram', 'discord', 'slack'];
+const ACTIVE_PLATFORMS: Platform[] = ['telegram', 'discord', 'slack'];
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -68,6 +68,22 @@ export function BotsPage() {
     setOpen(next);
   };
 
+  // A platform card seeds the add-bot dialog to that platform and opens it
+  // fresh (clearing any state left over from a previous, cancelled attempt).
+  const openFor = (p: Platform): void => {
+    setPlatform(p);
+    setName('');
+    setUserId('');
+    setWorkspaceId('');
+    setToken('');
+    setSigningSecret('');
+    createBot.reset();
+    setOpen(true);
+  };
+
+  const connectedCount = (p: Platform): number =>
+    (bots.data ?? []).filter((bot) => bot.platform === p).length;
+
   const onSubmit = (e: FormEvent): void => {
     e.preventDefault();
     createBot.mutate({
@@ -87,16 +103,37 @@ export function BotsPage() {
 
   return (
     <>
-      <TopBar
-        title="Bots"
-        actions={
-          <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
-            <Plus className="h-3.5 w-3.5" aria-hidden /> Add bot
-          </Button>
-        }
-      />
+      <TopBar title="Bots" />
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-4xl">
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {ACTIVE_PLATFORMS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => openFor(p)}
+                className="flex flex-col items-center gap-2 rounded-lg border border-line bg-bg p-4 text-center transition-colors hover:bg-subtle hover:opacity-90"
+              >
+                <BotIcon platform={p} />
+                <span className="text-[13px] font-medium text-ink">{capitalize(p)}</span>
+                <span className="rounded-full bg-subtle px-2 py-0.5 text-[11px] text-secondary">
+                  {connectedCount(p)} connected
+                </span>
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              className="flex flex-col items-center gap-2 rounded-lg border border-line bg-subtle p-4 text-center opacity-60"
+            >
+              <BotIcon platform="whatsapp" />
+              <span className="text-[13px] font-medium text-ink">WhatsApp</span>
+              <span className="rounded-full bg-bg px-2 py-0.5 text-[11px] text-muted">
+                Coming soon
+              </span>
+            </button>
+          </div>
           {bots.isPending ? <Spinner label="Loading bots…" /> : null}
           {bots.isError ? <QueryError error={bots.error} onRetry={() => bots.refetch()} /> : null}
           {bots.data ? (
@@ -204,18 +241,7 @@ export function BotsPage() {
             <form onSubmit={onSubmit} className="space-y-3">
               <div>
                 <Label htmlFor="bot-platform">Platform</Label>
-                <NativeSelect
-                  id="bot-platform"
-                  required
-                  value={platform}
-                  onChange={(e) => setPlatform(e.target.value as Platform)}
-                >
-                  {PLATFORMS.map((p) => (
-                    <option key={p} value={p}>
-                      {capitalize(p)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <Input id="bot-platform" readOnly value={capitalize(platform)} />
               </div>
               <div>
                 <Label htmlFor="bot-name">Name</Label>

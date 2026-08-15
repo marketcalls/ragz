@@ -91,24 +91,51 @@ test('renders the table with masked rows: no token/signing_secret anywhere', () 
   render(<BotsPage />);
 
   expect(screen.getByText('Support bot')).toBeInTheDocument();
-  expect(screen.getByText(/telegram/i)).toBeInTheDocument();
+  expect(within(screen.getByRole('table')).getByText(/telegram/i)).toBeInTheDocument();
   expect(screen.getByText('Default')).toBeInTheDocument();
   expect(screen.queryByText(/token/i, { selector: 'td' })).not.toBeInTheDocument();
   expect(screen.queryByText(/signing_secret/i)).not.toBeInTheDocument();
 });
 
-test('opening Add bot and submitting calls POST; on success shows webhook_url in a copy field, never the credentials', async () => {
+test('shows a platform card per active platform with a connected-count badge, plus a disabled WhatsApp coming-soon card', async () => {
+  const user = userEvent.setup();
+  render(<BotsPage />);
+
+  const telegramCard = screen.getByRole('button', { name: /telegram/i });
+  expect(within(telegramCard).getByText('1 connected')).toBeInTheDocument();
+
+  const discordCard = screen.getByRole('button', { name: /discord/i });
+  expect(within(discordCard).getByText('0 connected')).toBeInTheDocument();
+
+  const slackCard = screen.getByRole('button', { name: /slack/i });
+  expect(within(slackCard).getByText('0 connected')).toBeInTheDocument();
+
+  const whatsappCard = screen.getByRole('button', { name: /whatsapp/i });
+  expect(whatsappCard).toBeDisabled();
+  expect(whatsappCard).toHaveAttribute('aria-disabled', 'true');
+  expect(within(whatsappCard).getByText(/coming soon/i)).toBeInTheDocument();
+
+  await user.click(whatsappCard);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('clicking a platform card opens the add-bot dialog pre-set to that platform; submitting calls POST; on success shows webhook_url in a copy field, never the credentials', async () => {
   const user = userEvent.setup();
   const { rerender } = render(<BotsPage />);
 
-  await user.click(screen.getByRole('button', { name: /add bot/i }));
-  await user.selectOptions(screen.getByLabelText(/platform/i), 'discord');
-  await user.type(screen.getByLabelText(/name/i), 'New bot');
-  await user.selectOptions(screen.getByLabelText(/user/i), 'u1');
-  await user.selectOptions(screen.getByLabelText(/workspace/i), 'w1');
-  await user.type(screen.getByLabelText(/token/i), 'super-secret-token');
-  await user.type(screen.getByLabelText(/signing secret/i), 'super-secret-signing-secret');
-  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^add bot$/i }));
+  await user.click(screen.getByRole('button', { name: /discord/i }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByLabelText(/platform/i)).toHaveValue('Discord');
+
+  await user.type(within(dialog).getByLabelText(/name/i), 'New bot');
+  await user.selectOptions(within(dialog).getByLabelText(/user/i), 'u1');
+  await user.selectOptions(within(dialog).getByLabelText(/workspace/i), 'w1');
+  await user.type(within(dialog).getByLabelText(/token/i), 'super-secret-token');
+  await user.type(
+    within(dialog).getByLabelText(/signing secret/i),
+    'super-secret-signing-secret',
+  );
+  await user.click(within(dialog).getByRole('button', { name: /^add bot$/i }));
 
   expect(createMutate).toHaveBeenCalledTimes(1);
   const [body] = createMutate.mock.calls[0] as [Record<string, unknown>, unknown];
