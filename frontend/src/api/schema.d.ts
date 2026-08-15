@@ -1669,6 +1669,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Usage Report */
+        get: operations["get_usage_report_api_v1_reports_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reports/usage/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Usage Report */
+        get: operations["export_usage_report_api_v1_reports_usage_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/client-errors": {
         parameters: {
             query?: never;
@@ -2694,6 +2728,15 @@ export interface components {
              */
             conversation_id: string;
         };
+        /** FeatureBreakdownOut */
+        FeatureBreakdownOut: {
+            /** Tokens */
+            tokens: number;
+            /** Units */
+            units: number;
+            /** Cost Usd */
+            cost_usd: number;
+        };
         /** FeedbackOut */
         FeedbackOut: {
             /** Rating */
@@ -3597,6 +3640,40 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** ReportPageOut */
+        ReportPageOut: {
+            /** Rows */
+            rows: components["schemas"]["ReportRowOut"][];
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "self" | "department" | "org" | "platform";
+            /** Days */
+            days: number;
+            /**
+             * Group By
+             * @enum {string}
+             */
+            group_by: "day" | "user" | "workspace" | "feature" | "model";
+        };
+        /** ReportRowOut */
+        ReportRowOut: {
+            /** Group */
+            group: string;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Completion Tokens */
+            completion_tokens: number;
+            /** Units */
+            units: number;
+            /** Cost Usd */
+            cost_usd: number;
+            /** By Feature */
+            by_feature: {
+                [key: string]: components["schemas"]["FeatureBreakdownOut"];
+            };
         };
         /** ResetPasswordRequest */
         ResetPasswordRequest: {
@@ -7525,6 +7602,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgUsage"][];
+                };
+            };
+        };
+    };
+    get_usage_report_api_v1_reports_usage_get: {
+        parameters: {
+            query?: {
+                scope?: "self" | "department" | "org" | "platform";
+                days?: number;
+                group_by?: "day" | "user" | "workspace" | "feature" | "model";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportPageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_usage_report_api_v1_reports_usage_export_get: {
+        parameters: {
+            query?: {
+                scope?: "self" | "department" | "org" | "platform";
+                days?: number;
+                group_by?: "day" | "user" | "workspace" | "feature" | "model";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
