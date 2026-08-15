@@ -61,7 +61,16 @@ services:
     # RAGZ-PUB-15: pinned to the digest for cpu-1.8 as of 2026-08-15
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8@sha256:8de25e75ce39617f17f2f6c77d60a4f75b65e779ed5005420eb1400072a15c1c
     platform: linux/amd64  # no arm64 build published; runs under emulation on Apple Silicon
-    profiles: ["ml"]  # not required for CI/dev without ML; tests use the hash backend
+    # OWN opt-in profile, deliberately NOT "ml": the local embedder is only for
+    # fully-offline/keyless deployments. When you use a hosted embedder (OpenAI
+    # etc.), you simply never enable this profile -- the container never starts
+    # and consumes zero RAM, no manual `docker stop` needed. Deployment modes:
+    #   hosted embeddings + reranker:  docker compose --profile ml up
+    #   fully local (embedder+reranker): docker compose --profile ml --profile local-embeddings up
+    # Keep the registry's local embedding model disabled unless this runs (the
+    # /superadmin/health embedder probe follows the registry: shows "Disabled",
+    # not an error, when no enabled embedding model is provider_kind=tei).
+    profiles: ["local-embeddings"]
     command: --model-id BAAI/bge-m3 --max-batch-tokens 4096 --auto-truncate --max-client-batch-size 32
     ports: ["127.0.0.1:58080:80"]
     volumes: [teidata:/data]
@@ -80,7 +89,12 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8@sha256:8de25e75ce39617f17f2f6c77d60a4f75b65e779ed5005420eb1400072a15c1c
     platform: linux/amd64  # no arm64 build published; runs under emulation on Apple Silicon (same as tei)
     profiles: ["ml"]  # not required for CI/dev; tests use the lexical backend
-    command: --model-id BAAI/bge-reranker-v2-m3
+    # Batch caps mirror the `tei` embedder above. Without them the warm-up
+    # pass allocates a default (large) max-batch-tokens synthetic batch, which
+    # OOM-kills the container under amd64 emulation on Apple Silicon even with
+    # ample VM RAM free. A reranker only scores a handful of retrieved
+    # candidates per request, so a small batch is more than enough.
+    command: --model-id BAAI/bge-reranker-v2-m3 --max-batch-tokens 4096 --auto-truncate --max-client-batch-size 32
     ports: ["127.0.0.1:58081:80"]
     volumes: [teirerankdata:/data]
     healthcheck:
