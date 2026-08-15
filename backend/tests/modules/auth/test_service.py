@@ -207,6 +207,117 @@ async def test_login_oidc_denies_ambiguous_domain_claim(session: AsyncSession) -
     assert rows == []
 
 
+async def test_login_oidc_new_email_under_allowed_domain_jit_creates_and_binds(
+    session: AsyncSession,
+) -> None:
+    """The accepted enterprise path: a brand-new email under an org's SSO
+    allowlist gets JIT-provisioned and bound to (issuer, subject) in one
+    step -- unchanged by the RAGZ-PUB-02 auto-link fix."""
+    org = Organization(name="Acme", sso_domains=["acme.com"])
+    session.add(org)
+    await session.commit()
+
+    pair = await login_oidc(
+        session, email="brand.new@acme.com",
+        issuer="https://idp.example.com", subject="idp-sub-1", settings=SETTINGS,
+    )
+    assert pair.access_token and pair.refresh_token
+
+    user = (
+        await session.execute(select(User).where(User.email == "brand.new@acme.com"))
+    ).scalar_one()
+    assert user.org_id == org.id
+    assert user.oidc_issuer == "https://idp.example.com"
+    assert user.oidc_subject == "idp-sub-1"
+
+
+async def test_login_oidc_already_bound_identity_logs_in(session: AsyncSession) -> None:
+    """(issuer, subject) already bound to a user: that user logs straight in
+    on a repeat visit, with no further mutation of the binding."""
+    org = Organization(name="Acme", sso_domains=["acme.com"])
+    session.add(org)
+    await session.commit()
+    bound_user = User(
+        org_id=org.id, email="returning@acme.com",
+        password_hash=hash_password("irrelevant-pw1"), role="user",  # noqa: S106
+        oidc_issuer="https://idp.example.com", oidc_subject="idp-sub-1",
+    )
+    session.add(bound_user)
+    await session.commit()
+
+    pair = await login_oidc(
+        session, email="returning@acme.com",
+        issuer="https://idp.example.com", subject="idp-sub-1", settings=SETTINGS,
+    )
+    assert pair.access_token and pair.refresh_token
+
+    await session.refresh(bound_user)
+    assert bound_user.oidc_issuer == "https://idp.example.com"
+    assert bound_user.oidc_subject == "idp-sub-1"
+
+
+async def test_login_oidc_rejects_unbound_existing_user_same_email(
+    session: AsyncSession,
+) -> None:
+    """sec RAGZ-PUB-02 (residual gap fix): an existing user with NO
+    (issuer, subject) binding yet -- e.g. a password account -- must NOT be
+    auto-linked/logged-in just because the asserted email matches, even
+    though the domain is claimed by the account's own org via the SSO
+    allowlist. Auto-linking here would be an unauthenticated email-based
+    account takeover. No bind, no session; the old auto-link behavior this
+    replaces is gone."""
+    org = Organization(name="Acme", sso_domains=["acme.com"])
+    session.add(org)
+    await session.commit()
+    local_user = User(
+        org_id=org.id, email="local@acme.com",
+        password_hash=hash_password("irrelevant-pw1"), role="user",  # noqa: S106
+    )
+    session.add(local_user)
+    await session.commit()
+    assert local_user.oidc_issuer is None and local_user.oidc_subject is None
+
+    with pytest.raises(AuthenticationError):
+        await login_oidc(
+            session, email="local@acme.com",
+            issuer="https://idp.example.com", subject="idp-sub-new", settings=SETTINGS,
+        )
+
+    await session.refresh(local_user)
+    assert local_user.oidc_issuer is None
+    assert local_user.oidc_subject is None
+    # no rogue refresh session was minted for this user as a side effect
+    rows = (
+        await session.execute(select(RefreshToken).where(RefreshToken.user_id == local_user.id))
+    ).scalars().all()
+    assert rows == []
+
+
+async def test_login_oidc_rejects_mismatched_existing_binding(session: AsyncSession) -> None:
+    """An existing user already bound to a DIFFERENT (issuer, subject) must
+    be rejected outright -- unchanged behavior, re-asserted at the service
+    layer alongside the new unbound-existing-user rejection above."""
+    org = Organization(name="Acme", sso_domains=["acme.com"])
+    session.add(org)
+    await session.commit()
+    bound_user = User(
+        org_id=org.id, email="bound@acme.com",
+        password_hash=hash_password("irrelevant-pw1"), role="user",  # noqa: S106
+        oidc_issuer="https://idp.example.com", oidc_subject="idp-sub-original",
+    )
+    session.add(bound_user)
+    await session.commit()
+
+    with pytest.raises(AuthenticationError):
+        await login_oidc(
+            session, email="bound@acme.com",
+            issuer="https://idp.example.com", subject="idp-sub-different", settings=SETTINGS,
+        )
+
+    await session.refresh(bound_user)
+    assert bound_user.oidc_subject == "idp-sub-original"
+
+
 async def test_logout_revokes(session: AsyncSession) -> None:
     await make_user(session)
     pair = await login(

@@ -415,13 +415,18 @@ async def test_issuer_subject_mismatch_for_existing_email_rejected(
     assert reloaded.oidc_subject == "idp-user-1"
 
 
-async def test_fresh_identity_under_allowed_domain_links_existing_password_user(
+async def test_fresh_identity_under_allowed_domain_does_not_auto_link_existing_password_user(
     sso_client: httpx.AsyncClient, session: AsyncSession, test_settings: Settings
 ) -> None:
-    """An existing LOCAL (password) user with no (issuer, subject) binding yet,
-    whose email domain the org still claims via the SSO allowlist, may have
-    the binding established -- this is the safe linking path, distinct from
-    a silent rebind across a mismatch."""
+    """Residual RAGZ-PUB-02 gap (closed here): an existing LOCAL (password)
+    user with no (issuer, subject) binding yet must NOT be silently attached
+    to a fresh IdP identity just because the IdP asserts a matching email --
+    even though the domain is claimed by the account's own org. That would be
+    an unauthenticated email-based account takeover: an over-trusted or
+    misconfigured IdP (or an attacker who can get a lookalike/victim email
+    verified elsewhere) could seize any existing password account. The
+    callback must reject gracefully (no session, no bind) rather than log the
+    browser in."""
     from ragz.modules.auth.passwords import hash_password
 
     org = (
@@ -439,9 +444,9 @@ async def test_fresh_identity_under_allowed_domain_links_existing_password_user(
     r2 = await sso_client.get(
         f"/api/v1/auth/oidc/callback?code=abc&state={state}", follow_redirects=False
     )
-    assert r2.status_code == 302
-    assert "refresh_token" in r2.cookies
+    _assert_sso_error_redirect(r2, test_settings)
+    assert "refresh_token" not in r2.cookies
 
     await session.refresh(local_user)
-    assert local_user.oidc_issuer == ISSUER
-    assert local_user.oidc_subject == "idp-user-1"
+    assert local_user.oidc_issuer is None
+    assert local_user.oidc_subject is None
