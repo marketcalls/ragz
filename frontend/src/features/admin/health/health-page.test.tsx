@@ -132,6 +132,23 @@ test('an older backend that omits new dependency probes degrades to Unknown rows
   expect(screen.getByText('Embedder (TEI)')).toBeInTheDocument();
 });
 
+test('a disabled dependency (local embedder off, hosted embedder in use) shows a neutral Disabled badge, not Error', () => {
+  const hostedEmbedder: SystemHealth = {
+    ...healthyHealth,
+    embedder: { status: 'disabled', detail: 'served by hosted provider' },
+  };
+  useSystemHealth.mockReturnValue({ data: hostedEmbedder, isPending: false });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+
+  const badge = screen.getByText('Disabled');
+  expect(badge.className).not.toContain('text-danger'); // neutral, not a red error
+  expect(screen.queryAllByText('Error')).toHaveLength(0);
+  // its latency cell degrades to em-dash (no probe ran)
+  expect(screen.getByText('Embedder (TEI)')).toBeInTheDocument();
+});
+
 test('a slow (high-latency) but healthy dependency is visually flagged distinctly from a normal one', () => {
   const slowHealth: SystemHealth = {
     ...healthyHealth,

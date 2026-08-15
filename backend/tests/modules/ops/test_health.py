@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ragz.api.app import create_app
@@ -305,6 +306,40 @@ async def test_embedder_health_short_timeout_bounds_a_slow_dependency(
     assert result["status"] == "error"
     assert result["detail"] == "TimeoutError"
     assert result["latency_ms"] < 1000
+
+
+async def test_local_embedder_in_use_true_when_enabled_tei_embedding_model(
+    session: AsyncSession,
+) -> None:
+    """The health handler probes the local TEI embedder only when an enabled
+    embedding model is backed by it (provider_kind='tei'). The migration seeds
+    exactly such a model (LOCAL_EMBEDDING_MODEL_ID); enabling it (idempotent
+    with the seed) is the fully-local deployment posture."""
+    await session.execute(
+        text(
+            "UPDATE models SET enabled = true "
+            "WHERE provider_kind = 'tei' AND modality = 'embedding'"
+        )
+    )
+    await session.commit()
+    assert await ops_health.local_embedder_in_use(session) is True
+
+
+async def test_local_embedder_in_use_false_when_local_tei_disabled(
+    session: AsyncSession,
+) -> None:
+    """Hosted-embedder deployment: the local TEI embedding model is disabled in
+    the registry. Disabling every provider_kind='tei' embedding model reports
+    the local embedder as not-in-use -- so the health page renders 'Disabled',
+    not a red error, for the intentionally-stopped TEI container."""
+    await session.execute(
+        text(
+            "UPDATE models SET enabled = false "
+            "WHERE provider_kind = 'tei' AND modality = 'embedding'"
+        )
+    )
+    await session.commit()
+    assert await ops_health.local_embedder_in_use(session) is False
 
 
 async def test_reranker_health_ok(test_settings: Settings) -> None:

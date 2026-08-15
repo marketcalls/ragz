@@ -142,6 +142,26 @@ async def embedder_health(
         return {"status": "error", "detail": type(exc).__name__, "latency_ms": _elapsed_ms(start)}
 
 
+async def local_embedder_in_use(session: AsyncSession) -> bool:
+    """True iff an embedding model backed by the local TEI embedder
+    (provider_kind='tei') is ENABLED in the registry.
+
+    When the platform is switched to a hosted embedder (e.g. OpenAI) the
+    local TEI model is disabled in the registry and its container is
+    intentionally stopped. Probing {tei_url}/health then would surface a
+    misleading red 'error' on the health page even though embeddings are
+    served fine by the hosted provider (covered by the litellm probe). The
+    handler uses this to report the local embedder as 'disabled' rather than
+    'error' in that configuration."""
+    row = await session.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM models "
+            "WHERE modality = 'embedding' AND provider_kind = 'tei' AND enabled = true)"
+        )
+    )
+    return bool(row.scalar())
+
+
 async def reranker_health(
     settings: Settings, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 5.0
 ) -> dict[str, Any]:

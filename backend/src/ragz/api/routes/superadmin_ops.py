@@ -16,11 +16,34 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 SuperadminDep = Annotated[TenantContext, Depends(require_role())]
 
 
+async def _disabled_embedder() -> dict[str, Any]:
+    """Health-row shape for a local TEI embedder that is intentionally off
+    (hosted embedder configured). Not an error -- rendered as a neutral
+    'Disabled' badge, no latency."""
+    return {
+        "status": "disabled",
+        "detail": "local embedder disabled; embeddings served by hosted provider",
+    }
+
+
 @router.get("/health")
 async def system_health(
     request: Request, session: SessionDep, settings: SettingsDep, ctx: SuperadminDep
 ) -> dict[str, Any]:
     transport = request.app.state.litellm_transport  # tests inject; prod None
+    # Whether to probe the local TEI embedder at all. When the platform is
+    # switched to a hosted embedder, the local TEI model is disabled in the
+    # registry and its container is intentionally stopped -- probing it would
+    # report a misleading red "error" though embeddings work fine via the
+    # hosted provider (covered by the litellm probe). Run this session query
+    # BEFORE the concurrent gather (the gather's tasks touch redis/HTTP, never
+    # the session) so one AsyncSession is never used from concurrent tasks.
+    local_embedder_enabled = await ops_health.local_embedder_in_use(session)
+    embedder_probe = (
+        ops_health.embedder_health(settings, transport)
+        if local_embedder_enabled
+        else _disabled_embedder()
+    )
     # HTTP/redis probes gather concurrently -- each opens its own client (or,
     # for redis, uses the connection-pooled shared client), so concurrent use
     # is safe. The DB probe and the org rollup run on the request session
@@ -31,7 +54,7 @@ async def system_health(
         ops_health.qdrant_stats(settings, transport),
         ops_health.litellm_health(settings, transport),
         ops_health.redis_health(request.app.state.redis),
-        ops_health.embedder_health(settings, transport),
+        embedder_probe,
         ops_health.reranker_health(settings, transport),
         ops_health.minio_health(settings),
     )

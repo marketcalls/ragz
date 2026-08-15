@@ -64,6 +64,15 @@ function DependencyStatusBadge({ dep }: { dep: DependencyHealth | undefined }) {
       </span>
     );
   }
+  // 'disabled' is a deliberate off-state (e.g. local embedder off because a
+  // hosted embedder is configured) — neutral, not a red error.
+  if (dep.status === 'disabled') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-secondary">
+        Disabled
+      </span>
+    );
+  }
   const ok = dep.status === 'ok';
   return (
     <span

@@ -33,8 +33,10 @@ export interface LiteLlmHealth {
 
 // Shape shared by the new dependency probes (db/redis/minio/embedder/
 // reranker) — each is timed, so `latency_ms` is present alongside status.
+// `disabled` is the local-TEI-embedder case when the platform is switched to
+// a hosted embedder: intentionally off, not an error (see superadmin_ops.py).
 export interface DependencyHealth {
-  status: 'ok' | 'error';
+  status: 'ok' | 'error' | 'disabled';
   latency_ms?: number;
   detail?: string;
 }
