@@ -22,6 +22,7 @@ dependencies = [
     "docling>=2.15",
     "easyocr>=1.7",
     "aioboto3>=13.0",
+    "aiosmtplib>=3.0",
     "python-multipart>=0.0.9",
     "cryptography>=42.0",
     "tiktoken>=0.9",
