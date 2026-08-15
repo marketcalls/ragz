@@ -23,3 +23,15 @@ test('uses theme tokens, not raw palette classes', () => {
   const value = screen.getByText('1,204');
   expect(value.className).toContain('text-ink');
 });
+
+test('omits the sparkline when the prop is not provided (backward compatible)', () => {
+  const { container } = render(<StatTile label="Total Queries" value="1,204" />);
+  expect(container.querySelector('.recharts-responsive-container')).not.toBeInTheDocument();
+});
+
+test('renders a sparkline under the value when the sparkline prop is provided', () => {
+  const { container } = render(
+    <StatTile label="Total Queries" value="1,204" sparkline={[1, 4, 2, 6, 3]} />,
+  );
+  expect(container.querySelector('.recharts-responsive-container')).toBeInTheDocument();
+});
