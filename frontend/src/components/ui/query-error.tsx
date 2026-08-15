@@ -1,3 +1,5 @@
+import type { JSX } from 'react';
+
 type QueryErrorProps = { error: unknown; onRetry?: () => void };
 
 /** Shown when a `useQuery`/`useInfiniteQuery` lands in `isError` — the
