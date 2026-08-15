@@ -221,6 +221,7 @@ export function ChatPage() {
                 <UserMessage
                   key={m.id}
                   content={m.content}
+                  attachments={m.attachments}
                   footer={
                     <MessageActions
                       entry={entry}

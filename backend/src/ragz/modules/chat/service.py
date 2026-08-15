@@ -65,7 +65,13 @@ from ragz.modules.chat.prompting import (
     split_budget,
 )
 from ragz.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
-from ragz.modules.chat.schemas import ChatTreeOut, CitationOut, FeedbackOut, MessageNode
+from ragz.modules.chat.schemas import (
+    AttachmentOut,
+    ChatTreeOut,
+    CitationOut,
+    FeedbackOut,
+    MessageNode,
+)
 from ragz.modules.chat.validation import (
     build_auditor_messages,
     classify_escalation,
@@ -247,6 +253,33 @@ async def delete_attachment(session: AsyncSession, attachment: ChatAttachment) -
     await session.commit()
 
 
+async def link_attachments_to_message(
+    session: AsyncSession, attachments: Sequence[ChatAttachment], message_id: UUID
+) -> None:
+    """Transcript rendering: stamp this turn's attachments with the user
+    Message they were actually sent on. Called from chats.py::send_message
+    AFTER add_user_message persists the message -- attachment resolution
+    happens first (fail-fast, same convention as the quota/model checks),
+    so the message id isn't known until now."""
+    for attachment in attachments:
+        attachment.message_id = message_id
+    await session.commit()
+
+
+async def list_attachments_by_message(
+    session: AsyncSession, chat_id: UUID
+) -> dict[UUID, list[ChatAttachment]]:
+    stmt = (
+        select(ChatAttachment)
+        .where(ChatAttachment.chat_id == chat_id, ChatAttachment.message_id.isnot(None))
+        .order_by(ChatAttachment.created_at)
+    )
+    by_message: dict[UUID, list[ChatAttachment]] = defaultdict(list)
+    for attachment in (await session.execute(stmt)).scalars():
+        by_message[attachment.message_id].append(attachment)  # type: ignore[index]
+    return by_message
+
+
 _ATTACHMENT_INLINE_TOKEN_BUDGET = 4000
 
 
@@ -371,14 +404,17 @@ async def clear_message_feedback(
 def build_tree(
     messages: list[Message], citations: dict[UUID, list[Citation]],
     feedback: dict[UUID, MessageFeedback],
+    attachments: dict[UUID, list[ChatAttachment]] | None = None,
 ) -> list[MessageNode]:
     children: dict[UUID | None, list[Message]] = defaultdict(list)
     for m in messages:
         children[m.parent_message_id].append(m)
+    attachments = attachments or {}
 
     def node(m: Message) -> MessageNode:
         kids = sorted(children.get(m.id, []), key=lambda c: c.sibling_index)
         fb = feedback.get(m.id)
+        msg_attachments = attachments.get(m.id, [])
         return MessageNode(
             id=m.id, parent_message_id=m.parent_message_id,
             sibling_index=m.sibling_index, role=m.role, content=m.content,
@@ -394,6 +430,13 @@ def build_tree(
             # never raises, and keeps history GET on the exact same Iron
             # Rule 5 boundary as the live SSE frame.
             blocks=validate_blocks(m.blocks_json) if m.blocks_json else None,
+            # Transcript rendering (design 2026-08-15): metadata-only
+            # (AttachmentOut has no bytes/storage_key/extracted_text field) --
+            # never expose raw file content on the history read path.
+            attachments=(
+                [AttachmentOut.model_validate(a) for a in msg_attachments]
+                if msg_attachments else None
+            ),
             children=[node(k) for k in kids],
         )
 
@@ -408,10 +451,11 @@ async def get_chat_tree(
     messages = await list_messages(session, chat_id)
     citations = await list_citations(session, chat_id)
     feedback = await list_feedback(session, chat_id)
+    attachments = await list_attachments_by_message(session, chat_id)
     return ChatTreeOut(
         id=chat.id, workspace_id=chat.workspace_id, title=chat.title,
         has_summary=chat.summary is not None,
-        messages=build_tree(messages, citations, feedback),
+        messages=build_tree(messages, citations, feedback, attachments),
     )
 
 

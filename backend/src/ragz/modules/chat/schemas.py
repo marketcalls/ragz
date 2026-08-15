@@ -93,6 +93,16 @@ class MessageFeedbackIn(BaseModel):
     comment: str | None = Field(default=None, max_length=4000)
 
 
+class AttachmentOut(BaseModel):
+    id: UUID
+    kind: str
+    filename: str
+    mime: str
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
 class MessageNode(BaseModel):
     id: UUID
     parent_message_id: UUID | None
@@ -115,6 +125,11 @@ class MessageNode(BaseModel):
     # array persisted on this message, or None when the visualize step never
     # ran / emitted nothing (default -- unchanged history shape otherwise).
     blocks: list[Block] | None = None
+    # Transcript rendering (design 2026-08-15): the ChatAttachment rows the
+    # caller sent alongside THIS message, metadata only (id/kind/filename/
+    # mime/status) -- never bytes/storage_key/extracted_text. None when the
+    # message has no linked attachments (unchanged history shape otherwise).
+    attachments: list[AttachmentOut] | None = None
     children: list["MessageNode"]
 
 
@@ -127,13 +142,3 @@ class ChatTreeOut(BaseModel):
     title: str
     has_summary: bool
     messages: list[MessageNode]
-
-
-class AttachmentOut(BaseModel):
-    id: UUID
-    kind: str
-    filename: str
-    mime: str
-    status: str
-
-    model_config = {"from_attributes": True}

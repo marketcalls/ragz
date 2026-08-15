@@ -11,6 +11,10 @@ export type ChatOut = components['schemas']['ChatOut'];
 export type ChatTreeOut = components['schemas']['ChatTreeOut'];
 export type MessageNode = components['schemas']['MessageNode'];
 export type CitationOut = components['schemas']['CitationOut'];
+// Transcript rendering (design 2026-08-15): metadata-only view of a
+// ChatAttachment sent alongside a MessageNode -- id/kind/filename/mime/
+// status, never bytes/storage_key/extracted_text.
+export type AttachmentOut = components['schemas']['AttachmentOut'];
 // Thumbs up/down + optional comment on an assistant answer (CHAT-10). Present
 // on MessageNode.feedback for the caller's own rating.
 export type FeedbackOut = components['schemas']['FeedbackOut'];

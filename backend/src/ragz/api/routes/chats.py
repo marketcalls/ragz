@@ -223,11 +223,16 @@ async def send_message(
     # instead (service.stream_reply fetches + encodes them). Every other
     # attachment (documents, and images on a non-vision model) is unaffected.
     image_attachments: list[ChatAttachment] = []
+    # Transcript rendering (design 2026-08-15): every attachment on this turn
+    # (image or document, inline-routed or retrieval-routed), so it can be
+    # stamped with the user message's id once that message exists below.
+    sent_attachments: list[ChatAttachment] = []
     if body.attachment_ids:
         for marker, attachment_id in enumerate(body.attachment_ids, start=1):
             attachment = await session.get(ChatAttachment, attachment_id)
             if attachment is None or attachment.chat_id != chat.id:
                 raise NotFoundError("attachment not found in this chat")
+            sent_attachments.append(attachment)
             if attachment.kind == "image" and model.supports_vision:
                 image_attachments.append(attachment)
                 continue
@@ -241,6 +246,8 @@ async def send_message(
         parent_message_id=body.parent_message_id,
         explicit="parent_message_id" in body.model_fields_set,
     )
+    if sent_attachments:
+        await service.link_attachments_to_message(session, sent_attachments, user_msg.id)
     streamer = await _streamer(request, session, settings, ctx)
     completer: LLMCompleter | None = request.app.state.llm_completer
     if completer is None and isinstance(streamer, LiteLLMStreamer):

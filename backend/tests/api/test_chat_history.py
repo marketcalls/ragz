@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
 from ragz.modules.tenancy.models import Workspace, WorkspaceMember
+from ragz.worker import tasks
 from tests.api.test_chat_stream import auth, make_model_and_chat
 from tests.api.test_permissions_routes import make_templated_member
 
@@ -36,6 +38,10 @@ async def test_history_crud_and_tree_shape(
     assert [m["content"] for m in roots] == ["v1?", "v2?"]
     for root in roots:
         assert root["role"] == "user" and root["parent_message_id"] is None
+        # Transcript rendering (design 2026-08-15): a message sent without
+        # any attachment_ids has no linked ChatAttachment rows -> None, not
+        # an empty list (keeps the unchanged-history-shape contract).
+        assert root["attachments"] is None
         assert len(root["children"]) == 1
         child = root["children"][0]
         assert child["role"] == "assistant"
@@ -200,3 +206,52 @@ async def test_send_rate_limited_per_user(
                                json={"content": "hi"}, headers=h)
     assert r.status_code == 429
     assert r.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_history_tree_includes_sent_message_attachments(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_user: User, seeded_superadmin: User, stack_env: None,
+) -> None:
+    """Transcript rendering (design 2026-08-15): a message sent with
+    attachment_ids gets its ChatAttachment rows stamped with the message id
+    (chats.py::send_message -> service.link_attachments_to_message) and the
+    history tree's node for that message surfaces them as metadata-only
+    AttachmentOut entries -- filename/kind/mime/status, never bytes/
+    storage_key/extracted_text."""
+    h = await auth(chat_client, "a@acme.com")
+    chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("notes.txt", b"hello world", "text/plain")},
+        headers=h,
+    )
+    assert r.status_code == 201
+    attachment_id = r.json()["id"]
+    await asyncio.to_thread(tasks.process_attachment_task, attachment_id)
+
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/messages",
+        json={"content": "what does the attachment say?", "attachment_ids": [attachment_id]},
+        headers=h,
+    )
+    assert r.status_code == 200
+
+    tree = (await chat_client.get(f"/api/v1/chats/{chat_id}", headers=h)).json()
+    user_node = tree["messages"][0]
+    assert user_node["role"] == "user"
+    assert user_node["attachments"] is not None
+    assert len(user_node["attachments"]) == 1
+    attachment_out = user_node["attachments"][0]
+    assert attachment_out == {
+        "id": attachment_id, "kind": "document", "filename": "notes.txt",
+        "mime": "text/plain", "status": "ready",
+    }
+    # Never exposed on the history read path.
+    assert "extracted_text" not in attachment_out
+    assert "storage_key" not in attachment_out
+
+    # The assistant reply that followed carries no attachments of its own.
+    assistant_node = user_node["children"][0]
+    assert assistant_node["role"] == "assistant"
+    assert assistant_node["attachments"] is None

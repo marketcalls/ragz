@@ -109,6 +109,16 @@ class ChatAttachment(UUIDPk, Base):
     chat_id: Mapped[UUID] = mapped_column(
         ForeignKey("chats.id", ondelete="CASCADE"), index=True
     )
+    # Transcript rendering: which user Message this attachment was actually
+    # sent on, set once at send time (chats.py::send_message, AFTER the
+    # message is persisted). NULL until then -- an uploaded-but-not-yet-sent
+    # attachment (or one that's stale and swept by the TTL job) has no
+    # message to hang off. SET NULL on message delete: the attachment row
+    # itself is chat-scoped, not message-owned (matches the existing 24h TTL
+    # sweep, which keys off created_at, not the message's lifecycle).
+    message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), default=None, index=True
+    )
     kind: Mapped[str]  # "document" | "image"
     filename: Mapped[str]
     mime: Mapped[str]

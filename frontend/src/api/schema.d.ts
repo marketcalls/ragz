@@ -2902,6 +2902,8 @@ export interface components {
             feedback: components["schemas"]["FeedbackOut"] | null;
             /** Blocks */
             blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"])[] | null;
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentOut"][] | null;
             /** Children */
             children: components["schemas"]["MessageNode"][];
         };
