@@ -10,7 +10,13 @@ degrades to `[]`, i.e. exactly as if the visualize step never ran.
 """
 
 from ragz.modules.chat.blocks import ChartBlock, TextBlock
-from ragz.modules.chat.blocks_emit import _extract_json_array, generate_blocks
+from ragz.modules.chat.blocks_emit import (
+    _SYSTEM_PROMPT,
+    SourceInput,
+    _build_messages,
+    _extract_json_array,
+    generate_blocks,
+)
 from ragz.modules.chat.llm import LLMCompletion, LLMUsage
 from ragz.modules.models.models import Model
 from tests.conftest import FakeCompleter
@@ -130,3 +136,43 @@ async def test_generate_blocks_wraps_question_answer_context_as_untrusted() -> N
     sent = completer.calls[0]["messages"]
     user_content = sent[-1]["content"]
     assert "<\\/question>" in user_content  # neutralized, not a raw closing tag
+
+
+# --- Task 3: article_card/source_refs prompt + real-sources threading -------
+
+
+def test_system_prompt_documents_article_card_and_source_refs() -> None:
+    assert "article_card" in _SYSTEM_PROMPT
+    assert "source_refs" in _SYSTEM_PROMPT
+
+
+def test_build_messages_includes_wrapped_sources_when_provided() -> None:
+    sources = [
+        SourceInput(title="Doc A", document_id="d1", page=3),
+        SourceInput(title="ACME", url="https://acme.test", source="acme.test"),
+    ]
+    messages = _build_messages(question="q", answer="a", context="c", sources=sources)
+    user_content = messages[-1]["content"]
+    assert isinstance(user_content, str)
+    assert "Available sources" in user_content
+    assert '<sources>' in user_content and '</sources>' in user_content
+    assert '"title": "Doc A"' in user_content
+    assert '"document_id": "d1"' in user_content
+    assert '"page": 3' in user_content
+    assert '"title": "ACME"' in user_content
+    assert '"url": "https://acme.test"' in user_content
+    assert '"source": "acme.test"' in user_content
+
+
+def test_build_messages_without_sources_is_byte_identical_to_before() -> None:
+    with_none = _build_messages(question="q", answer="a", context="c", sources=None)
+    without_kw = _build_messages(question="q", answer="a", context="c")
+    assert with_none == without_kw
+    user_content = with_none[-1]["content"]
+    assert "Available sources" not in user_content
+
+
+def test_build_messages_with_empty_sources_list_omits_sources_section() -> None:
+    messages = _build_messages(question="q", answer="a", context="c", sources=[])
+    user_content = messages[-1]["content"]
+    assert "Available sources" not in user_content

@@ -20,6 +20,8 @@ never ran at all.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import structlog
@@ -30,6 +32,20 @@ from ragz.modules.chat.prompting import wrap_untrusted_block
 if TYPE_CHECKING:
     from ragz.modules.chat.llm import LLMCompleter
     from ragz.modules.models.models import Model
+
+
+@dataclass(frozen=True)
+class SourceInput:
+    """One real, already-cited source handed to the visualize step (Task 3),
+    so a `source_refs`/`article_card` block it emits can only ever point at
+    a source that actually grounded the answer -- never an invented url/
+    document_id. Built by the caller from the turn's `CitationRef`s."""
+
+    title: str
+    source: str | None = None
+    url: str | None = None
+    document_id: str | None = None
+    page: int | None = None
 
 _SYSTEM_PROMPT = (
     "You turn an already-grounded chat answer into OPTIONAL rich UI blocks "
@@ -55,11 +71,21 @@ _SYSTEM_PROMPT = (
     '"category_key"?:string,"keys"?:[string]}\n'
     '- {"type":"info_card","title":string,"subtitle"?:string,"body"?:string,'
     '"icon"?:"info"|"chart"|"dollar"|"trophy"|"warning"|"doc"|"spark"|'
-    '"users"|"clock"|"check"|"star"|"target"|"globe"|"shield"|"calendar"}\n'
+    '"users"|"clock"|"check"|"star"|"target"|"globe"|"shield"|"calendar",'
+    '"url"?:string}\n'
     '- {"type":"image_card","title":string,"subtitle"?:string,"badge"?:string,'
     '"image_ref"?:string}\n'
     '- {"type":"ranked_list","title"?:string,"items":[{"title":string,'
-    '"subtitle"?:string}]}\n'
+    '"subtitle"?:string,"url"?:string}]}\n'
+    '- {"type":"article_card","title":string,"subtitle"?:string,"body"?:string,'
+    '"tags"?:[{"label":string,"tone"?:"neutral"|"info"|"success"|"warning"|'
+    '"danger"}],"badge"?:string,"source"?:string,"url"?:string,'
+    '"document_id"?:string,"page"?:number,"layout"?:"standard"|"hero",'
+    '"image_ref"?:string} (at most one of url/document_id; page requires '
+    "document_id; only set image_ref if the context provides one)\n"
+    '- {"type":"source_refs","title"?:string,"items":[{"title":string,'
+    '"source"?:string,"url"?:string,"document_id"?:string,"page"?:number}]} '
+    "(each item has EITHER url OR document_id+page)\n"
     '- {"type":"tag_badges","tags":[{"label":string,'
     '"tone"?:"neutral"|"info"|"success"|"warning"|"danger"}]}\n'
     '- {"type":"tabs","tabs":[{"label":string,"blocks":[<any block above '
@@ -77,17 +103,41 @@ _SYSTEM_PROMPT = (
     "context names a specific document image (image_ref is an internal id, "
     "never a URL); emit a form block ONLY when you genuinely need "
     "structured input from the user before you can proceed; otherwise "
-    "prefer text/info_card/callout, or emit []. Never wrap the array in an "
-    "object, never invent a block type or field not listed above."
+    "prefer text/info_card/callout, or emit []. For news/results-style "
+    "answers (multiple distinct items, each with its own source), prefer an "
+    "article_card grid over a single text block. When an 'Available "
+    "sources' list is provided below, ALWAYS end the array with a "
+    "source_refs block built ONLY from those sources -- one item per source "
+    "you actually used, web sources use url, document sources use "
+    "document_id (+page). Never invent a url, document_id, or image_ref "
+    "that isn't present in the context or the Available sources list. "
+    "Never wrap the array in an object, never invent a block type or field "
+    "not listed above."
 )
 
 
-def _build_messages(*, question: str, answer: str, context: str) -> list[dict[str, object]]:
+def _build_messages(
+    *, question: str, answer: str, context: str, sources: Sequence[SourceInput] | None = None,
+) -> list[dict[str, object]]:
     user_content = (
         f"Question:\n{wrap_untrusted_block('question', question)}\n\n"
         f"Assistant's answer:\n{wrap_untrusted_block('answer', answer)}\n\n"
         f"Source context:\n{wrap_untrusted_block('context', context)}"
     )
+    if sources:
+        sources_json = json.dumps(
+            [
+                {
+                    "title": s.title, "source": s.source, "url": s.url,
+                    "document_id": s.document_id, "page": s.page,
+                }
+                for s in sources
+            ]
+        )
+        user_content += (
+            "\n\nAvailable sources (build the source_refs block from THESE "
+            "ONLY -- do not invent):\n" + wrap_untrusted_block("sources", sources_json)
+        )
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
@@ -125,15 +175,22 @@ async def generate_blocks(
     answer: str,
     context: str,
     model: Model,
+    sources: Sequence[SourceInput] | None = None,
 ) -> list[Block]:
     """One constrained, best-effort "visualize" model call (design doc §2).
     ALWAYS goes through `validate_blocks` (Iron Rule 5) before returning, and
     NEVER raises into the chat flow -- any completer error or unparseable/
-    hostile reply degrades to `[]`, i.e. today's plain-markdown behavior."""
+    hostile reply degrades to `[]`, i.e. today's plain-markdown behavior.
+    `sources` (Task 3) is the turn's real, already-cited sources -- passing
+    it lets the model ground a `source_refs`/`article_card` block in facts
+    that actually exist; omitting it (default `None`) is byte-identical to
+    pre-Task-3 behavior."""
     try:
         completion = await completer.complete(
             model=model.litellm_model_name,
-            messages=_build_messages(question=question, answer=answer, context=context),
+            messages=_build_messages(
+                question=question, answer=answer, context=context, sources=sources,
+            ),
         )
     except Exception:
         # Best-effort boundary (design doc §2 risk "prompt cost/latency" +

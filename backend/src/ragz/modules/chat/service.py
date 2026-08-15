@@ -27,7 +27,7 @@ from ragz.core.storage import build_storage
 from ragz.modules.auth.models import User
 from ragz.modules.chat.agent import AgentGathered, AgentStep, AgentToolResult, run_agent_gather
 from ragz.modules.chat.blocks import validate_blocks
-from ragz.modules.chat.blocks_emit import generate_blocks
+from ragz.modules.chat.blocks_emit import SourceInput, generate_blocks
 from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
@@ -1924,9 +1924,24 @@ async def stream_reply(
         # completer AND the workspace flag together run it at all -- the
         # default (flag off) is a no-op, byte-identical to pre-Task-2.
         if workspace.generative_ui_enabled and completer is not None:
+            _src_by_marker = {s.marker: s for s in kept_sources}
+            source_inputs = [
+                SourceInput(
+                    title=(
+                        _src_by_marker[c.marker].filename
+                        if c.marker in _src_by_marker
+                        else c.chunk_ref
+                    ),
+                    url=c.url,
+                    document_id=None if c.url else (c.document_id or None),
+                    page=None if c.url else c.page,
+                )
+                for c in citation_refs
+            ]
             blocks = await generate_blocks(
                 completer, question=user_message.content, answer=answer,
                 context=render_data_blocks(kept_sources), model=model,
+                sources=source_inputs,
             )
             if blocks:
                 msg.blocks_json = [b.model_dump(mode="json") for b in blocks]

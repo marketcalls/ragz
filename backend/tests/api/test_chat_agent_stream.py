@@ -741,6 +741,66 @@ async def test_generative_ui_enabled_emits_and_persists_blocks(
         assert assistant_node["blocks"] == [{"type": "text", "markdown": "**Revenue grew 20%**"}]
 
 
+async def test_generative_ui_emits_source_refs_block_from_real_citations(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """Task 3 (openui-parity): the visualize completer is scripted to return
+    a valid source_refs block; the `blocks` SSE frame carries it through
+    exactly as validate_blocks produced it. Chosen e2e over a service-level
+    test because the existing FakeCompleter/create_app fixtures here already
+    exercise the full generate_blocks(..., sources=...) call site wiring
+    added in service.py."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='[{"type": "source_refs", "items": '
+                 '[{"title": "X", "url": "https://x.test"}]}]',
+            tool_calls=[], usage=LLMUsage(prompt_tokens=8, completion_tokens=4),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"generative_ui_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200 and r_ws.json()["generative_ui_enabled"] is True
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What is the muster point?"},
+            headers=h_admin,
+        )
+        frames = parse_sse(r.text)
+        names = [n for n, _ in frames]
+        assert names.index("citations") < names.index("blocks") < names.index("done")
+        blocks_frame = next(d for n, d in frames if n == "blocks")
+        assert blocks_frame == {
+            "blocks": [
+                {
+                    "type": "source_refs",
+                    "title": None,
+                    "items": [
+                        {
+                            "title": "X", "source": None, "url": "https://x.test",
+                            "document_id": None, "page": None, "image_ref": None,
+                        }
+                    ],
+                }
+            ]
+        }
+
+
 async def test_generative_ui_hostile_completer_output_never_breaks_answer(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
