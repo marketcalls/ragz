@@ -16,7 +16,10 @@ export function PendingAttachments({
   if (files.length === 0) return null;
 
   return (
-    <ul aria-label="Pending attachments" className="flex flex-wrap gap-2 px-4 pb-2">
+    <ul
+      aria-label="Pending attachments"
+      className="mx-auto flex w-full max-w-thread flex-wrap gap-2 px-4 pb-2"
+    >
       {files.map((f) => (
         <li key={f.id} className="group relative">
           <div className="h-16 w-16 overflow-hidden rounded-xl border border-line bg-subtle">

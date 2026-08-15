@@ -16,4 +16,4 @@ def test_ingestion_settings_defaults(monkeypatch) -> None:  # type: ignore[no-un
     assert s.tei_url == "http://localhost:58080"
     assert s.embedding_backend == "tei"
     assert s.embedding_dim == 1024
-    assert s.interactive_upload_mb == 10
+    assert s.interactive_upload_mb == 50

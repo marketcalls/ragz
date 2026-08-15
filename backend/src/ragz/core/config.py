@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     rerank_url: str = "http://localhost:58081"
     rerank_backend: str = "tei"  # "tei" | "lexical" (lexical = deterministic, test/dev only)
     max_upload_mb: int = 100
-    interactive_upload_mb: int = 10  # uploads below this jump to the interactive queue
+    interactive_upload_mb: int = 50  # uploads below this jump to the interactive queue
 
     # Plan C: LiteLLM proxy gateway
     litellm_url: str = "http://localhost:54000"

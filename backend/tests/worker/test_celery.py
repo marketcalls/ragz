@@ -8,9 +8,9 @@ def test_celery_config() -> None:
 
 
 def test_queue_selection_by_size() -> None:
-    assert select_queue(5 * 1024 * 1024) == "interactive"  # < 10 MB jumps the queue
-    assert select_queue(10 * 1024 * 1024) == "default"
-    assert select_queue(50 * 1024 * 1024) == "default"
+    assert select_queue(5 * 1024 * 1024) == "interactive"  # < 50 MB jumps the queue
+    assert select_queue(10 * 1024 * 1024) == "interactive"
+    assert select_queue(60 * 1024 * 1024) == "default"
 
 
 def test_ingest_chain_structure() -> None:

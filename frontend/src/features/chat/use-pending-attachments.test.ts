@@ -49,7 +49,7 @@ test('an oversize file is rejected with an inline error and not added', () => {
   act(() => result.current.addFiles([oversizeFile()]));
   expect(result.current.files).toHaveLength(0);
   expect(result.current.error).toContain('huge.bin');
-  expect(result.current.error).toContain('10 MB');
+  expect(result.current.error).toContain('50 MB');
 });
 
 test('removing a file revokes its preview URL and drops it from the list', () => {

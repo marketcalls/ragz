@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Mirrors the backend's `interactive_upload_mb` cap (10 MB) enforced by
+// Mirrors the backend's `interactive_upload_mb` cap (50 MB) enforced by
 // `POST /api/v1/chats/{chat_id}/attachments`. This is a client-side UX
 // guard only -- rejecting oversize files before they're even held in
 // memory -- the server remains the source of truth and re-checks on upload.
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_MB = 50;
+export const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024;
 
 export interface PendingAttachment {
   id: string; // client-local id, not the server attachment id (that doesn't exist until upload-at-send)
@@ -39,7 +40,7 @@ export function usePendingAttachments() {
     let rejection: string | null = null;
     for (const file of incoming) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        rejection = `"${file.name}" is larger than 10 MB and was not attached.`;
+        rejection = `"${file.name}" is larger than ${MAX_ATTACHMENT_MB} MB and was not attached.`;
         continue;
       }
       accepted.push({
