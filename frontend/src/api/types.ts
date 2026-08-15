@@ -105,6 +105,15 @@ export type ApiKeyOut = components['schemas']['ApiKeyOut'];
 // beyond the mutation's own transient result -- see api-keys/queries.ts.
 export type ApiKeyCreatedOut = components['schemas']['ApiKeyCreatedOut'];
 
+// GET/POST/PATCH/DELETE /api/v1/workspaces/{workspace_id}/members (RBAC-08,
+// governance design): maps org users onto a workspace with a role. Only
+// user_id + role cross the wire -- email is joined client-side against
+// useUsers() (features/admin/users/queries.ts). "owner"/"manager" are
+// department admins per the governance design; UI labels reflect that even
+// though the wire values stay the plain WorkspaceRole strings.
+export type MemberOut = components['schemas']['MemberOut'];
+export type WorkspaceRole = MemberOut['role'];
+
 // GET/POST/PATCH /api/v1/admin/bots (Task 8): chat-platform bot integrations
 // (Telegram/Discord/Slack). No credential field -- iron rule 3: `token`/
 // `signing_secret` cross the boundary only on BotIntegrationCreate (the

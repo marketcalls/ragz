@@ -9,6 +9,7 @@ import { toast } from '@/components/ui/toaster';
 
 import { EmbeddingModelSection } from './embedding-model-section';
 import { EvalsSection } from './evals-section';
+import { MembersSection } from './members-section';
 import { MetadataFieldsSection } from './metadata-fields-section';
 import { usePatchWorkspace } from './queries';
 
@@ -37,7 +38,7 @@ export function WorkspaceSettingsDialog({
   );
   // J-C15: no shared Tabs primitive exists yet — this local button-group
   // strip matches dashboard-page.tsx's RANGES day-picker style.
-  const [tab, setTab] = useState<'settings' | 'evals'>('settings');
+  const [tab, setTab] = useState<'settings' | 'members' | 'evals'>('settings');
 
   const submit = (e: FormEvent): void => {
     e.preventDefault();
@@ -97,7 +98,7 @@ export function WorkspaceSettingsDialog({
         className="max-w-lg"
       >
         <div className="mb-3 flex gap-1">
-          {(['settings', 'evals'] as const).map((t) => (
+          {(['settings', 'members', 'evals'] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -249,6 +250,8 @@ export function WorkspaceSettingsDialog({
               <MetadataFieldsSection workspaceId={workspace.id} />
             </div>
           </>
+        ) : tab === 'members' ? (
+          <MembersSection workspaceId={workspace.id} />
         ) : (
           <EvalsSection workspaceId={workspace.id} />
         )}

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
+import type { WorkspaceRole } from '@/api/types';
 
 export function useWorkspaces() {
   return useQuery({
@@ -122,5 +123,66 @@ export function useReembedStatus(workspaceId: string, enabled = true) {
       }
       return data;
     },
+  });
+}
+
+// Workspace/department Members management (RBAC-08 backend, previously
+// uncalled from the frontend). "owner"/"manager" are department admins per
+// the governance design -- see MembersSection for the UI labels.
+export function useWorkspaceMembers(workspaceId: string) {
+  return useQuery({
+    queryKey: ['workspace-members', workspaceId],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/workspaces/{workspace_id}/members', {
+        params: { path: { workspace_id: workspaceId } },
+      });
+      if (error) throw new Error('failed to load members');
+      return data;
+    },
+  });
+}
+
+export function useAddMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ user_id, role }: { user_id: string; role: WorkspaceRole }) => {
+      const { error } = await api.POST('/api/v1/workspaces/{workspace_id}/members', {
+        params: { path: { workspace_id: workspaceId } },
+        body: { user_id, role },
+      });
+      if (error) throw new Error('failed to add member');
+    },
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ['workspace-members', workspaceId] }),
+  });
+}
+
+export function useUpdateMemberRole(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: WorkspaceRole }) => {
+      const { data, error } = await api.PATCH(
+        '/api/v1/workspaces/{workspace_id}/members/{user_id}',
+        { params: { path: { workspace_id: workspaceId, user_id: userId } }, body: { role } },
+      );
+      if (error) throw new Error('failed to update member role');
+      return data;
+    },
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ['workspace-members', workspaceId] }),
+  });
+}
+
+export function useRemoveMember(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const { error } = await api.DELETE('/api/v1/workspaces/{workspace_id}/members/{user_id}', {
+        params: { path: { workspace_id: workspaceId, user_id: userId } },
+      });
+      if (error) throw new Error('failed to remove member');
+    },
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ['workspace-members', workspaceId] }),
   });
 }
