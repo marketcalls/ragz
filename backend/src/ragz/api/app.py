@@ -13,6 +13,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from ragz.api.routes.admin_audit import router as admin_audit_router
 from ragz.api.routes.admin_bots import router as admin_bots_router
+from ragz.api.routes.admin_email import router as admin_email_router
 from ragz.api.routes.admin_feedback import router as admin_feedback_router
 from ragz.api.routes.admin_roles import router as admin_roles_router
 from ragz.api.routes.admin_secrets import router as admin_secrets_router
@@ -180,6 +181,7 @@ def create_app(
     app.include_router(me_router, prefix="/api/v1")
     app.include_router(admin_secrets_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
+    app.include_router(admin_email_router, prefix="/api/v1")
     app.include_router(admin_audit_router, prefix="/api/v1")
     app.include_router(admin_bots_router, prefix="/api/v1")
     app.include_router(api_keys_router, prefix="/api/v1")

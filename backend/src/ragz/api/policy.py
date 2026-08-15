@@ -213,6 +213,9 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/models"): "models.read",
     ("GET", "/api/v1/admin/settings"): "settings.manage",
     ("PUT", "/api/v1/admin/settings"): "settings.manage",
+    ("GET", "/api/v1/admin/email"): "settings.manage",
+    ("PUT", "/api/v1/admin/email"): "settings.manage",
+    ("POST", "/api/v1/admin/email/test"): "settings.manage",
     # usage / quota
     ("GET", "/api/v1/admin/orgs/{org_id}/quota"): "quota.manage",
     ("PUT", "/api/v1/admin/orgs/{org_id}/quota"): "quota.manage",
