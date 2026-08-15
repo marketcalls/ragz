@@ -63,6 +63,11 @@ export type GoldenQueryCreate = components['schemas']['GoldenQueryCreate'];
 // org-wide monthly allocation + default per-user allocation + reset day.
 export type OrgQuotaOut = components['schemas']['OrgQuotaOut'];
 export type OrgQuotaIn = components['schemas']['OrgQuotaIn'];
+// GET /api/v1/usage/me (QUOTA-1): the caller's own current-period usage.
+// allocated_tokens is null when no allocation is configured (unlimited/local) --
+// see features/chat/usage-meter.tsx (the existing chat-header widget) and
+// features/usage/usage-page.tsx (the "My Usage" page) for the two consumers.
+export type UsageMeterOut = components['schemas']['UsageMeterOut'];
 // GET /api/v1/users/{user_id}/quota (Task 15): the target user's override
 // (null = using the org default) plus their current-period usage, in one call.
 export type UserQuotaOut = components['schemas']['UserQuotaOut'];

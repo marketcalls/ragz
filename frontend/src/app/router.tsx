@@ -19,6 +19,7 @@ import { LoginPage } from '@/features/auth/login-page';
 import { ResetPasswordPage } from '@/features/auth/reset-password-page';
 import { ChatPage } from '@/features/chat/chat-page';
 import { DocumentsPage } from '@/features/documents/documents-page';
+import { UsagePage } from '@/features/usage/usage-page';
 
 import { LandingGate } from './landing-gate';
 import { RequireAction } from './require-action';
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
           { path: '/chat', element: <ChatPage /> },
           { path: '/chat/:chatId', element: <ChatPage /> },
           { path: '/documents', element: <DocumentsPage /> },
+          { path: '/usage', element: <UsagePage /> },
           { path: '/account', element: <AccountPage /> },
           {
             element: <RequireRole role="admin" />,

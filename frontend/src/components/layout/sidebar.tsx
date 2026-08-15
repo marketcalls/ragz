@@ -2,6 +2,7 @@ import {
   Activity,
   Bot,
   FileText,
+  Gauge,
   KeyRound,
   LayoutDashboard,
   Mail,
@@ -56,6 +57,7 @@ export function Sidebar() {
       <SidebarChatList />
       <nav aria-label="Sections" className="space-y-0.5 border-t border-line-faint px-1 py-2">
         <SideLink to="/documents" label="Documents" icon={<FileText className="h-4 w-4" aria-hidden />} />
+        <SideLink to="/usage" label="My Usage" icon={<Gauge className="h-4 w-4" aria-hidden />} />
         {can('analytics.view') ? (
           <SideLink
             to="/admin/dashboard"
