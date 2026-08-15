@@ -24,6 +24,7 @@ class DocumentOut(BaseModel):
     supersedes_document_id: UUID | None
     meta: dict[str, str] | None = None
     enriched: bool
+    chunk_method_override: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -75,6 +75,31 @@ async def test_full_runner_sequence_indexes_document(
     assert json.loads(raw)  # chunk artifact persisted between stages
 
 
+async def test_run_chunk_document_override_wins_over_workspace_default(
+    session: AsyncSession, stack_env: None
+) -> None:
+    """Chunk-methods plan Task 2: `run_chunk` resolves via
+    `doc.chunk_method_override or ws.chunk_method` -- a document-level
+    override must win even though the workspace stays on its default
+    ('heading', per seed_workspace/Workspace.chunk_method). Proven with real
+    (non-mocked) content: BIG_TEXT's three paragraphs chunk into 3 pieces
+    under 'heading' (see the module comment above), but docling's .txt
+    parser stamps every block page=1 (parsers.py), so the 'page' strategy
+    collapses the whole document into exactly 1 chunk -- an outcome only
+    reachable if the override, not the workspace default, drove chunking."""
+    ctx, ws, doc = await _upload(session, "ing-chunk-override", data=BIG_TEXT)
+    assert ws.chunk_method == "heading"  # workspace stayed on the default
+    doc.chunk_method_override = "page"
+    await session.commit()
+
+    await run_parse(doc.id)
+    await run_chunk(doc.id)
+
+    raw = await build_storage(get_settings()).get(doc.storage_key + ".chunks.json")
+    chunks = json.loads(raw)
+    assert len(chunks) == 1  # 'page' strategy, not the 3-chunk 'heading' result
+
+
 async def test_parse_failure_marks_document_failed(
     session: AsyncSession, stack_env: None
 ) -> None:

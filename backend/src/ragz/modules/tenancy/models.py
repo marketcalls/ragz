@@ -18,6 +18,12 @@ class Organization(UUIDPk, Base):
 
 class Workspace(UUIDPk, Base):
     __tablename__ = "workspaces"
+    __table_args__ = (
+        CheckConstraint(
+            "chunk_method IN ('heading', 'fixed', 'page', 'table_qa')",
+            name="ck_workspaces_chunk_method",
+        ),
+    )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     name: Mapped[str]
@@ -43,6 +49,9 @@ class Workspace(UUIDPk, Base):
     strict_mode: Mapped[bool] = mapped_column(default=False, server_default="false")
     # Plan K §4: ingestion enrichment toggle (utility-model per-chunk metadata)
     enrichment_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Chunk-methods plan Task 2: workspace-default chunking strategy for
+    # ingests; a document may opt out via Document.chunk_method_override.
+    chunk_method: Mapped[str] = mapped_column(default="heading", server_default="heading")
 
 
 class WorkspaceMember(Base):

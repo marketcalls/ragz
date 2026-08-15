@@ -21,6 +21,7 @@ class WorkspaceOut(BaseModel):
     web_search_enabled: bool
     strict_mode: bool
     enrichment_enabled: bool
+    chunk_method: str
 
     model_config = {"from_attributes": True}
 
@@ -39,6 +40,7 @@ class WorkspacePatch(BaseModel):
     web_search_enabled: bool | None = None
     strict_mode: bool | None = None
     enrichment_enabled: bool | None = None
+    chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
 
 
 class ReembedRequest(BaseModel):

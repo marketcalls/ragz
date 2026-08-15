@@ -209,7 +209,7 @@ async def set_embedding_model(
 
 _RETRIEVAL_SETTINGS_FIELDS = {
     "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
-    "web_search_enabled", "strict_mode", "enrichment_enabled",
+    "web_search_enabled", "strict_mode", "enrichment_enabled", "chunk_method",
 }
 
 # Task 12 (§6): the subset of _RETRIEVAL_SETTINGS_FIELDS that actually changes

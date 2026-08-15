@@ -27,7 +27,7 @@ from ragz.modules.documents.pipeline import (
     Chunk,
     IngestFailure,
     PageBlock,
-    chunk_blocks,
+    chunk_document,
     embed_batch,
     upsert_hq_points,
     upsert_points,
@@ -126,7 +126,13 @@ async def run_chunk(document_id: UUID) -> None:
         storage = _storage()
         raw = await storage.get(doc.storage_key + ".blocks.json")
         blocks = [PageBlock(**b) for b in json.loads(raw)]
-        chunks = chunk_blocks(blocks)
+        # Chunk-methods plan Task 2: a document override wins over the
+        # workspace default; both fall back to "heading" (byte-identical to
+        # the pre-Task-2 chunk_blocks call) via chunk_document's dispatch.
+        workspace = await session.get(Workspace, doc.workspace_id)
+        assert workspace is not None  # doc.workspace_id is a non-nullable FK
+        method = doc.chunk_method_override or workspace.chunk_method
+        chunks = chunk_document(blocks, method=method)
         if not chunks:
             await _fail(session, doc, job, "chunking produced no chunks")
             raise IngestFailure("chunking produced no chunks")

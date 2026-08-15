@@ -49,6 +49,13 @@ class Document(UUIDPk, Base):
             "status IN ('queued', 'processing', 'indexed', 'failed', 'deleting')",
             name="ck_documents_status",
         ),
+        # Chunk-methods plan Task 2: mirrors migration b45b119d8e97's
+        # ck_documents_chunk_method_override.
+        CheckConstraint(
+            "chunk_method_override IS NULL OR "
+            "chunk_method_override IN ('heading', 'fixed', 'page', 'table_qa')",
+            name="ck_documents_chunk_method_override",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
@@ -94,6 +101,8 @@ class Document(UUIDPk, Base):
     folder_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("folders.id", ondelete="SET NULL"), default=None, index=True
     )
+    # Chunk-methods plan Task 2: NULL = inherit Workspace.chunk_method.
+    chunk_method_override: Mapped[str | None] = mapped_column(default=None)
 
 
 class IngestJob(UUIDPk, Base):
