@@ -1884,6 +1884,23 @@ export interface components {
              */
             token_type: string;
         };
+        /** AccordionBlock */
+        AccordionBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "accordion";
+            /** Items */
+            items: components["schemas"]["AccordionItem"][];
+        };
+        /** AccordionItem */
+        AccordionItem: {
+            /** Label */
+            label: string;
+            /** Blocks */
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"])[];
+        };
         /**
          * AclUpdate
          * @description PUT /documents/{id}/acl body.
@@ -2879,6 +2896,16 @@ export interface components {
             /** Parent Folder Id */
             parent_folder_id?: string | null;
         };
+        /** FollowUpsBlock */
+        FollowUpsBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "follow_ups";
+            /** Items */
+            items: string[];
+        };
         /** ForgotPasswordRequest */
         ForgotPasswordRequest: {
             /**
@@ -3154,7 +3181,7 @@ export interface components {
             citations: components["schemas"]["CitationOut"][];
             feedback: components["schemas"]["FeedbackOut"] | null;
             /** Blocks */
-            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"])[] | null;
+            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"] | components["schemas"]["AccordionBlock"])[] | null;
             /** Attachments */
             attachments?: components["schemas"]["AttachmentOut"][] | null;
             /** Children */
@@ -3881,7 +3908,7 @@ export interface components {
             /** Label */
             label: string;
             /** Blocks */
-            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"])[];
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"])[];
         };
         /** TableBlock */
         TableBlock: {

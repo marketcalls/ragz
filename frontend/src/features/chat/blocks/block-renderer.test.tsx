@@ -287,6 +287,51 @@ test('info_card with a url renders a safe external link', () => {
   expect(link).toHaveAttribute('target', '_blank');
 });
 
+test('follow_ups renders one chip per item; clicking a chip calls onFollowUp with its text', async () => {
+  const blocks: Block[] = [
+    { type: 'follow_ups', items: ['What is the refund policy?', 'How do I cancel?'] },
+  ];
+  const onFollowUp = vi.fn();
+  const user = userEvent.setup();
+  render(<BlockRenderer blocks={blocks} onFollowUp={onFollowUp} />);
+  const chip = screen.getByRole('button', { name: 'What is the refund policy?' });
+  expect(screen.getByRole('button', { name: 'How do I cancel?' })).toBeInTheDocument();
+  await user.click(chip);
+  expect(onFollowUp).toHaveBeenCalledWith('What is the refund policy?');
+});
+
+test('follow_ups chips are disabled when onFollowUp is absent', () => {
+  const blocks: Block[] = [{ type: 'follow_ups', items: ['Tell me more'] }];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByRole('button', { name: 'Tell me more' })).toBeDisabled();
+});
+
+test('accordion: a section is collapsed by default and reveals inner blocks when its header is clicked; sections toggle independently', async () => {
+  const blocks: Block[] = [
+    {
+      type: 'accordion',
+      items: [
+        { label: 'Section one', blocks: [{ type: 'text', markdown: 'Inner one content' }] },
+        { label: 'Section two', blocks: [{ type: 'text', markdown: 'Inner two content' }] },
+      ],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Section one')).toBeInTheDocument();
+  expect(screen.getByText('Section two')).toBeInTheDocument();
+  expect(screen.queryByText('Inner one content')).not.toBeInTheDocument();
+  expect(screen.queryByText('Inner two content')).not.toBeInTheDocument();
+
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: /Section one/ }));
+  expect(screen.getByText('Inner one content')).toBeInTheDocument();
+  expect(screen.queryByText('Inner two content')).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /Section two/ }));
+  expect(screen.getByText('Inner one content')).toBeInTheDocument();
+  expect(screen.getByText('Inner two content')).toBeInTheDocument();
+});
+
 test('an unknown block type renders nothing', () => {
   const blocks = [{ type: 'unknown_future_block', anything: true }] as unknown as Block[];
   const { container } = render(<BlockRenderer blocks={blocks} />);

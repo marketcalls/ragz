@@ -40,7 +40,9 @@ import { Markdown } from '@/components/markdown/markdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
 
+import { Accordion } from './accordion';
 import { ArticleCard } from './article-card';
+import { FollowUps } from './follow-ups';
 import { FormBlockView } from './form-block';
 import { SourceRefsView } from './source-refs';
 import type { SourceChipData } from '../source-panel';
@@ -364,11 +366,13 @@ function TabsView({
   block,
   depth,
   onFormSubmit,
+  onFollowUp,
   onOpenDocument,
 }: {
   block: TabsBlockT;
   depth: number;
   onFormSubmit?: (message: string) => void;
+  onFollowUp?: (message: string) => void;
   onOpenDocument?: (source: SourceChipData) => void;
 }) {
   // Backend types nesting out statically (TabItem.blocks excludes
@@ -392,6 +396,7 @@ function TabsView({
             blocks={tab.blocks}
             depth={depth + 1}
             onFormSubmit={onFormSubmit}
+            onFollowUp={onFollowUp}
             onOpenDocument={onOpenDocument}
           />
         </TabsContent>
@@ -404,11 +409,13 @@ function RenderBlock({
   block,
   depth,
   onFormSubmit,
+  onFollowUp,
   onOpenDocument,
 }: {
   block: Block;
   depth: number;
   onFormSubmit?: (message: string) => void;
+  onFollowUp?: (message: string) => void;
   onOpenDocument?: (source: SourceChipData) => void;
 }): ReactNode {
   switch (block.type) {
@@ -444,10 +451,28 @@ function RenderBlock({
       return <TableView block={block} />;
     case 'tabs':
       return (
-        <TabsView block={block} depth={depth} onFormSubmit={onFormSubmit} onOpenDocument={onOpenDocument} />
+        <TabsView
+          block={block}
+          depth={depth}
+          onFormSubmit={onFormSubmit}
+          onFollowUp={onFollowUp}
+          onOpenDocument={onOpenDocument}
+        />
       );
     case 'form':
       return <FormBlockView block={block} onSubmit={onFormSubmit} />;
+    case 'follow_ups':
+      return <FollowUps block={block} onFollowUp={onFollowUp} />;
+    case 'accordion':
+      return (
+        <Accordion
+          block={block}
+          depth={depth}
+          onFormSubmit={onFormSubmit}
+          onFollowUp={onFollowUp}
+          onOpenDocument={onOpenDocument}
+        />
+      );
     default:
       // Unknown block type -- strict whitelist, render nothing.
       return null;
@@ -458,6 +483,7 @@ export function BlockRenderer({
   blocks,
   depth = 0,
   onFormSubmit,
+  onFollowUp,
   onOpenDocument,
 }: {
   blocks: Block[];
@@ -467,6 +493,11 @@ export function BlockRenderer({
   // chat-page.tsx down through AssistantMessage). Absent in contexts with
   // no send path -- the form still renders but submit is a disabled no-op.
   onFormSubmit?: (message: string) => void;
+  // Task 6 (openui-parity design 2026-08-16, §6): a `follow_ups` chip's click
+  // sends its text as a normal chat message through the SAME send path as
+  // onFormSubmit (wired from chat-page.tsx's onSend, exactly mirroring
+  // onFormSubmit's wiring). Absent -- the chips still render but disabled.
+  onFollowUp?: (message: string) => void;
   // openui-parity design (2026-08-16, Task 4): source_refs/article_card doc
   // items open the SAME in-app document viewer as citation chips
   // (source-panel.tsx's SourceChipData). Absent in contexts with no viewer
@@ -482,6 +513,7 @@ export function BlockRenderer({
           block={block}
           depth={depth}
           onFormSubmit={onFormSubmit}
+          onFollowUp={onFollowUp}
           onOpenDocument={onOpenDocument}
         />
       ))}

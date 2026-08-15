@@ -22,6 +22,7 @@ export function AssistantMessage({
   footer,
   onOpenDocument,
   onFormSubmit,
+  onFollowUp,
 }: {
   content: string;
   sources: SourceChipData[];
@@ -47,6 +48,10 @@ export function AssistantMessage({
   // composer (wired from chat-page.tsx). Absent (e.g. read-only contexts) --
   // BlockRenderer/FormBlockView render the form with submit disabled.
   onFormSubmit?: (message: string) => void;
+  // Task 6 (openui-parity design 2026-08-16, §6): a `follow_ups` chip's click
+  // sends its text as a normal chat message through the SAME send path --
+  // mirrors onFormSubmit exactly (same value passed from chat-page.tsx).
+  onFollowUp?: (message: string) => void;
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
 
@@ -72,7 +77,12 @@ export function AssistantMessage({
         <Markdown content={content} />
       </CitationProvider>
       {blocks && blocks.length > 0 ? (
-        <BlockRenderer blocks={blocks} onFormSubmit={onFormSubmit} onOpenDocument={onOpenDocument} />
+        <BlockRenderer
+          blocks={blocks}
+          onFormSubmit={onFormSubmit}
+          onFollowUp={onFollowUp}
+          onOpenDocument={onOpenDocument}
+        />
       ) : null}
       {noAnswer ? (
         <NoAnswerNotice />

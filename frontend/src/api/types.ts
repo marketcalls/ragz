@@ -140,6 +140,13 @@ export type FormField = components['schemas']['FormField'];
 export type SourceRefsBlock = components['schemas']['SourceRefsBlock'];
 export type SourceRefItem = components['schemas']['SourceRef'];
 export type ArticleCardBlock = components['schemas']['ArticleCardBlock'];
+// Task 6 (openui-parity design 2026-08-16): follow-up suggestion chips and a
+// foldable accordion (visual family shared with TabsView). AccordionItem.blocks
+// join InnerBlock on the backend -- same static depth cap as TabItem.blocks
+// (an accordion item's blocks can never themselves contain a tabs/accordion).
+export type FollowUpsBlock = components['schemas']['FollowUpsBlock'];
+export type AccordionBlock = components['schemas']['AccordionBlock'];
+export type AccordionItem = components['schemas']['AccordionItem'];
 export type Block =
   | TextBlock
   | ChartBlock
@@ -152,7 +159,9 @@ export type Block =
   | CalloutBlock
   | TableBlock
   | TabsBlock
-  | FormBlock;
+  | FormBlock
+  | FollowUpsBlock
+  | AccordionBlock;
 
 export type DocumentStatus = DocumentOut['status'];
 

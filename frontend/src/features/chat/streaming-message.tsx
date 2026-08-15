@@ -37,11 +37,15 @@ function spinnerLabel(step: AgentStepInfo | undefined): string {
 export function StreamingMessage({
   stream,
   onFormSubmit,
+  onFollowUp,
 }: {
   stream: ChatStreamState;
   // Phase 3: a live-turn form block (arrives via the `blocks` SSE frame) is
   // submittable the same way a persisted one is -- same send path.
   onFormSubmit?: (message: string) => void;
+  // Task 6 (openui-parity design 2026-08-16, §6): same treatment for a
+  // live-turn follow_ups block -- mirrors onFormSubmit exactly.
+  onFollowUp?: (message: string) => void;
 }) {
   const lastStep = stream.agentSteps.at(-1);
   return (
@@ -64,6 +68,7 @@ export function StreamingMessage({
           agentSteps={stream.agentSteps}
           toolResults={stream.toolResults}
           onFormSubmit={onFormSubmit}
+          onFollowUp={onFollowUp}
         />
       ) : null}
       {stream.status === 'error' ? (

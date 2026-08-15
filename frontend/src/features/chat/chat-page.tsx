@@ -270,6 +270,7 @@ export function ChatPage() {
                 validationFailed={m.validation_failed}
                 onOpenDocument={openDocument}
                 onFormSubmit={onFormSubmit}
+                onFollowUp={onFormSubmit}
                 footer={
                   <MessageActions
                     entry={entry}
@@ -286,7 +287,7 @@ export function ChatPage() {
             );
           })}
           {showStreamBlock ? (
-            <StreamingMessage stream={stream} onFormSubmit={onFormSubmit} />
+            <StreamingMessage stream={stream} onFormSubmit={onFormSubmit} onFollowUp={onFormSubmit} />
           ) : null}
           {!chatId && path.length === 0 && stream.status === 'idle' ? (
             <p className="pt-16 text-center text-[15px] text-secondary">
