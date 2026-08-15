@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import type { Block } from '@/api/types';
@@ -32,6 +32,49 @@ test('chart block (donut) renders the mapped chart primitive', () => {
   const { container } = render(<BlockRenderer blocks={blocks} />);
   expect(screen.getByText('Tokens by model')).toBeInTheDocument();
   expect(container.querySelectorAll('.recharts-pie-sector')).toHaveLength(2);
+});
+
+test('chart block renders block.title and block.subtitle in the card header', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'donut',
+      title: 'Tokens by model',
+      subtitle: 'Last 7 days',
+      category_key: 'model',
+      keys: ['tokens'],
+      data: [
+        { model: 'gpt-4o', tokens: 40 },
+        { model: 'claude', tokens: 60 },
+      ],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Tokens by model')).toBeInTheDocument();
+  expect(screen.getByText('Last 7 days')).toBeInTheDocument();
+});
+
+test('donut chart legend shows each data point’s name AND value', async () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'donut',
+      category_key: 'model',
+      keys: ['tokens'],
+      data: [
+        { model: 'gpt-4o', tokens: 40 },
+        { model: 'claude', tokens: 60 },
+      ],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  // Recharts v3 populates the legend payload on a post-paint effect.
+  await waitFor(() => {
+    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+  });
+  expect(screen.getByText('claude')).toBeInTheDocument();
+  expect(screen.getByText('40')).toBeInTheDocument();
+  expect(screen.getByText('60')).toBeInTheDocument();
 });
 
 test('chart block with data that does not fit the chosen chart renders nothing (no crash)', () => {

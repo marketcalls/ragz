@@ -42,3 +42,24 @@ test('fenced code renders with a copy button', () => {
   renderMd('```py\nprint(1)\n```');
   expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
 });
+
+test('a fenced ```pie block is suppressed (diagram data, visualized by the chart block instead)', () => {
+  renderMd('```pie\ntitle Test\n"A": 10\n"B": 20\n```');
+  expect(document.querySelector('pre')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Copy code' })).not.toBeInTheDocument();
+});
+
+test('a fenced ```mermaid block is suppressed (case-insensitive language match)', () => {
+  renderMd('```Mermaid\ngraph TD; A-->B;\n```');
+  expect(document.querySelector('pre')).toBeNull();
+});
+
+test('a fenced ```python block still renders as a normal code block', () => {
+  renderMd('```python\nprint(1)\n```');
+  expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+});
+
+test('inline code (no language) still renders unchanged', () => {
+  renderMd('Use `foo()` here.');
+  expect(screen.getByText('foo()')).toBeInTheDocument();
+});

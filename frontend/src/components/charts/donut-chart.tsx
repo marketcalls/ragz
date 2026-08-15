@@ -1,4 +1,4 @@
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { Cell, Legend, type LegendPayload, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 import { categorical, useChartPalette } from '@/lib/chart-palette';
 
@@ -43,7 +43,25 @@ export function DonutChart({
             ))}
           </Pie>
           <Tooltip contentStyle={tooltipContentStyle} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend
+            wrapperStyle={{ fontSize: 12 }}
+            // Default legend content shows only the series name -- augment it
+            // (rather than replace it) so each row also shows its numeric
+            // value, right-aligned tabular-nums, mirroring openui's side
+            // legend. `entry`/index line up 1:1 with the `data` prop, which
+            // recharts doesn't otherwise expose through the payload.
+            formatter={(value: string, _entry: LegendPayload, index: number) => {
+              const point = data[index];
+              return (
+                <span className="inline-flex items-center gap-1.5">
+                  <span>{value}</span>
+                  {point ? (
+                    <span className="tabular-nums text-secondary">{point.value.toLocaleString()}</span>
+                  ) : null}
+                </span>
+              );
+            }}
+          />
         </PieChart>
       </ResponsiveContainer>
       {centerLabel ? (

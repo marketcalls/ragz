@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -6,6 +7,50 @@ import { remarkCitations } from '@/features/chat/remark-citations';
 
 import { CodeBlock } from './code-block';
 
+// Fenced code whose language is a diagram/chart type (```mermaid, ```pie,
+// ...) is emitted by the synthesis model alongside a generative-UI `chart`
+// block that already visualizes the same data -- rendering the raw fence too
+// is both unreadable (raw mermaid/pie syntax as text) and redundant. Suppress
+// it here rather than showing it as a normal code block.
+const DIAGRAM_LANGS = new Set([
+  'mermaid',
+  'pie',
+  'chart',
+  'flowchart',
+  'graph',
+  'sequencediagram',
+  'sequence',
+  'gantt',
+  'classdiagram',
+  'statediagram',
+  'erdiagram',
+  'journey',
+  'xychart',
+  'xychart-beta',
+  'quadrantchart',
+  'mindmap',
+  'timeline',
+]);
+
+// react-markdown renders a fence as <pre><code class="language-<lang>">…
+// </code></pre> -- `pre`'s children is the (not-yet-invoked) <code> element,
+// so its className can be inspected without executing the `code` component.
+function languageOf(children: ReactNode): string | null {
+  const child = Array.isArray(children) ? children[0] : children;
+  if (child && typeof child === 'object' && 'props' in child) {
+    const className = (child as { props?: { className?: string } }).props?.className;
+    const match = className ? /language-(\S+)/.exec(className) : null;
+    return match?.[1] ?? null;
+  }
+  return null;
+}
+
+function PreBlock({ children }: { children?: ReactNode }) {
+  const lang = languageOf(children)?.toLowerCase() ?? null;
+  if (lang && DIAGRAM_LANGS.has(lang)) return null;
+  return <CodeBlock>{children}</CodeBlock>;
+}
+
 // 'citation-chip' comes from remarkCitations' hName; react-markdown accepts
 // custom element names via a widened Components type.
 const components = {
@@ -13,7 +58,7 @@ const components = {
   // model output must not auto-fetch remote URLs — classic RAG exfiltration
   // channel (OWASP LLM Top 10)
   img: () => null,
-  pre: CodeBlock,
+  pre: PreBlock,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) =>
     className ? (
       <code className={className}>{children}</code> // inside <pre>, CodeBlock styles it

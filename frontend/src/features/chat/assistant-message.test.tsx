@@ -105,6 +105,55 @@ test('agentSteps present (the live-turn path) renders the "Behind the scenes" to
   expect(screen.getByText('Behind the scenes')).toBeInTheDocument();
 });
 
+// Fix C (openui-parity presentation polish): when the answer already renders
+// a source_refs generative-UI block, the legacy SourcePanel chips would
+// otherwise duplicate the same sources below it.
+test('a source_refs block suppresses the legacy SourcePanel (no duplicate source chips)', () => {
+  const sources: SourceChipData[] = [
+    { marker: 1, document_id: 'd1', filename: 'evac.pdf', page: 5 },
+  ];
+  const blocks: Block[] = [
+    {
+      type: 'source_refs',
+      items: [{ title: 'evac.pdf', document_id: 'd1', page: 5 }],
+    },
+  ];
+  render(<AssistantMessage content="The muster point is the north carpark." sources={sources} blocks={blocks} />);
+  expect(screen.queryByRole('list', { name: 'Sources' })).not.toBeInTheDocument();
+});
+
+test('no source_refs block: the legacy SourcePanel still renders as before', () => {
+  const sources: SourceChipData[] = [
+    { marker: 1, document_id: 'd1', filename: 'evac.pdf', page: 5 },
+  ];
+  render(<AssistantMessage content="The muster point is the north carpark [1]." sources={sources} />);
+  expect(screen.getByRole('list', { name: 'Sources' })).toBeInTheDocument();
+});
+
+test('no-answer path: a source_refs block also suppresses the "Nearest sources" SourcePanel', () => {
+  const sources: SourceChipData[] = [
+    { marker: 1, document_id: 'd1', filename: 'evac.pdf', page: 5 },
+  ];
+  const blocks: Block[] = [
+    {
+      type: 'source_refs',
+      items: [{ title: 'evac.pdf', document_id: 'd1', page: 5 }],
+    },
+  ];
+  render(
+    <AssistantMessage content="" sources={sources} blocks={blocks} noAnswer={true} />,
+  );
+  expect(screen.queryByRole('list', { name: 'Sources' })).not.toBeInTheDocument();
+});
+
+test('no-answer path without a source_refs block: "Nearest sources" SourcePanel still renders', () => {
+  const sources: SourceChipData[] = [
+    { marker: 1, document_id: 'd1', filename: 'evac.pdf', page: 5 },
+  ];
+  render(<AssistantMessage content="" sources={sources} noAnswer={true} />);
+  expect(screen.getByRole('list', { name: 'Sources' })).toBeInTheDocument();
+});
+
 test('blocks omitted or empty renders nothing extra', () => {
   const { container: withoutProp } = render(
     <AssistantMessage content="No blocks here." sources={[]} />,

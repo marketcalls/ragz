@@ -55,6 +55,11 @@ export function AssistantMessage({
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
 
+  // Fix C (openui-parity presentation polish): a `source_refs` block already
+  // renders the same sources as cards -- the legacy SourcePanel chips below
+  // would just duplicate them, so suppress SourcePanel whenever one is present.
+  const hasSourceRefsBlock = (blocks ?? []).some((b) => b.type === 'source_refs');
+
   // Inline `[n]` markers only carry the marker number (CitationChip has no
   // access to the full source list) -- resolve back to the source here and
   // reuse the same open-drawer path the chip buttons use, so both entry
@@ -86,23 +91,25 @@ export function AssistantMessage({
       ) : null}
       {noAnswer ? (
         <NoAnswerNotice />
-      ) : (
+      ) : !hasSourceRefsBlock ? (
         <SourcePanel
           sources={sources}
           highlightedN={highlightedN}
           onSelect={setHighlightedN}
           onOpenDocument={onOpenDocument}
         />
-      )}
+      ) : null}
       {noAnswer && sources.length > 0 ? (
         <div className="mt-2">
           <p className="mb-1 text-[12px] text-muted">Nearest sources</p>
-          <SourcePanel
-            sources={sources}
-            highlightedN={highlightedN}
-            onSelect={setHighlightedN}
-            onOpenDocument={onOpenDocument}
-          />
+          {!hasSourceRefsBlock ? (
+            <SourcePanel
+              sources={sources}
+              highlightedN={highlightedN}
+              onSelect={setHighlightedN}
+              onOpenDocument={onOpenDocument}
+            />
+          ) : null}
         </div>
       ) : null}
       {stopped ? (
