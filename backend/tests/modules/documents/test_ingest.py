@@ -478,6 +478,9 @@ async def test_run_embed_upsert_records_embedding_token_usage(
     assert rows[0].completion_tokens == 0
     assert rows[0].units == 0
     assert rows[0].model_id == workspace.embedding_model_id
+    # Cost reporting Phase 2a: the row is tagged with the document's workspace
+    # so department-scoped reports can aggregate by workspace.
+    assert rows[0].workspace_id == doc.workspace_id
     # The pre-existing ingestion attribution row is still written alongside it.
     ingestion_rows = (
         await session.execute(
@@ -487,6 +490,7 @@ async def test_run_embed_upsert_records_embedding_token_usage(
         )
     ).scalars().all()
     assert len(ingestion_rows) == 1
+    assert ingestion_rows[0].workspace_id == doc.workspace_id
 
 
 async def test_run_embed_upsert_skips_embedding_row_when_no_tokens(

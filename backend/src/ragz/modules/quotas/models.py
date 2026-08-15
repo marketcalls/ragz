@@ -27,10 +27,15 @@ class UsageRecord(UUIDPk, Base):
     __table_args__ = (
         Index("ix_usage_org_created", "org_id", "created_at"),
         Index("ix_usage_user_created", "user_id", "created_at"),
+        Index("ix_usage_workspace_created", "workspace_id", "created_at"),
     )
 
     org_id: Mapped[UUID]
     user_id: Mapped[UUID]
+    # Pure reporting dimension (department = workspace): tags each ledger row
+    # with the workspace it belongs to. Nullable -- platform-level ops have no
+    # workspace. NEVER part of any token/units aggregation.
+    workspace_id: Mapped[UUID | None] = mapped_column(default=None)
     model_id: Mapped[UUID | None] = mapped_column(default=None)
     feature: Mapped[str]  # chat | ingestion | embedding | rerank | web_search
     prompt_tokens: Mapped[int]

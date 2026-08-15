@@ -492,7 +492,7 @@ async def retrieve(
     # nothing to bill, skip the row entirely.
     if embed_tokens > 0:
         await quota_service.record_usage(
-            session, org_id=ctx.org_id, user_id=ctx.user_id,
+            session, org_id=ctx.org_id, user_id=ctx.user_id, workspace_id=workspace_id,
             model_id=embedding_model.id, feature="embedding",
             prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
         )
@@ -539,6 +539,7 @@ async def retrieve(
             if rerank_units > 0:
                 await quota_service.record_usage(
                     session, org_id=ctx.org_id, user_id=ctx.user_id,
+                    workspace_id=workspace_id,
                     model_id=None, feature="rerank",
                     prompt_tokens=0, completion_tokens=0,
                     units=rerank_units, commit=False,

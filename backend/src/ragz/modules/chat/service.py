@@ -778,8 +778,8 @@ async def _assemble_history(
     # not background ingestion work.
     util_model_name = utility_model.litellm_model_name
     await quota_service.record_usage(
-        session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=utility_model.id,
-        feature="chat",
+        session, org_id=ctx.org_id, user_id=ctx.user_id, workspace_id=chat.workspace_id,
+        model_id=utility_model.id, feature="chat",
         prompt_tokens=sum(count_tokens(m.content, util_model_name) for m in to_fold),
         completion_tokens=count_tokens(new_summary, util_model_name),
     )
@@ -980,7 +980,8 @@ async def audit_message(session: AsyncSession, message_id: UUID) -> bool:
     chat = await session.get(Chat, msg.chat_id)
     assert chat is not None  # FK guarantees the parent chat row exists
     await quota_service.record_usage(
-        session, org_id=chat.org_id, user_id=chat.user_id, model_id=utility_model.id,
+        session, org_id=chat.org_id, user_id=chat.user_id, workspace_id=chat.workspace_id,
+        model_id=utility_model.id,
         feature="validation", prompt_tokens=completion.usage.prompt_tokens,
         completion_tokens=completion.usage.completion_tokens,
     )
@@ -1247,7 +1248,8 @@ def persist_stopped_detached(
                     parent=parent, model_id=model_id, stopped=True,
                 )
                 await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model_id,
+                    session, org_id=ctx.org_id, user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id, model_id=model_id,
                     feature="chat", prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
@@ -1421,7 +1423,8 @@ async def stream_reply(
             streamed_parts.clear()
             if convo_usage is not None:
                 await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                    session, org_id=ctx.org_id, user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id, model_id=model.id,
                     feature="chat", prompt_tokens=convo_usage.prompt_tokens,
                     completion_tokens=convo_usage.completion_tokens,
                 )
@@ -1576,6 +1579,7 @@ async def stream_reply(
                 ):
                     await quota_service.record_usage(
                         session, org_id=ctx.org_id, user_id=ctx.user_id,
+                        workspace_id=chat.workspace_id,
                         model_id=None, feature="web_search",
                         prompt_tokens=0, completion_tokens=0,
                         units=gathered.web_searches, commit=False,
@@ -1725,7 +1729,8 @@ async def stream_reply(
             streamed_parts.clear()  # same duplicate-row guard as the other branches
             if gk_usage is not None:
                 await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                    session, org_id=ctx.org_id, user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id, model_id=model.id,
                     feature="chat", prompt_tokens=gk_usage.prompt_tokens,
                     completion_tokens=gk_usage.completion_tokens,
                 )
@@ -1750,7 +1755,8 @@ async def stream_reply(
             )
             if agent_prompt_tokens or agent_completion_tokens:
                 await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                    session, org_id=ctx.org_id, user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id, model_id=model.id,
                     feature="chat", prompt_tokens=agent_prompt_tokens,
                     completion_tokens=agent_completion_tokens,
                 )
@@ -1883,7 +1889,8 @@ async def stream_reply(
         streamed_parts.clear()
         if usage is not None:
             await quota_service.record_usage(
-                session, org_id=ctx.org_id, user_id=ctx.user_id, model_id=model.id,
+                session, org_id=ctx.org_id, user_id=ctx.user_id,
+                workspace_id=chat.workspace_id, model_id=model.id,
                 feature="chat", prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
             )

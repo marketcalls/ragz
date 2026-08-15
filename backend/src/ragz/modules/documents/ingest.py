@@ -323,6 +323,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         if embed_tokens > 0:
             await quota_service.record_usage(
                 session, org_id=doc.org_id, user_id=doc.created_by,
+                workspace_id=doc.workspace_id,
                 model_id=embedding_model.id, feature="embedding",
                 prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
             )
@@ -330,7 +331,8 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.
         await quota_service.record_usage(
-            session, org_id=doc.org_id, user_id=doc.created_by, model_id=None,
+            session, org_id=doc.org_id, user_id=doc.created_by,
+            workspace_id=doc.workspace_id, model_id=None,
             feature="ingestion",
             prompt_tokens=sum(len(c.text) for c in chunks) // 4, completion_tokens=0,
         )
@@ -465,7 +467,8 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
         # run_embed_upsert's own record_usage call (chars//4, no model token
         # accounting from TEI/the utility model's embedding calls).
         await quota_service.record_usage(
-            session, org_id=doc.org_id, user_id=doc.created_by, model_id=utility_model.id,
+            session, org_id=doc.org_id, user_id=doc.created_by,
+            workspace_id=doc.workspace_id, model_id=utility_model.id,
             feature="ingestion",
             prompt_tokens=total_prompt_tokens, completion_tokens=total_completion_tokens,
         )

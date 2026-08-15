@@ -134,6 +134,45 @@ async def test_units_persist_and_never_count_as_tokens(session: AsyncSession) ->
     assert sum(p.prompt_tokens + p.completion_tokens for p in points) == 150
 
 
+# --- Cost reporting Phase 2a: workspace_id dimension --------------------------
+
+
+async def test_workspace_id_persists_as_pure_dimension(session: AsyncSession) -> None:
+    """`record_usage(workspace_id=...)` tags the row for department-scoped
+    reporting; a None workspace_id (platform-level op) stays null. workspace_id
+    is a pure dimension -- it never enters any token/units aggregation."""
+    from sqlalchemy import select
+
+    from ragz.modules.quotas.models import UsageRecord
+    from ragz.modules.quotas.service import daily_usage
+
+    admin_ctx, _, user = await _seed(session)
+    ws_id = uuid4()
+    await record_usage(session, org_id=admin_ctx.org_id, user_id=user.id, model_id=None,
+                       feature="chat", prompt_tokens=100, completion_tokens=50,
+                       workspace_id=ws_id)
+    # No workspace_id passed -> stays null (platform-level op).
+    await record_usage(session, org_id=admin_ctx.org_id, user_id=user.id, model_id=None,
+                       feature="ingestion", prompt_tokens=20, completion_tokens=0)
+
+    rows = (
+        await session.execute(
+            select(UsageRecord).where(UsageRecord.org_id == admin_ctx.org_id)
+            .order_by(UsageRecord.feature)
+        )
+    ).scalars().all()
+    by_feature = {r.feature: r for r in rows}
+    assert by_feature["chat"].workspace_id == ws_id
+    assert by_feature["ingestion"].workspace_id is None
+
+    # workspace_id is a pure dimension: token aggregation is unchanged (170),
+    # regardless of workspace attribution.
+    status = await get_usage_status(session, None, org_id=admin_ctx.org_id, user_id=user.id)
+    assert status.used_tokens == 170
+    points = await daily_usage(session, user_id=user.id, days=1)
+    assert sum(p.prompt_tokens + p.completion_tokens for p in points) == 170
+
+
 # --- Cost reporting: pricing helper (quotas/costing.py) -----------------------
 
 
