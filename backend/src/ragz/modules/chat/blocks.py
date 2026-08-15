@@ -370,6 +370,21 @@ class FormBlock(BaseModel):
         return fields
 
 
+class FollowUpsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["follow_ups"]
+    items: list[str] = Field(max_length=_MAX_LIST_ITEMS)
+
+    @field_validator("items")
+    @classmethod
+    def _bound_item_length(cls, items: list[str]) -> list[str]:
+        for item in items:
+            if len(item) > _MAX_TITLE:
+                raise ValueError("follow-up item too long")
+        return items
+
+
 # --- Tabs: depth is bounded STATICALLY, not by a runtime counter ----------
 #
 # `InnerBlock` is the block union usable *inside* a tab. It deliberately
@@ -388,7 +403,8 @@ InnerBlock = Annotated[
     | ArticleCardBlock
     | CalloutBlock
     | TableBlock
-    | FormBlock,
+    | FormBlock
+    | FollowUpsBlock,
     Field(discriminator="type"),
 ]
 
@@ -407,6 +423,28 @@ class TabsBlock(BaseModel):
     tabs: list[TabItem] = Field(max_length=_MAX_TABS)
 
 
+# --- Accordion: depth is bounded STATICALLY, same pattern as Tabs ---------
+#
+# `AccordionItem.blocks` uses `InnerBlock`, which excludes both TabsBlock and
+# AccordionBlock -- an accordion item's blocks can never themselves contain
+# an accordion or tabs block, so nesting depth is capped at exactly 1 by the
+# type definition itself.
+
+
+class AccordionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(max_length=_MAX_TITLE)
+    blocks: list[InnerBlock] = Field(max_length=_MAX_BLOCKS_PER_TAB)
+
+
+class AccordionBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["accordion"]
+    items: list[AccordionItem] = Field(max_length=_MAX_TABS)
+
+
 # --- Top-level union -------------------------------------------------------
 
 Block = Annotated[
@@ -421,7 +459,9 @@ Block = Annotated[
     | CalloutBlock
     | TableBlock
     | TabsBlock
-    | FormBlock,
+    | FormBlock
+    | FollowUpsBlock
+    | AccordionBlock,
     Field(discriminator="type"),
 ]
 

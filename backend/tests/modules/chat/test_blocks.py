@@ -15,11 +15,16 @@ import math
 import pytest
 
 from ragz.modules.chat.blocks import (
+    _MAX_LIST_ITEMS,
+    _MAX_TABS,
     _MAX_TAGS,
+    _MAX_TITLE,
     MAX_BLOCKS,
+    AccordionBlock,
     ArticleCardBlock,
     CalloutBlock,
     ChartBlock,
+    FollowUpsBlock,
     FormBlock,
     ImageCardBlock,
     InfoCardBlock,
@@ -965,3 +970,147 @@ def test_validate_blocks_never_raises(raw: object) -> None:
     shape thrown at it -- it always returns a (possibly empty) list."""
     result = validate_blocks(raw)
     assert isinstance(result, list)
+
+
+# --- FollowUpsBlock + AccordionBlock (openui-parity T5) --------------------
+
+
+def test_follow_ups_block_valid() -> None:
+    out = validate_blocks(
+        [{"type": "follow_ups", "items": ["What about pricing?", "Any competitors?"]}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], FollowUpsBlock)
+    assert out[0].items == ["What about pricing?", "Any competitors?"]
+
+
+def test_follow_ups_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "follow_ups", "items": [f"item {i}" for i in range(_MAX_LIST_ITEMS + 1)]}]
+    )
+    assert out == []
+
+
+def test_follow_ups_item_too_long_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "follow_ups", "items": ["x" * (_MAX_TITLE + 1)]}]
+    )
+    assert out == []
+
+
+def test_follow_ups_non_string_item_dropped() -> None:
+    out = validate_blocks([{"type": "follow_ups", "items": ["ok", 123]}])
+    assert out == []
+
+
+def test_follow_ups_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "follow_ups", "items": ["ok"], "onclick": "evil()"}]
+    )
+    assert out == []
+
+
+def test_follow_ups_nested_inside_tab_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "Overview",
+                        "blocks": [{"type": "follow_ups", "items": ["Next?"]}],
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TabsBlock)
+    assert isinstance(out[0].tabs[0].blocks[0], FollowUpsBlock)
+
+
+def test_accordion_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "accordion",
+                "items": [
+                    {
+                        "label": "Section A",
+                        "blocks": [{"type": "text", "markdown": "content A"}],
+                    },
+                    {
+                        "label": "Section B",
+                        "blocks": [{"type": "text", "markdown": "content B"}],
+                    },
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], AccordionBlock)
+    assert len(out[0].items) == 2
+    assert isinstance(out[0].items[0].blocks[0], TextBlock)
+
+
+def test_accordion_item_nested_accordion_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "accordion",
+                "items": [
+                    {
+                        "label": "Outer",
+                        "blocks": [
+                            {
+                                "type": "accordion",
+                                "items": [{"label": "Inner", "blocks": []}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_accordion_item_nested_tabs_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "accordion",
+                "items": [
+                    {
+                        "label": "Outer",
+                        "blocks": [
+                            {
+                                "type": "tabs",
+                                "tabs": [{"label": "Inner", "blocks": []}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_accordion_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "accordion",
+                "items": [{"label": "t", "blocks": []} for _ in range(_MAX_TABS + 1)],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_accordion_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "accordion", "items": [{"label": "t", "blocks": []}], "onclick": "evil()"}]
+    )
+    assert out == []
