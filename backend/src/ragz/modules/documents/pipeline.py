@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from uuid import UUID, uuid5
 
 from qdrant_client import models
@@ -232,6 +233,110 @@ def chunk_blocks(
             buf.append(piece)
     flush(carry_overlap=False)
     return chunks
+
+
+ChunkMethod = Literal["heading", "fixed", "page", "table_qa"]
+
+
+def _chunk_fixed(
+    blocks: list[PageBlock], target_chars: int, overlap_ratio: float
+) -> list[Chunk]:
+    """Method-agnostic fixed-width windows over the concatenated block text,
+    with a percentage overlap between consecutive windows. Page is stamped
+    from the first block (fixed windows don't track per-page boundaries)."""
+    text = "\n\n".join(b.text for b in blocks if b.text)
+    if not text:
+        return []
+    page_of = blocks[0].page if blocks else 1
+    chunks: list[Chunk] = []
+    i = 0
+    overlap = int(target_chars * overlap_ratio)
+    while i < len(text):
+        window = text[i : i + target_chars]
+        chunks.append(
+            Chunk(text=window.strip(), page=page_of, chunk_index=len(chunks), section=None)
+        )
+        if i + target_chars >= len(text):
+            break
+        i += max(1, target_chars - overlap)
+    return [c for c in chunks if c.text]
+
+
+def _chunk_by_page(blocks: list[PageBlock]) -> list[Chunk]:
+    """One chunk per distinct page (empty pages skipped)."""
+    chunks: list[Chunk] = []
+    by_page: dict[int, list[str]] = {}
+    for b in blocks:
+        by_page.setdefault(b.page, []).append(b.text)
+    for page in sorted(by_page):
+        body = "\n\n".join(t for t in by_page[page] if t).strip()
+        if body:
+            chunks.append(Chunk(text=body, page=page, chunk_index=len(chunks), section=None))
+    return chunks
+
+
+def _chunk_table_qa(blocks: list[PageBlock]) -> list[Chunk]:
+    """QA-oriented chunking: every table is its own chunk, and non-table text
+    is grouped by heading section (flushed whenever a heading or table
+    interrupts the run)."""
+    chunks: list[Chunk] = []
+    buf: list[str] = []
+    buf_page: int | None = None
+    trail: list[tuple[int, str]] = []
+
+    def flush() -> None:
+        nonlocal buf, buf_page
+        if buf:
+            chunks.append(
+                Chunk(
+                    text="\n\n".join(buf).strip(),
+                    page=buf_page or 1,
+                    chunk_index=len(chunks),
+                    section=_trail_section(trail),
+                )
+            )
+            buf, buf_page = [], None
+
+    for b in blocks:
+        if b.kind == "table":
+            flush()
+            chunks.append(
+                Chunk(
+                    text=b.text,
+                    page=b.page,
+                    chunk_index=len(chunks),
+                    section=_trail_section(trail),
+                )
+            )
+        elif b.kind == "heading":
+            flush()
+            _trail_push(trail, b.level if b.level is not None else 1, b.text)
+        else:
+            if buf_page is None:
+                buf_page = b.page
+            buf.append(b.text)
+    flush()
+    return chunks
+
+
+def chunk_document(
+    blocks: list[PageBlock],
+    *,
+    method: str,
+    target_chars: int = 2000,
+    overlap_ratio: float = 0.15,
+) -> list[Chunk]:
+    """Dispatch to a selectable chunking strategy (DOC-9-adjacent: workspace-
+    configurable chunk method). `heading` (the default/fallback) delegates to
+    `chunk_blocks` unchanged — existing ingests and their tests stay
+    byte-identical."""
+    if method == "fixed":
+        return _chunk_fixed(blocks, target_chars, overlap_ratio)
+    if method == "page":
+        return _chunk_by_page(blocks)
+    if method == "table_qa":
+        return _chunk_table_qa(blocks)
+    return chunk_blocks(blocks, target_chars=target_chars, overlap_ratio=overlap_ratio)
 
 
 async def embed_batch(
