@@ -45,10 +45,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
 
 import { Accordion } from './accordion';
+import { ActionButtons } from './action-buttons';
 import { ArticleCard } from './article-card';
+import { Carousel } from './carousel';
 import { FollowUps } from './follow-ups';
 import { FormBlockView } from './form-block';
 import { SourceRefsView } from './source-refs';
+import { Steps } from './steps';
 import type { SourceChipData } from '../source-panel';
 
 // Iron Rule 5: block payloads come from an LLM (server-validated already,
@@ -548,6 +551,20 @@ function RenderBlock({
     case 'accordion':
       return (
         <Accordion
+          block={block}
+          depth={depth}
+          onFormSubmit={onFormSubmit}
+          onFollowUp={onFollowUp}
+          onOpenDocument={onOpenDocument}
+        />
+      );
+    case 'steps':
+      return <Steps block={block} />;
+    case 'buttons':
+      return <ActionButtons block={block} onFollowUp={onFollowUp} />;
+    case 'carousel':
+      return (
+        <Carousel
           block={block}
           depth={depth}
           onFormSubmit={onFormSubmit}

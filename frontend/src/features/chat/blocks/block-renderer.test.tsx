@@ -545,6 +545,78 @@ test('accordion: a section is collapsed by default and reveals inner blocks when
   expect(screen.getByText('Inner two content')).toBeInTheDocument();
 });
 
+test('steps renders each item’s number, title, and details', () => {
+  const blocks: Block[] = [
+    {
+      type: 'steps',
+      items: [
+        { title: 'Create an account', details: 'Sign up with your work email.' },
+        { title: 'Verify your email' },
+        { title: 'Invite your team', details: 'Add teammates from Settings.' },
+      ],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Create an account')).toBeInTheDocument();
+  expect(screen.getByText('Sign up with your work email.')).toBeInTheDocument();
+  expect(screen.getByText('Verify your email')).toBeInTheDocument();
+  expect(screen.getByText('Invite your team')).toBeInTheDocument();
+  expect(screen.getByText('Add teammates from Settings.')).toBeInTheDocument();
+  expect(screen.getByText('1')).toBeInTheDocument();
+  expect(screen.getByText('2')).toBeInTheDocument();
+  expect(screen.getByText('3')).toBeInTheDocument();
+});
+
+test('buttons renders one button per item; clicking one calls onFollowUp with its message', async () => {
+  const blocks: Block[] = [
+    {
+      type: 'buttons',
+      items: [
+        { label: 'Yes, proceed', message: 'Yes, please proceed.', variant: 'primary' },
+        { label: 'Cancel', message: 'Cancel that.', variant: 'secondary' },
+      ],
+    },
+  ];
+  const onFollowUp = vi.fn();
+  const user = userEvent.setup();
+  render(<BlockRenderer blocks={blocks} onFollowUp={onFollowUp} />);
+  const proceed = screen.getByRole('button', { name: 'Yes, proceed' });
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  await user.click(proceed);
+  expect(onFollowUp).toHaveBeenCalledWith('Yes, please proceed.');
+});
+
+test('buttons are disabled when onFollowUp is absent', () => {
+  const blocks: Block[] = [
+    {
+      type: 'buttons',
+      items: [{ label: 'Yes, proceed', message: 'Yes, please proceed.', variant: 'primary' }],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByRole('button', { name: 'Yes, proceed' })).toBeDisabled();
+});
+
+test('carousel renders each slide’s inner block content', () => {
+  const blocks: Block[] = [
+    {
+      type: 'carousel',
+      items: [
+        { blocks: [{ type: 'text', markdown: 'First slide text' }] },
+        {
+          blocks: [
+            { type: 'info_card', title: 'Second slide card', body: 'Second slide body' },
+          ],
+        },
+      ],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('First slide text')).toBeInTheDocument();
+  expect(screen.getByText('Second slide card')).toBeInTheDocument();
+  expect(screen.getByText('Second slide body')).toBeInTheDocument();
+});
+
 test('an unknown block type renders nothing', () => {
   const blocks = [{ type: 'unknown_future_block', anything: true }] as unknown as Block[];
   const { container } = render(<BlockRenderer blocks={blocks} />);
