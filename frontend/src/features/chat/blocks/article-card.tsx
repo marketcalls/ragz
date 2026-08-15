@@ -36,7 +36,7 @@ function CardImage({ imageRef, className }: { imageRef: string; className: strin
   if (failed) return null;
   return (
     <img
-      src={`/api/v1/media/image/${imageRef}`}
+      src={`/api/v1/media/image/${encodeURIComponent(imageRef)}`}
       alt=""
       loading="lazy"
       referrerPolicy="no-referrer"

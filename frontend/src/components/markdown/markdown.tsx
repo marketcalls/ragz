@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { CitationChip } from '@/features/chat/citation-chip';
@@ -101,7 +101,12 @@ const components = {
 export function Markdown({ content }: { content: string }) {
   return (
     <div className="text-[15px] leading-[1.6] text-ink">
-      <ReactMarkdown skipHtml remarkPlugins={[remarkGfm, remarkCitations]} components={components}>
+      <ReactMarkdown
+        skipHtml
+        urlTransform={defaultUrlTransform}
+        remarkPlugins={[remarkGfm, remarkCitations]}
+        components={components}
+      >
         {content}
       </ReactMarkdown>
     </div>

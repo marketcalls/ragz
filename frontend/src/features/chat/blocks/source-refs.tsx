@@ -61,7 +61,7 @@ function RefImage({ imageRef }: { imageRef: string }) {
   if (failed) return null;
   return (
     <img
-      src={`/api/v1/media/image/${imageRef}`}
+      src={`/api/v1/media/image/${encodeURIComponent(imageRef)}`}
       alt=""
       loading="lazy"
       referrerPolicy="no-referrer"
