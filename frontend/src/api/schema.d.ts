@@ -3485,6 +3485,12 @@ export interface components {
             rerank_provider: string;
             /** Cohere Rerank Model */
             cohere_rerank_model: string;
+            /** Web Search Provider */
+            web_search_provider: string;
+            /** Tavily Key Set */
+            tavily_key_set: boolean;
+            /** Default Chunk Method */
+            default_chunk_method: string;
             /** Llamaparse Key Set */
             llamaparse_key_set: boolean;
             /** Cohere Key Set */
@@ -3498,10 +3504,16 @@ export interface components {
             rerank_provider?: ("local" | "cohere") | null;
             /** Cohere Rerank Model */
             cohere_rerank_model?: ("rerank-v4.0-fast" | "rerank-v4.0-pro") | null;
+            /** Web Search Provider */
+            web_search_provider?: ("duckduckgo" | "tavily") | null;
+            /** Default Chunk Method */
+            default_chunk_method?: ("heading" | "fixed" | "page" | "table_qa") | null;
             /** Llamaparse Api Key */
             llamaparse_api_key?: string | null;
             /** Cohere Api Key */
             cohere_api_key?: string | null;
+            /** Tavily Api Key */
+            tavily_api_key?: string | null;
         };
         /** RankedListBlock */
         RankedListBlock: {

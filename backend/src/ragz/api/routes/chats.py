@@ -28,7 +28,7 @@ from ragz.modules.chat.schemas import (
     MessageSend,
     RegenerateRequest,
 )
-from ragz.modules.chat.web import DuckDuckGoSearcher
+from ragz.modules.chat.web import build_web_searcher
 from ragz.modules.models import keys
 from ragz.modules.models import service as models_service
 from ragz.modules.models.models import Model
@@ -263,7 +263,8 @@ async def send_message(
         # Tavily stays available/optional: inject a TavilySearcher via
         # app.state.web_searcher (create_app's web_searcher= kwarg) to opt a
         # deployment into it instead.
-        web_searcher=request.app.state.web_searcher or DuckDuckGoSearcher(),
+        web_searcher=request.app.state.web_searcher
+        or await build_web_searcher(session, settings),
         reasoning_effort=reasoning_effort, attachment_sources=attachment_sources,
         image_attachments=image_attachments,
         web_search_consented=body.web_search_consented,
@@ -308,7 +309,8 @@ async def regenerate(
         # Tavily stays available/optional: inject a TavilySearcher via
         # app.state.web_searcher (create_app's web_searcher= kwarg) to opt a
         # deployment into it instead.
-        web_searcher=request.app.state.web_searcher or DuckDuckGoSearcher(),
+        web_searcher=request.app.state.web_searcher
+        or await build_web_searcher(session, settings),
         reasoning_effort=reasoning_effort,
         web_search_consented=body.web_search_consented if body is not None else False,
         # RAGZ-PUB-08 residual: same persistent daily cap as send_message.

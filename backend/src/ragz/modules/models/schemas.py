@@ -120,6 +120,14 @@ class ProviderSettingsOut(BaseModel):
     document_parser: str
     rerank_provider: str
     cohere_rerank_model: str
+    # DDG-01 selector: which web-search provider the chat route uses
+    # ("duckduckgo" default/keyless, "tavily" cloud). tavily_key_set mirrors
+    # the *_key_set booleans -- the Tavily key itself is write-only.
+    web_search_provider: str
+    tavily_key_set: bool
+    # Global default chunking strategy NEW workspaces inherit at creation.
+    # The per-workspace override (Workspace.chunk_method) is unchanged.
+    default_chunk_method: str
     llamaparse_key_set: bool
     cohere_key_set: bool
 
@@ -128,7 +136,10 @@ class ProviderSettingsUpdate(BaseModel):
     document_parser: Literal["anydoc", "docling", "llamaparse", "liteparse"] | None = None
     rerank_provider: Literal["local", "cohere"] | None = None
     cohere_rerank_model: Literal["rerank-v4.0-fast", "rerank-v4.0-pro"] | None = None
+    web_search_provider: Literal["duckduckgo", "tavily"] | None = None
+    default_chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
     # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has
     # no key fields, only *_key_set booleans).
     llamaparse_api_key: str | None = Field(default=None, max_length=8192)
     cohere_api_key: str | None = Field(default=None, max_length=8192)
+    tavily_api_key: str | None = Field(default=None, max_length=8192)

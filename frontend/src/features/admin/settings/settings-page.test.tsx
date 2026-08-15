@@ -16,8 +16,11 @@ const settings: ProviderSettings = {
   document_parser: 'docling',
   rerank_provider: 'local',
   cohere_rerank_model: 'rerank-v4.0-fast',
+  web_search_provider: 'duckduckgo',
+  default_chunk_method: 'heading',
   llamaparse_key_set: false,
   cohere_key_set: false,
+  tavily_key_set: false,
 };
 
 const putSpy = vi.fn();
@@ -94,6 +97,56 @@ test('leaving a key field blank on save omits it from the PUT body', async () =>
   const body = putSpy.mock.calls[0]?.[0] as Record<string, unknown>;
   expect(body.cohere_api_key).toBeUndefined();
   expect(body.llamaparse_api_key).toBeUndefined();
+});
+
+test('renders the web-search provider select defaulting to DuckDuckGo', async () => {
+  render(<SettingsPage />);
+
+  expect(await screen.findByLabelText(/web search provider/i)).toHaveValue('duckduckgo');
+  // Tavily key field is hidden until Tavily is selected.
+  expect(screen.queryByLabelText(/tavily api key/i)).not.toBeInTheDocument();
+});
+
+test('picking Tavily reveals the write-only API key field', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.selectOptions(screen.getByLabelText(/web search provider/i), 'tavily');
+  const key = screen.getByLabelText(/tavily api key/i);
+  expect(key).toBeInTheDocument();
+  expect(key).toHaveAttribute('type', 'password');
+});
+
+test('sends the tavily key only when typed, omitting it when blank', async () => {
+  const { unmount } = render(<SettingsPage />);
+
+  // Blank: Tavily selected, no key typed -> key omitted.
+  await userEvent.selectOptions(screen.getByLabelText(/web search provider/i), 'tavily');
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+  let body = putSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+  expect(body.web_search_provider).toBe('tavily');
+  expect(body.tavily_api_key).toBeUndefined();
+
+  unmount();
+  putSpy.mockClear();
+
+  // Typed: key is included.
+  render(<SettingsPage />);
+  await userEvent.selectOptions(screen.getByLabelText(/web search provider/i), 'tavily');
+  await userEvent.type(screen.getByLabelText(/tavily api key/i), 'tvly-live');
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+  body = putSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+  expect(body.tavily_api_key).toBe('tvly-live');
+});
+
+test('sends the default chunking strategy on save', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.selectOptions(screen.getByLabelText(/default chunking strategy/i), 'page');
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ default_chunk_method: 'page' }),
+  );
 });
 
 test('offers anydoc as a parser option and selects it when reported by the backend', async () => {

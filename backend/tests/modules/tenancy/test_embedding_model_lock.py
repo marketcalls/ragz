@@ -91,6 +91,24 @@ async def test_workspace_defaults_to_seeded_local_model(
     assert ws.embedding_model_id == LOCAL_EMBEDDING_MODEL_ID
 
 
+async def test_new_workspace_defaults_chunk_method_to_heading(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    # No global default set -> the column default "heading".
+    ws = await service.create_workspace(session, ctx, "chunk-default-ws")
+    assert ws.chunk_method == "heading"
+
+
+async def test_new_workspace_inherits_global_default_chunk_method(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    from ragz.core.app_settings import set_app_setting
+
+    await set_app_setting(session, "default_chunk_method", "page")
+    ws = await service.create_workspace(session, ctx, "chunk-inherit-ws")
+    assert ws.chunk_method == "page"
+
+
 async def test_set_embedding_model_switches_when_empty(
     session: AsyncSession, ctx: TenantContext, embedding_model_fixture: Model
 ) -> None:

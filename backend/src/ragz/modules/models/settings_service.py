@@ -23,8 +23,11 @@ _PARSER_KEY = "document_parser"
 _RERANK_KEY = "rerank_provider"
 _COHERE_MODEL_KEY = "cohere_rerank_model"
 _COHERE_MODEL_DEFAULT = "rerank-v4.0-fast"
+_WEB_SEARCH_PROVIDER_KEY = "web_search_provider"
+_DEFAULT_CHUNK_METHOD_KEY = "default_chunk_method"
 _LLAMA_SECRET = "llamaparse_api_key"  # noqa: S105 - a secret NAME, not a secret
 _COHERE_SECRET = "cohere_api_key"  # noqa: S105 - a secret NAME, not a secret
+_TAVILY_SECRET = "tavily"  # noqa: S105 - a secret NAME (matches web.TAVILY_SECRET_NAME)
 
 # Non-secret email config (Task 1 of the email/password-reset plan): mirrors
 # the document_parser/rerank_provider pattern above -- one app_settings row
@@ -45,15 +48,20 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
     parser = await get_app_setting(session, _PARSER_KEY) or "anydoc"
     rerank = await get_app_setting(session, _RERANK_KEY) or "local"
     cohere_model = await get_app_setting(session, _COHERE_MODEL_KEY) or _COHERE_MODEL_DEFAULT
+    web_search = await get_app_setting(session, _WEB_SEARCH_PROVIDER_KEY) or "duckduckgo"
+    default_chunk = await get_app_setting(session, _DEFAULT_CHUNK_METHOD_KEY) or "heading"
     present = await secrets_service.existing_secret_names(
-        session, [_LLAMA_SECRET, _COHERE_SECRET]
+        session, [_LLAMA_SECRET, _COHERE_SECRET, _TAVILY_SECRET]
     )
     return ProviderSettingsOut(
         document_parser=parser,
         rerank_provider=rerank,
         cohere_rerank_model=cohere_model,
+        web_search_provider=web_search,
+        default_chunk_method=default_chunk,
         llamaparse_key_set=_LLAMA_SECRET in present,
         cohere_key_set=_COHERE_SECRET in present,
+        tavily_key_set=_TAVILY_SECRET in present,
     )
 
 
@@ -70,9 +78,18 @@ async def update_provider_settings(
         await set_app_setting(session, _RERANK_KEY, patch.rerank_provider, commit=False)
     if patch.cohere_rerank_model is not None:
         await set_app_setting(session, _COHERE_MODEL_KEY, patch.cohere_rerank_model, commit=False)
+    if patch.web_search_provider is not None:
+        await set_app_setting(
+            session, _WEB_SEARCH_PROVIDER_KEY, patch.web_search_provider, commit=False
+        )
+    if patch.default_chunk_method is not None:
+        await set_app_setting(
+            session, _DEFAULT_CHUNK_METHOD_KEY, patch.default_chunk_method, commit=False
+        )
     for value, name in (
         (patch.llamaparse_api_key, _LLAMA_SECRET),
         (patch.cohere_api_key, _COHERE_SECRET),
+        (patch.tavily_api_key, _TAVILY_SECRET),
     ):
         if value is not None:
             if not value.strip():

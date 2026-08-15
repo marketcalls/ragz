@@ -11,7 +11,9 @@ import { Spinner } from '@/components/ui/spinner';
 import {
   useProviderSettings,
   useUpdateProviderSettings,
+  type ChunkMethod,
   type CohereRerankModel,
+  type WebSearchProvider,
 } from './queries';
 
 export function SettingsPage() {
@@ -23,16 +25,21 @@ export function SettingsPage() {
   );
   const [rerank, setRerank] = useState<'local' | 'cohere'>('local');
   const [cohereModel, setCohereModel] = useState<CohereRerankModel>('rerank-v4.0-fast');
+  const [webSearch, setWebSearch] = useState<WebSearchProvider>('duckduckgo');
+  const [defaultChunk, setDefaultChunk] = useState<ChunkMethod>('heading');
   // API keys are write-only: never populated from the query response, always
   // start blank, and are cleared again after every save attempt.
   const [llamaKey, setLlamaKey] = useState('');
   const [cohereKey, setCohereKey] = useState('');
+  const [tavilyKey, setTavilyKey] = useState('');
 
   useEffect(() => {
     if (settings.data) {
       setParser(settings.data.document_parser);
       setRerank(settings.data.rerank_provider);
       setCohereModel(settings.data.cohere_rerank_model);
+      setWebSearch(settings.data.web_search_provider);
+      setDefaultChunk(settings.data.default_chunk_method);
     }
   }, [settings.data]);
 
@@ -43,6 +50,7 @@ export function SettingsPage() {
     if (update.isSuccess) {
       setLlamaKey('');
       setCohereKey('');
+      setTavilyKey('');
     }
   }, [update.isSuccess]);
 
@@ -50,12 +58,15 @@ export function SettingsPage() {
     update.mutate({
       document_parser: parser,
       rerank_provider: rerank,
+      web_search_provider: webSearch,
+      default_chunk_method: defaultChunk,
       // Only sent when Cohere is the selected reranker — matches the spec
       // intent (cohere_rerank_model is a Cohere-only knob) and avoids
       // clobbering a stored choice while previewing the local-reranker path.
       ...(rerank === 'cohere' ? { cohere_rerank_model: cohereModel } : {}),
       ...(llamaKey ? { llamaparse_api_key: llamaKey } : {}),
       ...(cohereKey ? { cohere_api_key: cohereKey } : {}),
+      ...(tavilyKey ? { tavily_api_key: tavilyKey } : {}),
     });
   }
 
@@ -147,6 +158,58 @@ export function SettingsPage() {
                   onChange={(e) => setCohereKey(e.target.value)}
                   placeholder={settings.data.cohere_key_set ? '••••••••' : 'ck-…'}
                 />
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold text-ink">Web search</h3>
+              <div>
+                <Label htmlFor="websearch">Web search provider</Label>
+                <NativeSelect
+                  id="websearch"
+                  value={webSearch}
+                  onChange={(e) => setWebSearch(e.target.value as WebSearchProvider)}
+                >
+                  <option value="duckduckgo">DuckDuckGo (default, keyless)</option>
+                  <option value="tavily">Tavily (cloud, needs API key)</option>
+                </NativeSelect>
+              </div>
+              {webSearch === 'tavily' ? (
+                <div>
+                  <Label htmlFor="tavilykey">
+                    Tavily API key
+                    {settings.data.tavily_key_set ? ' (set — leave blank to keep)' : ''}
+                  </Label>
+                  <Input
+                    id="tavilykey"
+                    type="password"
+                    autoComplete="off"
+                    value={tavilyKey}
+                    onChange={(e) => setTavilyKey(e.target.value)}
+                    placeholder={settings.data.tavily_key_set ? '••••••••' : 'tvly-…'}
+                  />
+                </div>
+              ) : null}
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold text-ink">Default chunking strategy</h3>
+              <div>
+                <Label htmlFor="defaultchunk">Default chunking strategy</Label>
+                <NativeSelect
+                  id="defaultchunk"
+                  value={defaultChunk}
+                  onChange={(e) => setDefaultChunk(e.target.value as ChunkMethod)}
+                >
+                  <option value="heading">Heading (structure-aware)</option>
+                  <option value="fixed">Fixed-size</option>
+                  <option value="page">Page</option>
+                  <option value="table_qa">Table Q&amp;A</option>
+                </NativeSelect>
+                <p className="mt-1 text-xs text-muted">
+                  New workspaces start with this; change any workspace&apos;s strategy in its
+                  Settings.
+                </p>
               </div>
             </section>
 

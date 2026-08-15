@@ -9,6 +9,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.core.config import Settings
 from ragz.core.errors import NotFoundError, UpstreamError
 from ragz.modules.chat.web import (
@@ -16,6 +17,7 @@ from ragz.modules.chat.web import (
     DuckDuckGoSearcher,
     TavilySearcher,
     WebResult,
+    build_web_searcher,
 )
 from ragz.modules.secrets import service as secrets_service
 
@@ -207,6 +209,36 @@ async def test_duckduckgo_missing_import_returns_empty_list(
     monkeypatch.setitem(sys.modules, "ddgs", None)
     results = await DuckDuckGoSearcher()(session, "anything")
     assert results == []
+
+
+# --- build_web_searcher (DDG-01 provider resolver, mirrors get_reranker) ------
+
+
+async def test_build_web_searcher_defaults_to_duckduckgo(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    # Nothing set -> keyless DuckDuckGo, no secret required.
+    searcher = await build_web_searcher(session, test_settings)
+    assert isinstance(searcher, DuckDuckGoSearcher)
+
+
+async def test_build_web_searcher_tavily_with_key_returns_tavily(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    await set_app_setting(session, "web_search_provider", "tavily")
+    await _store_key(session, test_settings)
+    searcher = await build_web_searcher(session, test_settings)
+    assert isinstance(searcher, TavilySearcher)
+
+
+async def test_build_web_searcher_tavily_without_key_falls_back_to_duckduckgo(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    # Tavily selected but no key stored -> degrade to the keyless provider
+    # rather than raising (web search is a best-effort fallback tool).
+    await set_app_setting(session, "web_search_provider", "tavily")
+    searcher = await build_web_searcher(session, test_settings)
+    assert isinstance(searcher, DuckDuckGoSearcher)
 
 
 async def test_duckduckgo_never_calls_secrets_service(

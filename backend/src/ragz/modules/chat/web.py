@@ -37,8 +37,9 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import get_app_setting
 from ragz.core.config import Settings
-from ragz.core.errors import UpstreamError
+from ragz.core.errors import NotFoundError, UpstreamError
 from ragz.modules.secrets import service as secrets_service
 
 logger = structlog.get_logger()
@@ -251,3 +252,37 @@ class DuckDuckGoSearcher:
 
         with DDGS() as ddgs:
             return ddgs.text(query, max_results=self._max_results)
+
+
+async def build_web_searcher(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> WebSearcher:
+    """Resolve the active web-search provider (mirrors retrieval.get_reranker's
+    posture: reads the `web_search_provider` app-setting live, not cached).
+
+    Fallback contract:
+    - "duckduckgo" (default) or unset -> DuckDuckGoSearcher (keyless).
+    - "tavily" WITH a stored `tavily` secret -> TavilySearcher.
+    - "tavily" WITHOUT a stored key -> DuckDuckGoSearcher, logging that Tavily
+      was selected but is unconfigured. Web search is a best-effort fallback
+      tool, so a missing key degrades to the keyless provider rather than
+      raising (unlike the reranker's hard RerankMisconfigured 409).
+
+    This is the ONE sanctioned DB-touching function in this otherwise DB-free
+    module (see get_reranker). TavilySearcher decrypts the key itself on call;
+    here we only confirm the secret EXISTS (existence-only, no decryption)."""
+    provider = await get_app_setting(session, "web_search_provider")
+    if provider == "tavily":
+        try:
+            present = await secrets_service.existing_secret_names(
+                session, [TAVILY_SECRET_NAME]
+            )
+        except NotFoundError:
+            present = set()
+        if TAVILY_SECRET_NAME in present:
+            return TavilySearcher(settings=settings, transport=transport)
+        logger.info("chat.web_search.tavily_selected_but_unconfigured")
+    return DuckDuckGoSearcher()

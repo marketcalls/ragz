@@ -5,6 +5,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import get_app_setting
 from ragz.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
@@ -23,7 +24,12 @@ from ragz.modules.tenancy.permissions import PERMISSIONS
 
 
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
-    ws = Workspace(org_id=ctx.org_id, name=name)
+    # New workspaces inherit the superadmin-global default chunking strategy
+    # (settings_service._DEFAULT_CHUNK_METHOD_KEY). Existing workspaces are
+    # untouched; each workspace's chunk_method stays independently editable in
+    # Workspace Settings. Unset -> "heading" (the column default).
+    default_chunk = await get_app_setting(session, "default_chunk_method") or "heading"
+    ws = Workspace(org_id=ctx.org_id, name=name, chunk_method=default_chunk)
     session.add(ws)
     await session.flush()
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,

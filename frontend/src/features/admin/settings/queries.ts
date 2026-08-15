@@ -9,21 +9,29 @@ import { api } from '@/api/client';
 // admin/health/queries.ts narrows its untyped-response shapes, since the
 // route only ever emits one of these values.
 export type CohereRerankModel = 'rerank-v4.0-fast' | 'rerank-v4.0-pro';
+export type WebSearchProvider = 'duckduckgo' | 'tavily';
+export type ChunkMethod = 'heading' | 'fixed' | 'page' | 'table_qa';
 
 export interface ProviderSettings {
   document_parser: 'anydoc' | 'docling' | 'llamaparse' | 'liteparse';
   rerank_provider: 'local' | 'cohere';
   cohere_rerank_model: CohereRerankModel;
+  web_search_provider: WebSearchProvider;
+  default_chunk_method: ChunkMethod;
   llamaparse_key_set: boolean;
   cohere_key_set: boolean;
+  tavily_key_set: boolean;
 }
 
 export interface ProviderSettingsUpdate {
   document_parser?: 'anydoc' | 'docling' | 'llamaparse' | 'liteparse';
   rerank_provider?: 'local' | 'cohere';
   cohere_rerank_model?: CohereRerankModel;
+  web_search_provider?: WebSearchProvider;
+  default_chunk_method?: ChunkMethod;
   llamaparse_api_key?: string;
   cohere_api_key?: string;
+  tavily_api_key?: string;
 }
 
 const KEY = ['admin', 'settings'];
