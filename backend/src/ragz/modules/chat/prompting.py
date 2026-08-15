@@ -31,6 +31,22 @@ SYSTEM_PROMPT = (
     "- If the sources do not contain the answer, say so plainly instead of guessing."
 )
 
+# Appended to SYSTEM_PROMPT only when the turn's sources include public web
+# pages (a source with a URL). Document-only turns keep the strict grounding
+# bar above unchanged. Web results are frequently informal (listicles, secondary
+# coverage) yet legitimately answer the question; without this the model
+# over-declines ("the sources do not contain a reliable list ...") even when the
+# web sources plainly address it. The no-hallucination guarantee is preserved:
+# every claim must still trace to a cited source.
+WEB_SYNTHESIS_CLAUSE = (
+    "\n- Some numbered sources are public web pages (they carry a URL). You MAY "
+    "synthesize and summarize what these web sources collectively report, with "
+    "citations, even when no single page is a definitive authority. Do NOT "
+    "decline merely because the web sources are informal, listicles, or "
+    "secondary coverage — if they address the question, answer from them and "
+    "cite them. You must still never state a fact that no source supports."
+)
+
 CONVERSATIONAL_SYSTEM_PROMPT = (
     "You are Ragz, the assistant for this document workspace. The user's "
     "message is small talk, not a document question, so no retrieval was "
@@ -323,8 +339,13 @@ def build_messages(
     folded out of `history` by the caller. Prepended ahead of history when
     truthy; omitting it (the default) reproduces pre-Task-9 output exactly."""
     split = split_budget(budget)
+    # Web-grounded turns get the extra synthesis clause so the model doesn't
+    # over-decline on informal web sources; document-only turns are unchanged.
+    base_prompt = SYSTEM_PROMPT + (
+        WEB_SYNTHESIS_CLAUSE if any(s.url for s in sources) else ""
+    )
     system_content = _system_content(
-        SYSTEM_PROMPT, system_prompt_override, split.system, model_hint
+        base_prompt, system_prompt_override, split.system, model_hint
     )
     data_block = render_data_blocks(sources)
     remaining = budget - (

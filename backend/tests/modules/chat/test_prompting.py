@@ -81,6 +81,26 @@ def test_build_messages_shape_without_truncation() -> None:
     assert msgs[-1]["content"].endswith("Question: what was revenue?")
 
 
+def test_web_sources_add_synthesis_clause_but_docs_do_not() -> None:
+    from ragz.modules.chat.prompting import WEB_SYNTHESIS_CLAUSE
+
+    doc_only = build_messages(
+        sources=SOURCES, history=[], user_query="q", budget=8000,
+    )
+    assert WEB_SYNTHESIS_CLAUSE not in doc_only[0]["content"]  # doc turns unchanged
+
+    with_web = build_messages(
+        sources=[
+            PromptSource(marker=1, filename="Top Movies", page=0,
+                         text="A list of blockbusters.", url="https://example.test/list"),
+        ],
+        history=[], user_query="top movies", budget=8000,
+    )
+    # A web source flips on the synthesis clause so the model doesn't over-decline.
+    assert WEB_SYNTHESIS_CLAUSE in with_web[0]["content"]
+    assert with_web[0]["content"].startswith(SYSTEM_PROMPT)  # strict base preserved
+
+
 def test_truncation_drops_oldest_and_notes_count() -> None:
     history = [("user", "x" * 400), ("assistant", "y" * 400), ("user", "z" * 40),
                ("assistant", "w" * 40)]
