@@ -85,20 +85,31 @@ Dex, the two TEI model servers) is modest.
 | | **Recommended (cloud LLM)** | **Fully self-hosted / air-gapped** |
 |---|---|---|
 | Generation model | OpenAI / Anthropic / Gemini via LiteLLM — no local weights | Local LLM (Ollama / vLLM) — **GPU required** |
-| RAM | **16 GB** min · 32 GB comfortable | 32–64 GB |
+| RAM | **4–16 GB** (see below — driven by embedding/rerank placement) | 32–64 GB |
 | Disk (SSD) | **80–100 GB** | 150–250 GB |
 | vCPU | 4 min · 8 recommended | 8+ min |
 | GPU | not required | required (16 GB+ VRAM; CPU inference is impractically slow) |
 
-For a startup, run the whole self-hosted stack on **one 16 GB / 4–8 vCPU / 100 GB Linux
-VM** and pay per-token for generation. This is also the right size for a customer demo.
+For a startup, run the whole stack on **one 4–8 vCPU / 100 GB Linux VM** and pay per-token
+for generation. How much RAM depends entirely on **which model services run locally** vs.
+via an API — the database side (Postgres, Qdrant, Redis, MinIO, LiteLLM) idles at only
+~1–1.5 GB.
 
-**Why 16 GB, not 8.** The memory pressure isn't the database — it's three CPU-bound model
-workloads that spike together: the embeddings TEI (`bge-m3`, ~2–3 GB resident), the
-reranker TEI (`tei-rerank`, ~1.5–2.5 GB), and the Celery worker running Docling + EasyOCR
-(spikes 2–4 GB while OCR'ing a scanned PDF). Idle sits ~8–9 GB; concurrent upload + chat
-pushes to 12–14 GB. The reranker is an optional per-workspace toggle with a lexical
-fallback — drop the `tei-rerank` container for a light pilot to reclaim ~2 GB.
+**RAM is a function of model placement.** The two CPU-bound TEI model servers are the whole
+story — each is optional and runs only if you choose the local backend:
+
+| Deployment | Local model servers | RAM (host) |
+|---|---|---|
+| **Fully hosted** — API embeddings (e.g. OpenAI) + API rerank (e.g. Cohere) | none | **4–5 GB** (measured ~1.7 GB in use) |
+| **Hybrid** — one local (local embeddings *or* local reranker) | one TEI server (~4–6 GB) | **8–10 GB** |
+| **Fully local / air-gapped** — local `bge-m3` embeddings **and** local `tei-rerank` | two TEI servers | **12–16 GB** |
+
+Embeddings are locked per-workspace and reranking is a per-workspace/global toggle with a
+Cohere-API or lexical fallback — so you pick a point on this table per install. **Document
+parsing is no longer a RAM driver**: the default parser is **liteparse** (PDFium, runs in
+the Celery worker, ~2–3 s for a 168-page PDF); Docling (heavier, layout-model OCR) stays
+available as an option but isn't the default. On Apple-Silicon dev the two TEI servers run
+under amd64 emulation and roughly *double* in RAM — budget the top of each range.
 
 **Why ~80–100 GB disk.** Roughly 25–30 GB is fixed overhead before any user data — Docker
 images (~4 GB; LiteLLM is the largest), embedding + rerank model weights (~4–5 GB; the
