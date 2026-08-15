@@ -12,6 +12,7 @@ import { HealthPage } from '@/features/admin/health/health-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
 import { RolesPage } from '@/features/admin/roles/roles-page';
 import { SettingsPage } from '@/features/admin/settings/settings-page';
+import { SsoSettingsPage } from '@/features/admin/sso/sso-settings-page';
 import { UsersPage } from '@/features/admin/users/users-page';
 import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
 import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
@@ -59,6 +60,7 @@ export const router = createBrowserRouter([
               { path: '/admin/api-keys', element: <ApiKeysPage /> },
               { path: '/admin/bots', element: <BotsPage /> },
               { path: '/admin/email', element: <EmailSettingsPage /> },
+              { path: '/admin/sso', element: <SsoSettingsPage /> },
               { path: '/admin/health', element: <HealthPage /> },
             ],
           },
