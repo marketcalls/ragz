@@ -49,7 +49,7 @@ export function usePinDocument(workspaceId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ documentId, pinned }: { documentId: string; pinned: boolean }) => {
-      const { data, error } = await api.PATCH('/api/v1/documents/{document_id}', {
+      const { data, error } = await api.PATCH('/api/v1/documents/{document_id}/pin', {
         params: { path: { document_id: documentId } },
         body: { pinned },
       });

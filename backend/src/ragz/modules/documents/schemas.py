@@ -29,8 +29,19 @@ class DocumentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class DocumentPatch(BaseModel):
-    pinned: bool | None = None
+class DocumentPinPatch(BaseModel):
+    """PATCH /documents/{id}/pin body. Split out of the former combined
+    DocumentPatch (sec RAGZ-PUB-01): pin and move are distinct actions
+    (documents.pin vs documents.move) and must be gated independently at the
+    route boundary, so each gets its own single-purpose schema + endpoint."""
+
+    pinned: bool
+
+
+class DocumentMovePatch(BaseModel):
+    """PATCH /documents/{id}/move body. `folder_id: null` moves the document to
+    the workspace root; a non-null id moves it into that folder."""
+
     folder_id: UUID | None = None
 
 

@@ -12,7 +12,6 @@ from ragz.modules.models import service as models_service
 from ragz.modules.tenancy import service
 from ragz.modules.tenancy.context import (
     TenantContext,
-    get_tenant_context,
     require_action,
     require_role,
 )
@@ -32,7 +31,6 @@ from ragz.worker.tasks import enqueue_enrichment_backfill, enqueue_reembed_works
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): PATCH (settings) is workspace configuration, distinct from
 # org administration (POST /workspaces, POST .../members stay AdminDep).
@@ -41,6 +39,13 @@ ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.config
 # workspace.create/POST-member (AdminDep, org administration).
 MembersReadDep = Annotated[TenantContext, Depends(require_action("workspace.members.read"))]
 MembersManageDep = Annotated[TenantContext, Depends(require_action("workspace.members.manage"))]
+# sec RAGZ-PUB-01: GET /workspaces and GET .../reembed-status DECLARE
+# workspace.read but were auth-only (CtxDep); POST .../reembed DECLARES
+# workspace.reembed but enforced workspace.configure. Enforce the declared
+# action for each. (The workspace-membership fence still lives in the service
+# layer -- list_workspaces / get_workspace -- as defense in depth.)
+ReadDep = Annotated[TenantContext, Depends(require_action("workspace.read"))]
+ReembedDep = Annotated[TenantContext, Depends(require_action("workspace.reembed"))]
 
 
 @router.post("", status_code=201, response_model=WorkspaceOut)
@@ -50,7 +55,7 @@ async def create(body: WorkspaceCreate, session: SessionDep, ctx: AdminDep) -> W
 
 
 @router.get("", response_model=list[WorkspaceOut])
-async def list_(session: SessionDep, ctx: CtxDep) -> list[WorkspaceOut]:
+async def list_(session: SessionDep, ctx: ReadDep) -> list[WorkspaceOut]:
     return [WorkspaceOut.model_validate(w) for w in await service.list_workspaces(session, ctx)]
 
 
@@ -143,7 +148,7 @@ async def patch_workspace(
 
 @router.post("/{workspace_id}/reembed", status_code=202, response_model=ReembedJobOut)
 async def start_reembed(
-    workspace_id: UUID, body: ReembedRequest, session: SessionDep, ctx: ConfigureDep
+    workspace_id: UUID, body: ReembedRequest, session: SessionDep, ctx: ReembedDep
 ) -> ReembedJobOut:
     """Admin-confirmed switch for a workspace that already has indexed
     content (the 409 path of PATCH .../embedding-model points here).
@@ -203,7 +208,7 @@ async def start_reembed(
 
 @router.get("/{workspace_id}/reembed-status", response_model=ReembedJobOut)
 async def get_reembed_status(
-    workspace_id: UUID, session: SessionDep, ctx: CtxDep
+    workspace_id: UUID, session: SessionDep, ctx: ReadDep
 ) -> ReembedJobOut:
     await service.get_workspace(session, ctx, workspace_id)  # 404s if not accessible
     job = (

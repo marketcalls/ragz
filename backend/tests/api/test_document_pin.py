@@ -20,12 +20,12 @@ async def test_pin_and_unpin_roundtrip(
 ) -> None:
     doc = chat_env["document"]
     h = await auth(client, "a@acme.com")
-    r = await client.patch(f"/api/v1/documents/{doc.id}", json={"pinned": True}, headers=h)
+    r = await client.patch(f"/api/v1/documents/{doc.id}/pin", json={"pinned": True}, headers=h)
     assert r.status_code == 200 and r.json()["pinned"] is True
     listed = (await client.get(
         f"/api/v1/workspaces/{chat_env['workspace'].id}/documents", headers=h)).json()
     assert [d["pinned"] for d in listed] == [True]
-    r2 = await client.patch(f"/api/v1/documents/{doc.id}", json={"pinned": False}, headers=h)
+    r2 = await client.patch(f"/api/v1/documents/{doc.id}/pin", json={"pinned": False}, headers=h)
     assert r2.status_code == 200 and r2.json()["pinned"] is False
 
 
@@ -43,7 +43,7 @@ async def test_pin_cross_org_is_404(
                      password_hash=hash_password("pw123456"), role="admin"))
     await session.commit()
     h = await auth(client, "o@other.com")
-    r = await client.patch(f"/api/v1/documents/{chat_env['document'].id}",
+    r = await client.patch(f"/api/v1/documents/{chat_env['document'].id}/pin",
                            json={"pinned": True}, headers=h)
     assert r.status_code == 404
 

@@ -46,6 +46,13 @@ CONTRIBUTOR_PERMISSIONS = [
     "documents.list", "documents.content.read", "documents.upload", "documents.delete",
     "documents.move", "documents.pin", "search.execute", "chat.read", "chat.generate",
     "chat.attachments.create", "chat.delete",
+    # sec RAGZ-PUB-01 follow-on (migration f1a2b3c4d5e6): the folder CRUD routes
+    # and the per-document metadata-value PUT now enforce their DECLARED granular
+    # actions instead of documents.upload/documents.delete. Contributor reached
+    # those routes via upload/delete before, so it gains the granular actions to
+    # avoid a capability regression -- mirror the migration verbatim here.
+    "folders.create", "folders.read", "folders.update", "folders.delete",
+    "documents.metadata.update",
     "chat.use",
 ]
 

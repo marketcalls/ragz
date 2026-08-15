@@ -14,8 +14,9 @@ from ragz.modules.documents.models import Document
 from ragz.modules.documents.schemas import (
     AclUpdate,
     ApprovedPatch,
+    DocumentMovePatch,
     DocumentOut,
-    DocumentPatch,
+    DocumentPinPatch,
     EnsurePathRequest,
     FolderCreate,
     FolderDeletePreview,
@@ -27,7 +28,6 @@ from ragz.modules.documents.schemas import (
 )
 from ragz.modules.tenancy.context import (
     TenantContext,
-    get_tenant_context,
     require_action,
     require_role,
 )
@@ -35,17 +35,29 @@ from ragz.worker.tasks import enqueue_delete, enqueue_ingest, enqueue_reindex
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-CtxDep = Annotated[TenantContext, Depends(get_tenant_context)]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): granular guards layered ON TOP of (not instead of) the
 # workspace-membership/ACL checks inside the service layer -- get_workspace_checked
 # etc. still run unconditionally.
 UploadDep = Annotated[TenantContext, Depends(require_action("documents.upload"))]
 DeleteDep = Annotated[TenantContext, Depends(require_action("documents.delete"))]
-ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
 # Task 5 (RBAC-03): document listing had no permission gate at all -- any
 # authenticated member could list regardless of role-template contents.
 ListDep = Annotated[TenantContext, Depends(require_action("documents.list"))]
+# sec RAGZ-PUB-01: every route below now ENFORCES exactly the action it
+# DECLARES in api/policy.py. Previously several of these routes were gated on a
+# broader/unrelated action (or auth-only CtxDep), so a custom role denied the
+# granular action could still perform it. Pin and move are split into two
+# single-action endpoints; folder + metadata-field CRUD each carry their own
+# catalog action rather than piggy-backing on documents.upload/workspace.configure.
+PinDep = Annotated[TenantContext, Depends(require_action("documents.pin"))]
+MoveDep = Annotated[TenantContext, Depends(require_action("documents.move"))]
+MetadataUpdateDep = Annotated[TenantContext, Depends(require_action("documents.metadata.update"))]
+FolderCreateDep = Annotated[TenantContext, Depends(require_action("folders.create"))]
+FolderReadDep = Annotated[TenantContext, Depends(require_action("folders.read"))]
+FolderUpdateDep = Annotated[TenantContext, Depends(require_action("folders.update"))]
+FolderDeleteDep = Annotated[TenantContext, Depends(require_action("folders.delete"))]
+MetadataManageDep = Annotated[TenantContext, Depends(require_action("workspace.metadata.manage"))]
 
 
 def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
@@ -119,15 +131,23 @@ async def delete_document(
     return {"status": "deletion scheduled"}
 
 
-@router.patch("/documents/{document_id}", response_model=DocumentOut)
-async def patch_document(
-    document_id: UUID, body: DocumentPatch, session: SessionDep, ctx: CtxDep
+# sec RAGZ-PUB-01: the former combined PATCH /documents/{id} took only CtxDep
+# (auth-only) yet both pinned AND moved a document -- a custom role denied
+# documents.pin or documents.move could still do both. Split into two endpoints,
+# each declarative-at-boundary (iron rule 4) gated on exactly its own action.
+@router.patch("/documents/{document_id}/pin", response_model=DocumentOut)
+async def pin_document(
+    document_id: UUID, body: DocumentPinPatch, session: SessionDep, ctx: PinDep
 ) -> DocumentOut:
-    doc = await service.get_document_checked(session, ctx, document_id)
-    if "pinned" in body.model_fields_set and body.pinned is not None:
-        doc = await service.set_pinned(session, ctx, document_id, body.pinned)
-    if "folder_id" in body.model_fields_set:
-        doc = await service.move_document(session, ctx, document_id, body.folder_id)
+    doc = await service.set_pinned(session, ctx, document_id, body.pinned)
+    return _serialize_document(doc, ctx)
+
+
+@router.patch("/documents/{document_id}/move", response_model=DocumentOut)
+async def move_document_route(
+    document_id: UUID, body: DocumentMovePatch, session: SessionDep, ctx: MoveDep
+) -> DocumentOut:
+    doc = await service.move_document(session, ctx, document_id, body.folder_id)
     return _serialize_document(doc, ctx)
 
 
@@ -155,7 +175,7 @@ async def set_document_approved(
 
 @router.post("/workspaces/{workspace_id}/folders", status_code=201, response_model=FolderOut)
 async def create_folder(
-    workspace_id: UUID, body: FolderCreate, session: SessionDep, ctx: UploadDep
+    workspace_id: UUID, body: FolderCreate, session: SessionDep, ctx: FolderCreateDep
 ) -> FolderOut:
     folder = await folders_service.create_folder(
         session, ctx, workspace_id, name=body.name, parent_folder_id=body.parent_folder_id
@@ -167,14 +187,16 @@ async def create_folder(
     "/workspaces/{workspace_id}/folders/ensure-path", status_code=200, response_model=FolderOut
 )
 async def ensure_folder_path(
-    workspace_id: UUID, body: EnsurePathRequest, session: SessionDep, ctx: UploadDep
+    workspace_id: UUID, body: EnsurePathRequest, session: SessionDep, ctx: FolderCreateDep
 ) -> FolderOut:
     folder = await folders_service.ensure_path(session, ctx, workspace_id, body.path)
     return FolderOut.model_validate(folder)
 
 
 @router.get("/workspaces/{workspace_id}/folders", response_model=list[FolderOut])
-async def list_folders(workspace_id: UUID, session: SessionDep, ctx: CtxDep) -> list[FolderOut]:
+async def list_folders(
+    workspace_id: UUID, session: SessionDep, ctx: FolderReadDep
+) -> list[FolderOut]:
     return [
         FolderOut.model_validate(f)
         for f in await folders_service.list_folders(session, ctx, workspace_id)
@@ -183,7 +205,7 @@ async def list_folders(workspace_id: UUID, session: SessionDep, ctx: CtxDep) -> 
 
 @router.patch("/folders/{folder_id}", response_model=FolderOut)
 async def patch_folder(
-    folder_id: UUID, body: FolderPatch, session: SessionDep, ctx: UploadDep
+    folder_id: UUID, body: FolderPatch, session: SessionDep, ctx: FolderUpdateDep
 ) -> FolderOut:
     folder = await folders_service.rename_or_move_folder(
         session, ctx, folder_id, name=body.name, parent_folder_id=body.parent_folder_id,
@@ -194,11 +216,11 @@ async def patch_folder(
 
 @router.get("/folders/{folder_id}/delete-preview", response_model=FolderDeletePreview)
 async def preview_folder_delete(
-    folder_id: UUID, session: SessionDep, ctx: DeleteDep
+    folder_id: UUID, session: SessionDep, ctx: FolderDeleteDep
 ) -> FolderDeletePreview:
-    # Gated behind the same "documents.delete" permission as the actual
-    # delete route below (DeleteDep), since this preview only exists to back
-    # that delete's confirmation dialog.
+    # sec RAGZ-PUB-01: gated behind the same "folders.delete" permission as the
+    # actual delete route below (FolderDeleteDep), since this preview only
+    # exists to back that delete's confirmation dialog.
     document_count, subfolder_count = await folders_service.count_subtree(
         session, ctx, folder_id
     )
@@ -207,7 +229,7 @@ async def preview_folder_delete(
 
 @router.delete("/folders/{folder_id}", status_code=202)
 async def delete_folder(
-    folder_id: UUID, session: SessionDep, ctx: DeleteDep
+    folder_id: UUID, session: SessionDep, ctx: FolderDeleteDep
 ) -> dict[str, int]:
     # Task 3: folders_service.delete_folder never enqueues itself (modules/
     # must never import worker/, Plan K Task 11's inversion) -- it returns
@@ -220,15 +242,18 @@ async def delete_folder(
     return {"documents_deleted": len(document_ids)}
 
 
-# DOC-6: metadata schema (fields) + values. Task 13 moves field CRUD to a
-# "workspace.configure" permission and the value PUT to "documents.upload"
-# (declarative permission checks, not inline role checks).
-# GET is member-gated (CtxDep): the filter bar and per-doc Tags dialog need the
-# field list for ANY workspace member, not just admins. list_fields already
-# runs get_workspace_checked, which fences org + membership for role=user.
+# DOC-6: metadata schema (fields) + values. sec RAGZ-PUB-01 aligns every route
+# here to the action it declares in api/policy.py: field CRUD is
+# "workspace.metadata.manage", the value PUT is "documents.metadata.update", and
+# the field listing is "documents.list" (declarative permission checks, not
+# inline role checks).
+# GET is gated on documents.list (ListDep): the filter bar and per-doc Tags
+# dialog need the field list for any member who can already list documents, not
+# just admins. list_fields already runs get_workspace_checked, which fences
+# org + membership for role=user.
 @router.get("/workspaces/{workspace_id}/metadata-fields", response_model=list[MetadataFieldOut])
 async def list_metadata_fields(
-    workspace_id: UUID, session: SessionDep, ctx: CtxDep
+    workspace_id: UUID, session: SessionDep, ctx: ListDep
 ) -> list[MetadataFieldOut]:
     fields = await metadata_service.list_fields(session, ctx, workspace_id)
     return [MetadataFieldOut.model_validate(f) for f in fields]
@@ -238,7 +263,7 @@ async def list_metadata_fields(
     "/workspaces/{workspace_id}/metadata-fields", status_code=201, response_model=MetadataFieldOut
 )
 async def create_metadata_field(
-    workspace_id: UUID, body: MetadataFieldCreate, session: SessionDep, ctx: ConfigureDep
+    workspace_id: UUID, body: MetadataFieldCreate, session: SessionDep, ctx: MetadataManageDep
 ) -> MetadataFieldOut:
     field = await metadata_service.create_field(
         session, ctx, workspace_id,
@@ -248,13 +273,15 @@ async def create_metadata_field(
 
 
 @router.delete("/metadata-fields/{field_id}", status_code=204)
-async def delete_metadata_field(field_id: UUID, session: SessionDep, ctx: ConfigureDep) -> None:
+async def delete_metadata_field(
+    field_id: UUID, session: SessionDep, ctx: MetadataManageDep
+) -> None:
     await metadata_service.delete_field(session, ctx, field_id)
 
 
 @router.put("/documents/{document_id}/metadata", response_model=DocumentOut)
 async def set_document_metadata(
-    document_id: UUID, body: MetadataValuesIn, session: SessionDep, ctx: UploadDep
+    document_id: UUID, body: MetadataValuesIn, session: SessionDep, ctx: MetadataUpdateDep
 ) -> DocumentOut:
     doc = await metadata_service.set_document_metadata(session, ctx, document_id, body.values)
     return _serialize_document(doc, ctx)

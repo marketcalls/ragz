@@ -397,8 +397,41 @@ export interface paths {
         delete: operations["delete_document_api_v1_documents__document_id__delete"];
         options?: never;
         head?: never;
-        /** Patch Document */
-        patch: operations["patch_document_api_v1_documents__document_id__patch"];
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Pin Document */
+        patch: operations["pin_document_api_v1_documents__document_id__pin_patch"];
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Move Document Route */
+        patch: operations["move_document_route_api_v1_documents__document_id__move_patch"];
         trace?: never;
     };
     "/api/v1/documents/{document_id}/acl": {
@@ -1997,6 +2030,15 @@ export interface components {
             /** Tokens */
             tokens: number;
         };
+        /**
+         * DocumentMovePatch
+         * @description PATCH /documents/{id}/move body. `folder_id: null` moves the document to
+         *     the workspace root; a non-null id moves it into that folder.
+         */
+        DocumentMovePatch: {
+            /** Folder Id */
+            folder_id?: string | null;
+        };
         /** DocumentOut */
         DocumentOut: {
             /**
@@ -2044,13 +2086,19 @@ export interface components {
             } | null;
             /** Enriched */
             enriched: boolean;
+            /** Chunk Method Override */
+            chunk_method_override?: string | null;
         };
-        /** DocumentPatch */
-        DocumentPatch: {
+        /**
+         * DocumentPinPatch
+         * @description PATCH /documents/{id}/pin body. Split out of the former combined
+         *     DocumentPatch (sec RAGZ-PUB-01): pin and move are distinct actions
+         *     (documents.pin vs documents.move) and must be gated independently at the
+         *     route boundary, so each gets its own single-purpose schema + endpoint.
+         */
+        DocumentPinPatch: {
             /** Pinned */
-            pinned?: boolean | null;
-            /** Folder Id */
-            folder_id?: string | null;
+            pinned: boolean;
         };
         /** EmbeddingModelPatch */
         EmbeddingModelPatch: {
@@ -3151,6 +3199,8 @@ export interface components {
             strict_mode: boolean;
             /** Enrichment Enabled */
             enrichment_enabled: boolean;
+            /** Chunk Method */
+            chunk_method: string;
         };
         /** WorkspacePatch */
         WorkspacePatch: {
@@ -3172,6 +3222,8 @@ export interface components {
             strict_mode?: boolean | null;
             /** Enrichment Enabled */
             enrichment_enabled?: boolean | null;
+            /** Chunk Method */
+            chunk_method?: ("heading" | "fixed" | "page" | "table_qa") | null;
         };
         /** WorstAnswerOut */
         WorstAnswerOut: {
@@ -3991,7 +4043,7 @@ export interface operations {
             };
         };
     };
-    patch_document_api_v1_documents__document_id__patch: {
+    pin_document_api_v1_documents__document_id__pin_patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -4002,7 +4054,42 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DocumentPatch"];
+                "application/json": components["schemas"]["DocumentPinPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_document_route_api_v1_documents__document_id__move_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentMovePatch"];
             };
         };
         responses: {

@@ -19,6 +19,7 @@ const ws: WorkspaceOut = {
   web_search_enabled: false,
   strict_mode: false,
   enrichment_enabled: false,
+  chunk_method: 'heading',
 };
 
 function stubFetch(responseBody: WorkspaceOut) {

@@ -12,12 +12,19 @@ from ragz.worker.tasks import enqueue_eval_run
 
 router = APIRouter(tags=["evals"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
+# sec RAGZ-PUB-01: every eval route now ENFORCES exactly the action it DECLARES
+# in api/policy.py (previously all five shared workspace.configure, so a role
+# granted only evals.read could still trigger a run, and vice versa). read =
+# view golden queries / run history; manage = author/delete golden queries;
+# run = trigger an eval run.
+EvalsReadDep = Annotated[TenantContext, Depends(require_action("evals.read"))]
+EvalsManageDep = Annotated[TenantContext, Depends(require_action("evals.manage"))]
+EvalsRunDep = Annotated[TenantContext, Depends(require_action("evals.run"))]
 
 
 @router.get("/workspaces/{workspace_id}/golden-queries", response_model=list[GoldenQueryOut])
 async def list_golden_queries(
-    workspace_id: UUID, session: SessionDep, ctx: ConfigureDep
+    workspace_id: UUID, session: SessionDep, ctx: EvalsReadDep
 ) -> list[GoldenQueryOut]:
     return [
         GoldenQueryOut.model_validate(g)
@@ -29,7 +36,7 @@ async def list_golden_queries(
     "/workspaces/{workspace_id}/golden-queries", status_code=201, response_model=GoldenQueryOut
 )
 async def create_golden_query(
-    workspace_id: UUID, body: GoldenQueryCreate, session: SessionDep, ctx: ConfigureDep
+    workspace_id: UUID, body: GoldenQueryCreate, session: SessionDep, ctx: EvalsManageDep
 ) -> GoldenQueryOut:
     gq = await service.create_golden_query(
         session, ctx, workspace_id, question=body.question,
@@ -39,12 +46,12 @@ async def create_golden_query(
 
 
 @router.delete("/golden-queries/{query_id}", status_code=204)
-async def delete_golden_query(query_id: UUID, session: SessionDep, ctx: ConfigureDep) -> None:
+async def delete_golden_query(query_id: UUID, session: SessionDep, ctx: EvalsManageDep) -> None:
     await service.delete_golden_query(session, ctx, query_id)
 
 
 @router.post("/workspaces/{workspace_id}/evals/run", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_eval_run(workspace_id: UUID, session: SessionDep, ctx: ConfigureDep) -> None:
+async def trigger_eval_run(workspace_id: UUID, session: SessionDep, ctx: EvalsRunDep) -> None:
     # Task 11 review fix: workspace.configure alone doesn't prove workspace_id
     # belongs to ctx.org_id -- resolve it the same way every other route in
     # this file does before enqueuing (see evals/service.py's
@@ -56,7 +63,7 @@ async def trigger_eval_run(workspace_id: UUID, session: SessionDep, ctx: Configu
 
 @router.get("/workspaces/{workspace_id}/evals/runs", response_model=list[EvalRunOut])
 async def list_eval_runs(
-    workspace_id: UUID, session: SessionDep, ctx: ConfigureDep
+    workspace_id: UUID, session: SessionDep, ctx: EvalsReadDep
 ) -> list[EvalRunOut]:
     return [
         EvalRunOut.model_validate(r)
