@@ -27,5 +27,9 @@ anything-llm/
 openui/
 .claude/
 
+# Internal planning/audit docs — LOCAL REFERENCE ONLY, never commit to GitHub
+docs/superpowers/
+docs/audit/
+
 # Log files (runtime: uvicorn/celery worker+beat+reindex, *.dev.log, *.run.log) — never commit
 *.log
