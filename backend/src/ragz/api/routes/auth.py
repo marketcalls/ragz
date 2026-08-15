@@ -10,12 +10,15 @@ from ragz.core.ratelimit import peek_rate_limit, rate_limit, record_failure
 from ragz.modules.auth import service
 from ragz.modules.auth.schemas import (
     AccessTokenResponse,
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
     InvitationAccept,
     InvitationCreate,
     InvitationOut,
     LoginRequest,
+    ResetPasswordRequest,
 )
-from ragz.modules.tenancy.context import TenantContext, require_role
+from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_role
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,6 +26,12 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 RefreshCookie = Annotated[str | None, Cookie(alias="refresh_token")]
 AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
+AuthedDep = Annotated[TenantContext, Depends(get_tenant_context)]
+
+# Constant response body for /auth/forgot-password: RAGZ-PUB-06 enum-safety
+# requires the exact same 202 body whether or not the email matches an
+# active account.
+_FORGOT_PASSWORD_RESPONSE = {"detail": "If that email exists, a reset link has been sent."}
 
 # RAGZ-PUB-06: per-ACCOUNT failed-login throttle, orthogonal to the per-IP
 # `rate_limit("login")` dependency. A distributed botnet spreading guesses for
@@ -125,3 +134,48 @@ async def accept_invitation(
         session, raw_token=body.token, password=body.password, settings=settings
     )
     return {"email": user.email}
+
+
+@router.post(
+    "/forgot-password",
+    status_code=202,
+    dependencies=[Depends(rate_limit("forgot_password", limit=10, window_seconds=60))],
+)
+async def forgot_password(
+    body: ForgotPasswordRequest, request: Request, session: SessionDep, settings: SettingsDep
+) -> dict[str, str]:
+    # RAGZ-PUB-06: enum-safe. service.request_password_reset never raises for
+    # an unknown/inactive email or a send failure -- the response below is
+    # returned unconditionally, identical in every case.
+    redis = request.app.state.redis
+    await service.request_password_reset(session, body.email, settings, redis=redis)
+    return _FORGOT_PASSWORD_RESPONSE
+
+
+@router.post(
+    "/reset-password",
+    status_code=204,
+    dependencies=[Depends(rate_limit("reset_password", limit=10, window_seconds=60))],
+)
+async def reset_password(
+    body: ResetPasswordRequest, session: SessionDep, settings: SettingsDep
+) -> None:
+    await service.reset_password(
+        session, raw_token=body.token, new_password=body.new_password, settings=settings
+    )
+
+
+@router.post(
+    "/change-password",
+    status_code=204,
+    dependencies=[Depends(rate_limit("change_password", limit=10, window_seconds=60))],
+)
+async def change_password(
+    body: ChangePasswordRequest, session: SessionDep, settings: SettingsDep, ctx: AuthedDep
+) -> None:
+    await service.change_password(
+        session, ctx,
+        current_password=body.current_password,
+        new_password=body.new_password,
+        settings=settings,
+    )

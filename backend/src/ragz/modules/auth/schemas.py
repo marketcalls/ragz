@@ -38,6 +38,25 @@ class InvitationAccept(BaseModel):
     password: str = Field(min_length=12, max_length=4096)
 
 
+class ForgotPasswordRequest(BaseModel):
+    # RAGZ-PUB-06: /auth/forgot-password is public + rate-limited. Bounded
+    # like LoginRequest.email so an oversized body can't force unnecessary
+    # work before the rate limiter helps.
+    email: EmailStr = Field(max_length=320)
+
+
+class ResetPasswordRequest(BaseModel):
+    # Same token-length rationale as InvitationAccept.token; password rule
+    # mirrors InvitationAccept.password verbatim.
+    token: str = Field(max_length=512)
+    new_password: str = Field(min_length=12, max_length=4096)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(max_length=4096)
+    new_password: str = Field(min_length=12, max_length=4096)
+
+
 class UserOut(BaseModel):
     id: UUID
     email: EmailStr

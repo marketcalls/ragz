@@ -98,12 +98,20 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/api/v1/auth/logout"), ("POST", "/api/v1/auth/invitations/accept"),
     ("GET", "/api/v1/auth/oidc/status"), ("GET", "/api/v1/auth/oidc/login"),
     ("GET", "/api/v1/auth/oidc/callback"),
+    # RAGZ-PUB-06: forgot/reset-password are unauthenticated by nature (the
+    # emailed token IS the credential, not a bearer JWT) -- reason 1 above.
+    ("POST", "/api/v1/auth/forgot-password"), ("POST", "/api/v1/auth/reset-password"),
     ("POST", "/external/bots/telegram/{webhook_id}"),
     ("POST", "/external/bots/slack/{webhook_id}"),
     ("POST", "/external/bots/discord/{webhook_id}"),
     # authenticated-but-actionless self route (reason 2 above): requires a
     # valid JWT via get_tenant_context, but has no per-action policy.
     ("GET", "/api/v1/me/authorization"),
+    # RAGZ-PUB-06: change-password requires a valid JWT via get_tenant_context
+    # (the user changes only their OWN password, resolved from ctx.user_id)
+    # but has no separate catalog action -- same "authenticated self" bucket
+    # as /me/authorization above.
+    ("POST", "/api/v1/auth/change-password"),
 })
 
 # (method, path-with-{param}-placeholders) -> declared action. `path` matches

@@ -6,19 +6,36 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import structlog
+from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_or_create_signing_key
 from ragz.core.config import Settings
 from ragz.core.db import naive_utc
-from ragz.core.errors import AuthenticationError, ConflictError, NotFoundError
+from ragz.core.errors import AuthenticationError, ConflictError, NotFoundError, RateLimitExceeded
+from ragz.core.ratelimit import check_rate_limit
 from ragz.modules.audit.service import record_audit
-from ragz.modules.auth.models import Invitation, RefreshToken, User
+from ragz.modules.auth.models import Invitation, PasswordResetToken, RefreshToken, User
 from ragz.modules.auth.passwords import hash_password, verify_password
 from ragz.modules.auth.tokens import issue_access_token
+from ragz.modules.email import service as email_service
+from ragz.modules.email import templates as email_templates
+from ragz.modules.email.errors import EmailError
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Organization
+
+# RAGZ-PUB-06: per-email throttle on forgot-password SENDS (distinct from the
+# per-IP rate_limit("forgot_password") dependency on the route) -- caps how
+# many reset emails one address can be mailed in a window so the endpoint
+# can't be used to mail-bomb an arbitrary inbox. Checked ONLY for a matching
+# active user (see request_password_reset) so it never becomes an
+# enumeration side-channel on its own; the response is identical either way.
+_FORGOT_EMAIL_MAX_SENDS = 5
+_FORGOT_EMAIL_WINDOW_SECONDS = 900  # 15 minutes
+
+# RAGZ-PUB-06: reset TTL for a self-service PasswordResetToken.
+_RESET_TOKEN_TTL_MINUTES = 45
 
 
 @dataclass(frozen=True)
@@ -151,6 +168,144 @@ async def logout(
         update(RefreshToken)
         .where(RefreshToken.token_hash == _hash(raw_refresh, settings.api_key_pepper))
         .values(revoked_at=naive_utc())
+    )
+    await session.commit()
+
+
+async def _revoke_all_refresh_tokens(session: AsyncSession, user_id: UUID) -> None:
+    """Revoke every live refresh-token family for `user_id`, forcing every
+    existing session (every device/tab) to re-authenticate. Shared by
+    `reset_password` (task 7, unconditionally ALL -- the requester proved
+    control of the account via the emailed token, not via an existing
+    session) and `change_password` (task 8): the authenticated caller's
+    `TenantContext` carries no refresh-token family id (JWTs are bearer
+    tokens, not tied 1:1 to the refresh cookie that minted them), so there is
+    no reliable way to single out "this" session and spare it. Revoking ALL
+    is the simplest secure choice -- see change_password's docstring."""
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=naive_utc())
+    )
+
+
+async def request_password_reset(
+    session: AsyncSession, email: str, settings: Settings, *, redis: Redis | None = None
+) -> None:
+    """RAGZ-PUB-06: enumeration-safe forgot-password. The RESPONSE the caller
+    (the route) sends back is identical no matter what happens in here --
+    unknown email, inactive user, per-email send cap, or an email-provider
+    failure all fall through to the same silent return. Only a genuine,
+    active-user match ever creates a token or sends mail; that asymmetry in
+    internal work is accepted (per the plan) as long as it never surfaces in
+    the response shape.
+    """
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user is None or not user.active:
+        return
+
+    if redis is not None:
+        email_key = f"rl:forgot_email:{email.strip().lower()}"
+        try:
+            await check_rate_limit(
+                redis, email_key, _FORGOT_EMAIL_MAX_SENDS, _FORGOT_EMAIL_WINDOW_SECONDS
+            )
+        except RateLimitExceeded:
+            # Cap hit for this address: no new token/send, but still return
+            # normally -- the 202 response never reveals this happened.
+            return
+
+    now = datetime.now(UTC)
+    now_naive = now.replace(tzinfo=None)
+    # Invalidate any prior unused tokens so only the newest link works.
+    await session.execute(
+        update(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=now_naive)
+    )
+    raw = secrets.token_urlsafe(32)
+    expires_at = (now + timedelta(minutes=_RESET_TOKEN_TTL_MINUTES)).replace(tzinfo=None)
+    session.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=_hash(raw, settings.api_key_pepper),
+            expires_at=expires_at,
+        )
+    )
+    await session.commit()
+
+    reset_url = f"{settings.frontend_base_url}/reset-password?token={raw}"
+    try:
+        await email_service.send_rendered(
+            session, to=user.email,
+            rendered=email_templates.reset_password_email(
+                reset_url, ttl_minutes=_RESET_TOKEN_TTL_MINUTES
+            ),
+            settings=settings,
+        )
+    except EmailError:
+        # Best-effort: a provider outage must never surface to the caller
+        # (enum-safety) nor block the token from having been issued.
+        structlog.get_logger().error("password_reset_email_failed", exc_info=True)
+
+
+async def reset_password(
+    session: AsyncSession, *, raw_token: str, new_password: str, settings: Settings
+) -> None:
+    token = (
+        await session.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == _hash(raw_token, settings.api_key_pepper)
+            )
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(UTC)
+    if (
+        token is None
+        or token.used_at is not None
+        or token.expires_at.replace(tzinfo=UTC) <= now
+    ):
+        # Generic message for every rejection reason -- missing, already
+        # used, and expired must be indistinguishable to the caller.
+        raise AuthenticationError("invalid or expired reset token")
+
+    user = (await session.execute(select(User).where(User.id == token.user_id))).scalar_one()
+    user.password_hash = hash_password(new_password)
+    token.used_at = now.replace(tzinfo=None)
+    await _revoke_all_refresh_tokens(session, user.id)
+    await record_audit(
+        session, org_id=user.org_id, actor_id=user.id, action="password.reset",
+        target_type="user", target_id=str(user.id),
+    )
+    await session.commit()
+
+    try:
+        await email_service.send_rendered(
+            session, to=user.email, rendered=email_templates.password_changed_email(),
+            settings=settings,
+        )
+    except EmailError:
+        structlog.get_logger().error("password_changed_email_failed", exc_info=True)
+
+
+async def change_password(
+    session: AsyncSession, ctx: TenantContext, *,
+    current_password: str, new_password: str, settings: Settings,
+) -> None:
+    """Authenticated self-service password change (task 8). Revokes ALL
+    refresh-token families rather than attempting to spare the calling
+    session -- see `_revoke_all_refresh_tokens` for why "other sessions only"
+    isn't reliably identifiable from a bearer `TenantContext`. `settings` is
+    accepted for interface parity with `reset_password` (no email is sent
+    here in this task's scope)."""
+    user = (await session.execute(select(User).where(User.id == ctx.user_id))).scalar_one()
+    if not verify_password(user.password_hash, current_password):
+        raise AuthenticationError("current password is incorrect")
+    user.password_hash = hash_password(new_password)
+    await _revoke_all_refresh_tokens(session, user.id)
+    await record_audit(
+        session, org_id=user.org_id, actor_id=user.id, action="password.changed",
+        target_type="user", target_id=str(user.id),
     )
     await session.commit()
 
