@@ -72,11 +72,24 @@ CalloutTone = Literal["info", "success", "warning", "danger"]
 _ChartValue = str | float
 
 
+# Parity with table cells (security review): bound chart-row string values and
+# the number of keys per row so a model can't emit huge chart payloads that the
+# per-row/keys/count caps above don't otherwise catch.
+_MAX_CHART_CELL_LEN = 500
+_MAX_CHART_ROW_KEYS = 30
+
+
 def _row_is_finite(row: dict[str, _ChartValue]) -> bool:
-    for value in row.values():
+    if len(row) > _MAX_CHART_ROW_KEYS:
+        return False
+    for key, value in row.items():
+        if len(key) > _MAX_CHART_CELL_LEN:
+            return False
         if isinstance(value, bool):
             # bool is a float-compatible subtype in Python but never a
             # legitimate chart value; treat it as invalid rather than 0/1.
+            return False
+        if isinstance(value, str) and len(value) > _MAX_CHART_CELL_LEN:
             return False
         if isinstance(value, float) and not math.isfinite(value):
             return False

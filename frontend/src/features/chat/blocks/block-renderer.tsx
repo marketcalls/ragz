@@ -290,18 +290,19 @@ function TabsView({ block, depth }: { block: TabsBlockT; depth: number }) {
   // TabsBlock), but this whitelist guards defensively anyway rather than
   // trust the server-validated shape blindly.
   if (depth > 0 || block.tabs.length === 0) return null;
-  const firstLabel = block.tabs[0]?.label;
+  // Use the index as the Radix value/key: model-supplied labels can collide
+  // (duplicate labels would break tab selection) — the index is always unique.
   return (
-    <Tabs defaultValue={firstLabel} className="rounded-lg border border-line bg-bg p-3">
+    <Tabs defaultValue="0" className="rounded-lg border border-line bg-bg p-3">
       <TabsList>
         {block.tabs.map((tab, i) => (
-          <TabsTrigger key={`${tab.label}-${i}`} value={tab.label}>
+          <TabsTrigger key={i} value={String(i)}>
             {tab.label}
           </TabsTrigger>
         ))}
       </TabsList>
       {block.tabs.map((tab, i) => (
-        <TabsContent key={`${tab.label}-${i}`} value={tab.label} className="pt-3">
+        <TabsContent key={i} value={String(i)} className="pt-3">
           <BlockRenderer blocks={tab.blocks} depth={depth + 1} />
         </TabsContent>
       ))}
