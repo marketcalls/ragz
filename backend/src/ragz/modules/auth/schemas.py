@@ -57,6 +57,18 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=12, max_length=4096)
 
 
+class SessionOut(BaseModel):
+    """sec RAGZ-PUB-06: one live refresh-token FAMILY, as returned by
+    GET /auth/sessions. `current` is true only for the family the caller's
+    OWN refresh_token cookie resolves to."""
+
+    family_id: UUID
+    created_at: datetime
+    last_used_at: datetime
+    expires_at: datetime
+    current: bool
+
+
 class UserOut(BaseModel):
     id: UUID
     email: EmailStr

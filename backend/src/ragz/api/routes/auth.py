@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from ragz.modules.auth.schemas import (
     InvitationOut,
     LoginRequest,
     ResetPasswordRequest,
+    SessionOut,
 )
 from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_role
 
@@ -179,3 +181,56 @@ async def change_password(
         new_password=body.new_password,
         settings=settings,
     )
+
+
+@router.get("/sessions", response_model=list[SessionOut])
+async def list_sessions(
+    session: SessionDep, settings: SettingsDep, ctx: AuthedDep,
+    refresh_token: RefreshCookie = None,
+) -> list[SessionOut]:
+    """sec RAGZ-PUB-06: session inventory -- the caller's own live
+    refresh-token families only (scoped to ctx.user_id, never another
+    user's). The family resolved from the caller's OWN refresh_token cookie
+    (if any) is marked `current: true`; gracefully falls back to no
+    "current" session at all when the cookie is missing or unrecognized."""
+    current_family = None
+    if refresh_token:
+        current_family = await service.resolve_session_family(
+            session, raw_refresh=refresh_token, settings=settings
+        )
+    sessions = await service.list_sessions(session, ctx.user_id)
+    return [
+        SessionOut(
+            family_id=s.family_id, created_at=s.created_at,
+            last_used_at=s.last_used_at, expires_at=s.expires_at,
+            current=(s.family_id == current_family),
+        )
+        for s in sessions
+    ]
+
+
+@router.delete("/sessions/{family_id}", status_code=204)
+async def revoke_session(
+    family_id: UUID, session: SessionDep, ctx: AuthedDep,
+) -> None:
+    """sec RAGZ-PUB-06: revoke one specific session (refresh-token family),
+    scoped to the caller -- service.revoke_session raises NotFoundError
+    (non-leaking) if `family_id` doesn't belong to ctx.user_id."""
+    await service.revoke_session(session, ctx.user_id, family_id)
+
+
+@router.post("/sessions/revoke-others", status_code=204)
+async def revoke_other_sessions(
+    session: SessionDep, settings: SettingsDep, ctx: AuthedDep,
+    refresh_token: RefreshCookie = None,
+) -> None:
+    """sec RAGZ-PUB-06: revoke every OTHER live session, sparing the one the
+    caller's own refresh_token cookie identifies. No cookie (or an
+    unrecognized one) means there is nothing to spare -- every live session
+    for this user is revoked."""
+    keep_family = None
+    if refresh_token:
+        keep_family = await service.resolve_session_family(
+            session, raw_refresh=refresh_token, settings=settings
+        )
+    await service.revoke_other_sessions(session, ctx.user_id, keep_family)

@@ -3,11 +3,13 @@ import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import structlog
 from redis.asyncio import Redis
 from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_or_create_signing_key
@@ -42,6 +44,24 @@ _RESET_TOKEN_TTL_MINUTES = 45
 class TokenPair:
     access_token: str
     refresh_token: str
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """One live refresh-token FAMILY for a user (sec RAGZ-PUB-06 session
+    inventory). `created_at` is the earliest token in the family (when the
+    session began, at login or the last full re-auth); `last_used_at` is the
+    latest token's `created_at` (the most recent rotation -- RefreshToken has
+    no separate last-used column, so the newest token's mint time is the best
+    available proxy for "last used"); `expires_at` is the live token's
+    expiry. `current`-ness is a route-level concern (it depends on which
+    refresh cookie the caller presented) and is layered on by the API route,
+    not computed here."""
+
+    family_id: UUID
+    created_at: datetime
+    last_used_at: datetime
+    expires_at: datetime
 
 
 def _hash(raw: str, pepper: str = "") -> str:
@@ -188,6 +208,111 @@ async def _revoke_all_refresh_tokens(session: AsyncSession, user_id: UUID) -> No
         .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=naive_utc())
     )
+
+
+async def resolve_session_family(
+    session: AsyncSession, *, raw_refresh: str, settings: Settings
+) -> UUID | None:
+    """sec RAGZ-PUB-06: resolves the family_id the caller's OWN refresh_token
+    cookie belongs to, for marking the "current" session in list_sessions and
+    as the `keep_family_id` for revoke_other_sessions. Looked up by hash
+    regardless of revoked/expired status -- the family_id is stable across
+    rotation (rotate_refresh keeps it constant), so even a since-rotated
+    cookie still identifies the right family; returns None for an unknown
+    hash (missing/garbage cookie) rather than raising, since callers treat
+    "no current session" as a normal, gracefully-handled case."""
+    row = (
+        await session.execute(
+            select(RefreshToken.family_id).where(
+                RefreshToken.token_hash == _hash(raw_refresh, settings.api_key_pepper)
+            )
+        )
+    ).scalar_one_or_none()
+    return row
+
+
+async def list_sessions(session: AsyncSession, user_id: UUID) -> list[SessionInfo]:
+    """sec RAGZ-PUB-06: session inventory. A "session" is a refresh-token
+    FAMILY (rotate_refresh keeps `family_id` constant across rotations); a
+    LIVE session is a family with at least one non-revoked, non-expired
+    token. Aggregated in Python rather than SQL GROUP BY -- the per-user
+    token count is small (one row per still-tracked rotation across a
+    handful of devices), and MIN/MAX-per-family plus a "has a live row"
+    filter is simpler to read than the equivalent correlated-subquery SQL.
+    """
+    now = naive_utc()
+    rows = list(
+        (
+            await session.execute(
+                select(RefreshToken).where(RefreshToken.user_id == user_id)
+            )
+        ).scalars()
+    )
+    families: dict[UUID, list[RefreshToken]] = {}
+    for row in rows:
+        families.setdefault(row.family_id, []).append(row)
+
+    sessions: list[SessionInfo] = []
+    for family_id, tokens in families.items():
+        live = [t for t in tokens if t.revoked_at is None and t.expires_at > now]
+        if not live:
+            continue
+        sessions.append(
+            SessionInfo(
+                family_id=family_id,
+                created_at=min(t.created_at for t in tokens),
+                last_used_at=max(t.created_at for t in tokens),
+                expires_at=max(t.expires_at for t in live),
+            )
+        )
+    sessions.sort(key=lambda s: s.last_used_at, reverse=True)
+    return sessions
+
+
+async def revoke_session(session: AsyncSession, user_id: UUID, family_id: UUID) -> None:
+    """Revoke every token in `family_id` -- but ONLY if that family belongs
+    to `user_id`. The existence check and the update both scope on
+    `user_id`, so a family belonging to another user raises the exact same
+    NotFoundError as a family_id that doesn't exist at all (non-leaking:
+    the caller can't distinguish "not yours" from "never existed")."""
+    owned = (
+        await session.execute(
+            select(RefreshToken.id)
+            .where(RefreshToken.family_id == family_id, RefreshToken.user_id == user_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if owned is None:
+        raise NotFoundError("session not found")
+    await session.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.family_id == family_id,
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=naive_utc())
+    )
+    await session.commit()
+
+
+async def revoke_other_sessions(
+    session: AsyncSession, user_id: UUID, keep_family_id: UUID | None
+) -> int:
+    """Revoke every live family for `user_id` EXCEPT `keep_family_id`. When
+    the caller has no identifiable current session (`keep_family_id` is
+    None -- e.g. no refresh cookie presented), there is nothing to spare:
+    every live family is revoked."""
+    stmt = update(RefreshToken).where(
+        RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
+    )
+    if keep_family_id is not None:
+        stmt = stmt.where(RefreshToken.family_id != keep_family_id)
+    result = cast(
+        "CursorResult[Any]", await session.execute(stmt.values(revoked_at=naive_utc()))
+    )
+    await session.commit()
+    return result.rowcount or 0
 
 
 async def request_password_reset(

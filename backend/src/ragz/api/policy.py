@@ -112,6 +112,14 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     # but has no separate catalog action -- same "authenticated self" bucket
     # as /me/authorization above.
     ("POST", "/api/v1/auth/change-password"),
+    # RAGZ-PUB-06: session inventory/revocation -- each acts only on the
+    # caller's OWN refresh-token families (resolved from ctx.user_id, plus
+    # a non-leaking ownership check on the path/cookie-scoped family_id in
+    # revoke_session/revoke_other_sessions), same "authenticated self" bucket
+    # as change-password above.
+    ("GET", "/api/v1/auth/sessions"),
+    ("DELETE", "/api/v1/auth/sessions/{family_id}"),
+    ("POST", "/api/v1/auth/sessions/revoke-others"),
 })
 
 # (method, path-with-{param}-placeholders) -> declared action. `path` matches
