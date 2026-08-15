@@ -497,6 +497,64 @@ async def test_web_search_without_consent_never_calls_searcher_via_api(
     assert web_searcher.queries == []
 
 
+async def test_consent_forces_loop_even_when_retrieval_grounds(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """Regression (web-search toggle ignored when docs matched): a user who
+    explicitly toggles web search on for a turn must get an actual web search,
+    even when local retrieval succeeds and the question would never escalate on
+    its own. The question here is the SINGLE-part "What is the muster point?" --
+    test_simple_question_never_escalates pins that it triggers zero planner
+    calls -- and FakeRetriever grounds (no_answer=False). So neither the
+    escalation heuristic nor the post-retrieval general-knowledge trigger can
+    start the loop; only web_search_consented (the force_web gate in
+    service.py) can. Asserts the loop ran, the searcher was actually called,
+    and the web url reaches the citations -- not a docs-only answer."""
+    completer = FakeCompleter([_web_search_completion("nifty future")])
+    web_searcher = FakeWebSearcher()
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),  # grounds: no_answer=False
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer, web_searcher=web_searcher,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _flag_tools_unreliable(client, h_super)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"web_search_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200 and r_ws.json()["web_search_enabled"] is True
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={
+                # single-part, non-escalating question + explicit consent
+                "content": "What is the muster point?",
+                "web_search_consented": True,
+            },
+            headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    # The loop ran BECAUSE of consent, not escalation:
+    assert "agent_step" in names
+    step = next(d for n, d in frames if n == "agent_step")
+    assert step["tool"] == "web_search"
+    # The external searcher was actually invoked (not a docs-only answer):
+    assert web_searcher.queries != []
+    # The web url reaches the citations:
+    citations = next(d for n, d in frames if n == "citations")["citations"]
+    assert any(c.get("url") == web_searcher.results[0].url for c in citations)
+
+
 async def test_web_search_not_offered_when_disabled_or_decline(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,

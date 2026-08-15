@@ -1507,12 +1507,27 @@ async def stream_reply(
                 )
                 agent_prompt_tokens += tiebreak_usage.prompt_tokens
                 agent_completion_tokens += tiebreak_usage.completion_tokens
+        # A user who explicitly toggled "Web search" on for this turn
+        # (web_search_consented) expects the web to actually be searched -- not
+        # merely consented-to if some heuristic happens to escalate. Force the
+        # agent loop (the sole owner of the web_search tool) so the planner can
+        # use it, even when the single-shot retrieval would have answered from
+        # documents. Guarded so it's a no-op unless the loop is actually
+        # runnable and the web tool is actually usable: a completer + an
+        # injected searcher + the workspace opting in and not in decline mode.
+        force_web = (
+            web_search_consented
+            and completer is not None
+            and web_searcher is not None
+            and workspace.web_search_enabled
+            and workspace.fallback_policy != "decline"
+        )
         result = (
             RetrievalResult(chunks=[], no_answer=True)
-            if pre_escalate  # the loop's first search subsumes the single shot
+            if pre_escalate or force_web  # the loop's first search subsumes the single shot
             else await retriever(session, ctx, chat.workspace_id, user_message.content)
         )
-        run_loop = pre_escalate or (
+        run_loop = pre_escalate or force_web or (
             completer is not None
             and result.no_answer
             and workspace.fallback_policy == "general_knowledge"
