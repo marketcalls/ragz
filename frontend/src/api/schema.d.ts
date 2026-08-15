@@ -11,7 +11,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Healthz */
+        /**
+         * Healthz
+         * @description Pure in-memory liveness check -- no DB dependency at all, so this can
+         *     never contend for a pool connection regardless of request volume.
+         */
         get: operations["healthz_healthz_get"];
         put?: never;
         post?: never;
@@ -117,6 +121,57 @@ export interface paths {
         put?: never;
         /** Accept Invitation */
         post: operations["accept_invitation_api_v1_auth_invitations_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/forgot-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Forgot Password */
+        post: operations["forgot_password_api_v1_auth_forgot_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Password */
+        post: operations["reset_password_api_v1_auth_reset_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/change-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Password */
+        post: operations["change_password_api_v1_auth_change_password_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -793,6 +848,47 @@ export interface paths {
         /** Put Settings Route */
         put: operations["put_settings_route_api_v1_admin_settings_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Email Config Route */
+        get: operations["get_email_config_route_api_v1_admin_email_get"];
+        /** Put Email Config Route */
+        put: operations["put_email_config_route_api_v1_admin_email_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/email/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Test Email Route
+         * @description Sends `templates.test_email()` to `body.to`. A misconfigured provider
+         *     or a send failure raises `EmailError`, which the app-level `RagzError`
+         *     handler turns into a `502 application/problem+json` response -- never a
+         *     bare 500.
+         */
+        post: operations["send_test_email_route_api_v1_admin_email_test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1861,6 +1957,13 @@ export interface components {
             /** New Available */
             new_available: number;
         };
+        /** ChangePasswordRequest */
+        ChangePasswordRequest: {
+            /** Current Password */
+            current_password: string;
+            /** New Password */
+            new_password: string;
+        };
         /** ChatCreate */
         ChatCreate: {
             /**
@@ -2100,6 +2203,134 @@ export interface components {
             /** Pinned */
             pinned: boolean;
         };
+        /**
+         * EmailConfigOut
+         * @description `GET`/`PUT /admin/email` response: every non-secret `EmailConfig`
+         *     field plus existence-only booleans for the two provider secrets. The
+         *     secret VALUES are never returned (iron rule 3) -- only whether one has
+         *     been set.
+         */
+        EmailConfigOut: {
+            /**
+             * Provider
+             * @default smtp
+             * @enum {string}
+             */
+            provider: "smtp" | "ses";
+            /**
+             * From Email
+             * @default
+             */
+            from_email: string;
+            /**
+             * From Name
+             * @default
+             */
+            from_name: string;
+            /**
+             * Smtp Host
+             * @default
+             */
+            smtp_host: string;
+            /**
+             * Smtp Port
+             * @default 587
+             */
+            smtp_port: number;
+            /**
+             * Smtp Use Tls
+             * @default true
+             */
+            smtp_use_tls: boolean;
+            /**
+             * Smtp Username
+             * @default
+             */
+            smtp_username: string;
+            /**
+             * Ses Region
+             * @default
+             */
+            ses_region: string;
+            /**
+             * Ses Access Key Id
+             * @default
+             */
+            ses_access_key_id: string;
+            /** Smtp Password Set */
+            smtp_password_set: boolean;
+            /** Ses Secret Key Set */
+            ses_secret_key_set: boolean;
+        };
+        /**
+         * EmailConfigUpdate
+         * @description `PUT /admin/email` body: a full replace of the non-secret config
+         *     (mirrors `settings_service.update_email_config`'s full-`EmailConfig`
+         *     signature) plus two optional write-only secret fields. `None` leaves the
+         *     corresponding stored secret untouched; a provided value is forwarded to
+         *     `modules.secrets.set_secret`. Never echoed back -- `EmailConfigOut` has
+         *     no secret-value fields, only the `*_set` booleans.
+         */
+        EmailConfigUpdate: {
+            /**
+             * Provider
+             * @default smtp
+             * @enum {string}
+             */
+            provider: "smtp" | "ses";
+            /**
+             * From Email
+             * @default
+             */
+            from_email: string;
+            /**
+             * From Name
+             * @default
+             */
+            from_name: string;
+            /**
+             * Smtp Host
+             * @default
+             */
+            smtp_host: string;
+            /**
+             * Smtp Port
+             * @default 587
+             */
+            smtp_port: number;
+            /**
+             * Smtp Use Tls
+             * @default true
+             */
+            smtp_use_tls: boolean;
+            /**
+             * Smtp Username
+             * @default
+             */
+            smtp_username: string;
+            /**
+             * Ses Region
+             * @default
+             */
+            ses_region: string;
+            /**
+             * Ses Access Key Id
+             * @default
+             */
+            ses_access_key_id: string;
+            /** Smtp Password */
+            smtp_password?: string | null;
+            /** Ses Secret Key */
+            ses_secret_key?: string | null;
+        };
+        /**
+         * EmailTestRequest
+         * @description `POST /admin/email/test` body: recipient for a one-off test send.
+         */
+        EmailTestRequest: {
+            /** To */
+            to: string;
+        };
         /** EmbeddingModelPatch */
         EmbeddingModelPatch: {
             /**
@@ -2295,6 +2526,14 @@ export interface components {
             name?: string | null;
             /** Parent Folder Id */
             parent_folder_id?: string | null;
+        };
+        /** ForgotPasswordRequest */
+        ForgotPasswordRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
         };
         /** GoldenQueryCreate */
         GoldenQueryCreate: {
@@ -2519,6 +2758,11 @@ export interface components {
             reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
             /** Attachment Ids */
             attachment_ids?: string[] | null;
+            /**
+             * Web Search Consented
+             * @default false
+             */
+            web_search_consented: boolean;
         };
         /**
          * MetadataFieldCreate
@@ -2959,6 +3203,18 @@ export interface components {
             model_id?: string | null;
             /** Reasoning Effort */
             reasoning_effort?: ("off" | "low" | "medium" | "high") | null;
+            /**
+             * Web Search Consented
+             * @default false
+             */
+            web_search_consented: boolean;
+        };
+        /** ResetPasswordRequest */
+        ResetPasswordRequest: {
+            /** Token */
+            token: string;
+            /** New Password */
+            new_password: string;
         };
         /** RoleTemplateCreate */
         RoleTemplateCreate: {
@@ -3461,6 +3717,103 @@ export interface operations {
             };
         };
     };
+    forgot_password_api_v1_auth_forgot_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForgotPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_password_api_v1_auth_reset_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_password_api_v1_auth_change_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     status_api_v1_auth_oidc_status_get: {
         parameters: {
             query?: never;
@@ -3511,7 +3864,9 @@ export interface operations {
             };
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie?: {
+                oidc_preauth?: string | null;
+            };
         };
         requestBody?: never;
         responses: {
@@ -4991,6 +5346,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderSettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_email_config_route_api_v1_admin_email_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailConfigOut"];
+                };
+            };
+        };
+    };
+    put_email_config_route_api_v1_admin_email_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailConfigOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_test_email_route_api_v1_admin_email_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
                 };
             };
             /** @description Validation Error */
