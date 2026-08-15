@@ -155,6 +155,21 @@ test('closes without PATCHing when nothing changed', async () => {
   );
 });
 
+test('changing the chunking strategy PATCHes only chunk_method', async () => {
+  const user = userEvent.setup();
+  renderDialog(ws, { ...ws, chunk_method: 'page' });
+  await user.selectOptions(screen.getByLabelText('Chunking strategy'), 'page');
+  await user.click(screen.getByRole('button', { name: 'Save settings' }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([req]) => (req as Request).method === 'PATCH')).toBe(
+      true,
+    ),
+  );
+  const req = findPatch();
+  const body = (await req.clone().json()) as Record<string, unknown>;
+  expect(body).toStrictEqual({ chunk_method: 'page' });
+});
+
 test('changing the fallback policy PATCHes only fallback_policy', async () => {
   const user = userEvent.setup();
   renderDialog(ws, { ...ws, fallback_policy: 'decline' });

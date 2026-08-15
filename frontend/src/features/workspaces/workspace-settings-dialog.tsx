@@ -32,6 +32,9 @@ export function WorkspaceSettingsDialog({
   const [webSearch, setWebSearch] = useState(workspace.web_search_enabled);
   const [strictMode, setStrictMode] = useState(workspace.strict_mode);
   const [enrichment, setEnrichment] = useState(workspace.enrichment_enabled);
+  const [chunkMethod, setChunkMethod] = useState<'heading' | 'fixed' | 'page' | 'table_qa'>(
+    workspace.chunk_method as 'heading' | 'fixed' | 'page' | 'table_qa',
+  );
   // J-C15: no shared Tabs primitive exists yet — this local button-group
   // strip matches dashboard-page.tsx's RANGES day-picker style.
   const [tab, setTab] = useState<'settings' | 'evals'>('settings');
@@ -52,6 +55,7 @@ export function WorkspaceSettingsDialog({
       web_search_enabled?: boolean;
       strict_mode?: boolean;
       enrichment_enabled?: boolean;
+      chunk_method?: 'heading' | 'fixed' | 'page' | 'table_qa';
     } = {};
     const nextTopK = Number(topK);
     const nextMinScore = Number(minScore);
@@ -66,6 +70,7 @@ export function WorkspaceSettingsDialog({
     if (webSearch !== workspace.web_search_enabled) changes.web_search_enabled = webSearch;
     if (strictMode !== workspace.strict_mode) changes.strict_mode = strictMode;
     if (enrichment !== workspace.enrichment_enabled) changes.enrichment_enabled = enrichment;
+    if (chunkMethod !== workspace.chunk_method) changes.chunk_method = chunkMethod;
 
     if (Object.keys(changes).length === 0) {
       onOpenChange(false);
@@ -114,6 +119,26 @@ export function WorkspaceSettingsDialog({
               />
             </div>
             <form onSubmit={submit} className="space-y-4">
+              <div className="space-y-1">
+                <Label htmlFor="ws-chunk-method">Chunking strategy</Label>
+                <select
+                  id="ws-chunk-method"
+                  value={chunkMethod}
+                  onChange={(e) =>
+                    setChunkMethod(e.target.value as 'heading' | 'fixed' | 'page' | 'table_qa')
+                  }
+                  className="w-full rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-ink"
+                >
+                  <option value="heading">By heading / section (default)</option>
+                  <option value="fixed">Fixed-size token windows</option>
+                  <option value="page">One chunk per page</option>
+                  <option value="table_qa">Table Q&amp;A (tabular data)</option>
+                </select>
+                <p className="text-[12px] text-muted">
+                  How new uploads are split into chunks. Applies to documents ingested after
+                  this change — re-index existing docs to apply it to them.
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label htmlFor="ws-top-k">Sources per query (top_k)</Label>
