@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
 
-import type { AgentStepInfo, CitationRef, SourceRef } from '@/api/types';
+import type { AgentStepInfo, Block, CitationRef, SourceRef } from '@/api/types';
 
 import { streamChatSse, type ChatSseEvent } from './stream';
 
@@ -12,6 +12,9 @@ export interface ChatStreamState {
   text: string;
   sources: SourceRef[];
   citations: CitationRef[];
+  // Phase 2 (in-chat generative UI): captured off the `blocks` SSE frame,
+  // same shape as persisted MessageNode.blocks -- both feed BlockRenderer.
+  blocks: Block[];
   noAnswer: boolean;
   grounding: 'documents' | 'general';
   // Phase 3 Plan J (design D4/§3): true only when a strict_mode workspace's
@@ -28,6 +31,7 @@ const IDLE: ChatStreamState = {
   text: '',
   sources: [],
   citations: [],
+  blocks: [],
   noAnswer: false,
   grounding: 'documents',
   validationFailed: false,
@@ -47,6 +51,8 @@ function reduce(state: ChatStreamState, event: ChatSseEvent): ChatStreamState {
       return { ...state, status: 'streaming', text: state.text + event.delta };
     case 'citations':
       return { ...state, citations: event.citations };
+    case 'blocks':
+      return { ...state, blocks: event.blocks };
     case 'done':
       return {
         ...state,

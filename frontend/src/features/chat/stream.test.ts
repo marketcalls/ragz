@@ -149,6 +149,25 @@ test('a sources frame entry with a url (web citation, Task 11/D7) parses through
   expect(citationsEvent?.citations[0]).toMatchObject({ url: 'https://example.test/iso' });
 });
 
+test('a blocks frame (Phase 2 generative UI) parses to the typed event', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      sseResponse([
+        'event: token\ndata: {"delta":"Revenue grew."}\n\n',
+        'event: blocks\ndata: {"blocks":[{"type":"callout","tone":"success","title":"Up 12%","body":"QoQ."}]}\n\n',
+        'event: done\ndata: {"message_id":"m1","prompt_tokens":1,"completion_tokens":1,"no_answer":false,"grounding":"documents"}\n\n',
+      ]),
+    ),
+  );
+  const events: ChatSseEvent[] = [];
+  await streamChatSse('/api/v1/chats/c1/messages', { content: 'hi' }, (e) => events.push(e), new AbortController().signal);
+  const blocksEvent = events.find((e): e is Extract<ChatSseEvent, { type: 'blocks' }> => e.type === 'blocks');
+  expect(blocksEvent?.blocks).toEqual([
+    { type: 'callout', tone: 'success', title: 'Up 12%', body: 'QoQ.' },
+  ]);
+});
+
 test('an unknown event name (not agent_step) still surfaces as a typed error', async () => {
   vi.stubGlobal(
     'fetch',

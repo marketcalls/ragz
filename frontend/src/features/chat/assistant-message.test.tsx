@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import type { Block } from '@/api/types';
+
 import { AssistantMessage } from './assistant-message';
 import type { SourceChipData } from './source-panel';
 
@@ -72,4 +74,25 @@ test('clicking an inline [n] marker for a web citation does not open the drawer'
   );
   await user.click(screen.getByRole('button', { name: 'Citation 1' }));
   expect(onOpenDocument).not.toHaveBeenCalled();
+});
+
+// Persisted path (MessageNode.blocks from chat history GET) — must render
+// identically to the live SSE path, both through the same `blocks` prop.
+test('persisted blocks render below the text via BlockRenderer', () => {
+  const blocks: Block[] = [
+    { type: 'tag_badges', tags: [{ label: 'On track', tone: 'success' }] },
+  ];
+  render(<AssistantMessage content="Status update." sources={[]} blocks={blocks} />);
+  expect(screen.getByText('On track')).toBeInTheDocument();
+});
+
+test('blocks omitted or empty renders nothing extra', () => {
+  const { container: withoutProp } = render(
+    <AssistantMessage content="No blocks here." sources={[]} />,
+  );
+  const { container: withEmpty } = render(
+    <AssistantMessage content="No blocks here either." sources={[]} blocks={[]} />,
+  );
+  expect(withoutProp.querySelector('table')).not.toBeInTheDocument();
+  expect(withEmpty.querySelector('table')).not.toBeInTheDocument();
 });

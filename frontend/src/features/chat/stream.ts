@@ -1,5 +1,5 @@
 import { authFetch } from '@/api/client';
-import type { AgentStepInfo, CitationRef, DoneInfo, SourceRef } from '@/api/types';
+import type { AgentStepInfo, Block, CitationRef, DoneInfo, SourceRef } from '@/api/types';
 import { createSseParser, type SseMessage } from '@/lib/sse';
 
 export type ChatSseEvent =
@@ -7,6 +7,10 @@ export type ChatSseEvent =
   | { type: 'sources'; sources: SourceRef[] }
   | { type: 'token'; delta: string }
   | { type: 'citations'; citations: CitationRef[] }
+  // Phase 2 (in-chat generative UI): mirrors `citations`/`sources` -- emitted
+  // at most once per turn, only when the best-effort visualize step
+  // (backend chat/blocks_emit.py) actually produced blocks.
+  | { type: 'blocks'; blocks: Block[] }
   | { type: 'done'; done: DoneInfo }
   | { type: 'error'; detail: string }
   | { type: 'agent_step'; step: AgentStepInfo };
@@ -23,6 +27,8 @@ function toEvent(message: SseMessage): ChatSseEvent {
         return { type: 'token', delta: (data as { delta: string }).delta };
       case 'citations':
         return { type: 'citations', citations: (data as { citations: CitationRef[] }).citations };
+      case 'blocks':
+        return { type: 'blocks', blocks: (data as { blocks: Block[] }).blocks };
       case 'done':
         return { type: 'done', done: data as DoneInfo };
       case 'error':

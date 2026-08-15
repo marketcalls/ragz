@@ -20,6 +20,7 @@ const ws: WorkspaceOut = {
   strict_mode: false,
   enrichment_enabled: false,
   chunk_method: 'heading',
+  generative_ui_enabled: false,
 };
 
 function stubFetch(responseBody: WorkspaceOut) {

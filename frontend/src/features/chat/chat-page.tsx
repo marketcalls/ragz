@@ -230,6 +230,7 @@ export function ChatPage() {
                 key={m.id}
                 content={m.content}
                 sources={chipsFor(m)}
+                blocks={m.blocks}
                 stopped={m.stopped}
                 grounding={m.grounding}
                 validationFailed={m.validation_failed}

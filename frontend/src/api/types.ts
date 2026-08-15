@@ -102,6 +102,33 @@ export type ApiKeyCreatedOut = components['schemas']['ApiKeyCreatedOut'];
 // own webhook settings.
 export type BotIntegrationOut = components['schemas']['BotIntegrationOut'];
 
+// In-chat generative-UI blocks (Phase 2 design doc, chat/blocks.py): a
+// server-validated (Iron Rule 5), bounded, discriminated-on-`type` union.
+// Delivered two ways -- both carry the same shape and both feed the ONE
+// whitelist BlockRenderer (features/chat/blocks/block-renderer.tsx):
+//   (a) LIVE: the `blocks` SSE frame during a chat turn (see stream.ts).
+//   (b) PERSISTED: MessageNode.blocks from chat history GET.
+export type TextBlock = components['schemas']['TextBlock'];
+export type ChartBlock = components['schemas']['ChartBlock'];
+export type InfoCardBlock = components['schemas']['InfoCardBlock'];
+export type ImageCardBlock = components['schemas']['ImageCardBlock'];
+export type RankedListBlock = components['schemas']['RankedListBlock'];
+export type TagBadgesBlock = components['schemas']['TagBadgesBlock'];
+export type CalloutBlock = components['schemas']['CalloutBlock'];
+export type TableBlock = components['schemas']['TableBlock'];
+export type TabsBlock = components['schemas']['TabsBlock'];
+export type TabItem = components['schemas']['TabItem'];
+export type Block =
+  | TextBlock
+  | ChartBlock
+  | InfoCardBlock
+  | ImageCardBlock
+  | RankedListBlock
+  | TagBadgesBlock
+  | CalloutBlock
+  | TableBlock
+  | TabsBlock;
+
 export type DocumentStatus = DocumentOut['status'];
 
 // --- SSE payloads (outside OpenAPI) ---

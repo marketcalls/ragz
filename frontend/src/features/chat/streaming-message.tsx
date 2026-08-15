@@ -33,6 +33,7 @@ export function StreamingMessage({ stream }: { stream: ChatStreamState }) {
         <AssistantMessage
           content={stream.text}
           sources={stream.sources}
+          blocks={stream.blocks}
           noAnswer={stream.noAnswer}
           grounding={stream.grounding}
           validationFailed={stream.validationFailed}

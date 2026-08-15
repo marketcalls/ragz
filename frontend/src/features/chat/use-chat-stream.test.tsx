@@ -187,6 +187,54 @@ test('agentSteps resets to empty on a fresh send (back to IDLE)', async () => {
   expect(result.current.agentSteps).toEqual([]);
 });
 
+test('the reducer stores blocks from the blocks SSE frame and resets on the next send', async () => {
+  const blocks: ChatSseEvent[] = [
+    { type: 'token', delta: 'Revenue grew.' },
+    {
+      type: 'blocks',
+      blocks: [{ type: 'callout', tone: 'success', title: 'Up 12%', body: 'QoQ.' }],
+    },
+    {
+      type: 'done',
+      done: {
+        message_id: 'm6', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+        grounding: 'documents', validation_failed: false,
+      },
+    },
+  ];
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      for (const frame of blocks) onEvent(frame);
+    },
+  );
+
+  const { result } = renderHook(() => useChatStream('c1'), { wrapper });
+
+  await act(async () => {
+    result.current.send('how did revenue do?');
+  });
+
+  expect(result.current.blocks).toEqual([
+    { type: 'callout', tone: 'success', title: 'Up 12%', body: 'QoQ.' },
+  ]);
+
+  streamChatSse.mockImplementation(
+    async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
+      onEvent({
+        type: 'done',
+        done: {
+          message_id: 'm7', prompt_tokens: 1, completion_tokens: 1, no_answer: false,
+          grounding: 'documents', validation_failed: false,
+        },
+      });
+    },
+  );
+  await act(async () => {
+    result.current.send('a turn with no blocks');
+  });
+  expect(result.current.blocks).toEqual([]);
+});
+
 test('an error before any token leaves status=error with the detail and the pending user message', async () => {
   // Pre-stream failure (e.g. the refresh session died -> 401 on the POST):
   // streamChatSse emits a single error event and no token. The state must

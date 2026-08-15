@@ -8,6 +8,7 @@ const base: ChatStreamState = {
   text: '',
   sources: [],
   citations: [],
+  blocks: [],
   noAnswer: false,
   grounding: 'documents',
   validationFailed: false,
@@ -61,4 +62,19 @@ test('a retrieving state with agentSteps renders the latest step as a progress l
 test('a retrieving state with no agentSteps shows the spinner but no progress line', () => {
   render(<StreamingMessage stream={{ ...base, status: 'retrieving' }} />);
   expect(screen.getByText('Searching documents…')).toBeInTheDocument();
+});
+
+test('blocks captured off the live SSE frame render via BlockRenderer once streaming', () => {
+  render(
+    <StreamingMessage
+      stream={{
+        ...base,
+        status: 'streaming',
+        text: 'Revenue grew this quarter.',
+        blocks: [{ type: 'callout', tone: 'success', title: 'Up 12%', body: 'Quarter over quarter.' }],
+      }}
+    />,
+  );
+  expect(screen.getByText('Up 12%')).toBeInTheDocument();
+  expect(screen.getByText('Quarter over quarter.')).toBeInTheDocument();
 });

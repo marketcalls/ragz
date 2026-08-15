@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react';
 
+import type { Block } from '@/api/types';
 import { Markdown } from '@/components/markdown/markdown';
 
+import { BlockRenderer } from './blocks/block-renderer';
 import { CitationProvider } from './citation-context';
 import { NoAnswerNotice } from './no-answer-notice';
 import { SourcePanel, type SourceChipData } from './source-panel';
@@ -9,6 +11,7 @@ import { SourcePanel, type SourceChipData } from './source-panel';
 export function AssistantMessage({
   content,
   sources,
+  blocks,
   noAnswer = false,
   stopped = false,
   grounding = 'documents',
@@ -18,6 +21,9 @@ export function AssistantMessage({
 }: {
   content: string;
   sources: SourceChipData[];
+  // Phase 2 (in-chat generative UI): live (SSE `blocks` frame) or persisted
+  // (MessageNode.blocks) -- both render identically via BlockRenderer.
+  blocks?: Block[] | null;
   noAnswer?: boolean;
   stopped?: boolean;
   grounding?: string;
@@ -49,6 +55,7 @@ export function AssistantMessage({
       <CitationProvider onCitationClick={handleCitationClick} sources={sources}>
         <Markdown content={content} />
       </CitationProvider>
+      {blocks && blocks.length > 0 ? <BlockRenderer blocks={blocks} /> : null}
       {noAnswer ? (
         <NoAnswerNotice />
       ) : (
