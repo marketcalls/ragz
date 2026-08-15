@@ -26,16 +26,11 @@ from ragz.modules.documents.schemas import (
     MetadataFieldOut,
     MetadataValuesIn,
 )
-from ragz.modules.tenancy.context import (
-    TenantContext,
-    require_action,
-    require_role,
-)
+from ragz.modules.tenancy.context import TenantContext, require_action
 from ragz.worker.tasks import enqueue_delete, enqueue_ingest, enqueue_reindex
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): granular guards layered ON TOP of (not instead of) the
 # workspace-membership/ACL checks inside the service layer -- get_workspace_checked
 # etc. still run unconditionally.
@@ -58,6 +53,14 @@ FolderReadDep = Annotated[TenantContext, Depends(require_action("folders.read"))
 FolderUpdateDep = Annotated[TenantContext, Depends(require_action("folders.update"))]
 FolderDeleteDep = Annotated[TenantContext, Depends(require_action("folders.delete"))]
 MetadataManageDep = Annotated[TenantContext, Depends(require_action("workspace.metadata.manage"))]
+# sec RAGZ-PUB-01b: these two DECLARE documents.acl.manage / documents.approve
+# in api/policy.py but were still gated on require_role("admin") (auth-only
+# w.r.t. the granular catalog) -- a custom role granted the specific action
+# without the "admin" role tier could not use them, and the dependency-graph
+# enforcement gate (audit_route_enforcement) flags any route whose declared
+# action isn't actually wired via require_action(...).
+AclManageDep = Annotated[TenantContext, Depends(require_action("documents.acl.manage"))]
+ApproveDep = Annotated[TenantContext, Depends(require_action("documents.approve"))]
 
 
 def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
@@ -153,7 +156,7 @@ async def move_document_route(
 
 @router.put("/documents/{document_id}/acl", response_model=DocumentOut)
 async def set_document_acl(
-    document_id: UUID, body: AclUpdate, session: SessionDep, ctx: AdminDep
+    document_id: UUID, body: AclUpdate, session: SessionDep, ctx: AclManageDep
 ) -> DocumentOut:
     doc = await service.set_document_acl(session, ctx, document_id, body.acl_group_ids)
     return _serialize_document(doc, ctx)
@@ -161,7 +164,7 @@ async def set_document_acl(
 
 @router.put("/documents/{document_id}/approved", response_model=DocumentOut)
 async def set_document_approved(
-    document_id: UUID, body: ApprovedPatch, session: SessionDep, ctx: AdminDep
+    document_id: UUID, body: ApprovedPatch, session: SessionDep, ctx: ApproveDep
 ) -> DocumentOut:
     # Plan K Task 11: set_approved returns (doc, needs_reindex) instead of
     # enqueueing itself -- this route is the entrypoint layer allowed to

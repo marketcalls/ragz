@@ -10,11 +10,7 @@ from ragz.core.db import naive_utc
 from ragz.core.errors import ConflictError, NotFoundError
 from ragz.modules.models import service as models_service
 from ragz.modules.tenancy import service
-from ragz.modules.tenancy.context import (
-    TenantContext,
-    require_action,
-    require_role,
-)
+from ragz.modules.tenancy.context import TenantContext, require_action
 from ragz.modules.tenancy.reembed_models import ReembedJob
 from ragz.modules.tenancy.schemas import (
     EmbeddingModelPatch,
@@ -31,14 +27,21 @@ from ragz.worker.tasks import enqueue_enrichment_backfill, enqueue_reembed_works
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 # Task 13 (RBAC-2): PATCH (settings) is workspace configuration, distinct from
-# org administration (POST /workspaces, POST .../members stay AdminDep).
+# org administration (POST /workspaces, POST .../members).
 ConfigureDep = Annotated[TenantContext, Depends(require_action("workspace.configure"))]
 # Task 11 (RBAC-08): member list/change-role/remove — distinct from
-# workspace.create/POST-member (AdminDep, org administration).
+# workspace.create/POST-member (org administration, but its own granular
+# action per sec RAGZ-PUB-01b below).
 MembersReadDep = Annotated[TenantContext, Depends(require_action("workspace.members.read"))]
 MembersManageDep = Annotated[TenantContext, Depends(require_action("workspace.members.manage"))]
+# sec RAGZ-PUB-01b: both DECLARE their action in api/policy.py
+# (workspace.create / workspace.members.manage) but were still gated on
+# require_role("admin") -- converted so a custom role granted the specific
+# action (without the "admin" role tier) can use them, and so
+# audit_route_enforcement's dependency-graph walk finds the declared action
+# actually wired.
+CreateDep = Annotated[TenantContext, Depends(require_action("workspace.create"))]
 # sec RAGZ-PUB-01: GET /workspaces and GET .../reembed-status DECLARE
 # workspace.read but were auth-only (CtxDep); POST .../reembed DECLARES
 # workspace.reembed but enforced workspace.configure. Enforce the declared
@@ -49,7 +52,7 @@ ReembedDep = Annotated[TenantContext, Depends(require_action("workspace.reembed"
 
 
 @router.post("", status_code=201, response_model=WorkspaceOut)
-async def create(body: WorkspaceCreate, session: SessionDep, ctx: AdminDep) -> WorkspaceOut:
+async def create(body: WorkspaceCreate, session: SessionDep, ctx: CreateDep) -> WorkspaceOut:
     ws = await service.create_workspace(session, ctx, body.name)
     return WorkspaceOut.model_validate(ws)
 
@@ -61,7 +64,7 @@ async def list_(session: SessionDep, ctx: ReadDep) -> list[WorkspaceOut]:
 
 @router.post("/{workspace_id}/members", status_code=204)
 async def add_member(
-    workspace_id: UUID, body: MemberAdd, session: SessionDep, ctx: AdminDep
+    workspace_id: UUID, body: MemberAdd, session: SessionDep, ctx: MembersManageDep
 ) -> None:
     await service.add_member(session, ctx, workspace_id, body.user_id, body.role)
 

@@ -28,24 +28,25 @@ def _normalize_path(path: str) -> str:
     return _PATH_CONVERTER_RE.sub(r"{\1}", path)
 
 
-def _iter_hidden_api_routes(
+def _iter_api_routes(
     routes: Iterable[Any], prefix: str = ""
 ) -> Iterator[tuple[str, APIRoute]]:
     """Recursively walk the router tree rooted at `routes`, yielding
-    (full_path, route) for every APIRoute with include_in_schema=False.
+    (full_path, route) for every mounted APIRoute, regardless of
+    include_in_schema. Descends into anything that looks like a nested
+    router: Starlette Mount-style nodes exposing `.routes` directly, and
+    FastAPI's private `_IncludedRouter` wrapper, which instead exposes the
+    sub-router (with its own `.routes`) via `.original_router` and the path
+    prefix it was mounted under via `.include_context.prefix`.
 
-    This exists purely as a supplementary safety net -- see the docstring on
-    audit_route_policy for why app.openapi() remains the primary enumeration
-    source and this walk is not. Descends into anything that looks like a
-    nested router: Starlette Mount-style nodes exposing `.routes` directly,
-    and FastAPI's private `_IncludedRouter` wrapper, which instead exposes
-    the sub-router (with its own `.routes`) via `.original_router` and the
-    path prefix it was mounted under via `.include_context.prefix`.
+    Shared by `_iter_hidden_api_routes` (the include_in_schema=False safety
+    net below) and `audit_route_enforcement`'s route index (sec
+    RAGZ-PUB-01b), which needs the actual mounted `APIRoute` object -- not
+    just its OpenAPI schema entry -- to walk `route.dependant`.
     """
     for route in routes:
         if isinstance(route, APIRoute):
-            if not route.include_in_schema:
-                yield prefix + route.path, route
+            yield prefix + route.path, route
             continue
 
         nested_prefix = prefix
@@ -59,7 +60,22 @@ def _iter_hidden_api_routes(
             if original_router is not None:
                 nested = getattr(original_router, "routes", None)
         if nested:
-            yield from _iter_hidden_api_routes(nested, nested_prefix)
+            yield from _iter_api_routes(nested, nested_prefix)
+
+
+def _iter_hidden_api_routes(
+    routes: Iterable[Any], prefix: str = ""
+) -> Iterator[tuple[str, APIRoute]]:
+    """Recursively walk the router tree rooted at `routes`, yielding
+    (full_path, route) for every APIRoute with include_in_schema=False.
+
+    This exists purely as a supplementary safety net -- see the docstring on
+    audit_route_policy for why app.openapi() remains the primary enumeration
+    source and this walk is not.
+    """
+    for full_path, route in _iter_api_routes(routes, prefix):
+        if not route.include_in_schema:
+            yield full_path, route
 
 # Two distinct reasons a route lands here, both meaning "no per-action policy
 # decision for audit_route_policy to enforce":
@@ -276,4 +292,99 @@ def audit_route_policy(app: FastAPI) -> list[str]:
                 gaps.append(f"{method} {path} (hidden route, include_in_schema=False)")
             elif action not in PERMISSIONS:
                 gaps.append(f"{method} {path} (hidden route, unknown action {action!r})")
+    return gaps
+
+
+# sec RAGZ-PUB-01b: audit_route_policy above only proves a route has a
+# catalog entry (method, path) -> action -- it never inspects the route's
+# actual FastAPI dependencies, so a route could declare e.g. "documents.pin"
+# in ROUTE_POLICY while its handler wires only `require_role("admin")` (or
+# bare auth) and vacuously "pass". This is that missing check: it proves
+# ENFORCEMENT, not just cataloging.
+#
+# Routes here enforce their declared action through a mechanism OTHER than
+# `Depends(require_action(...))`, so `audit_route_enforcement` cannot find a
+# `__ragz_required_action__` tag in their dependency graph and must not flag
+# them. Each entry documents HOW it's actually enforced. No other route may
+# be added here silently -- any other gap the gate reports must be fixed by
+# wiring `require_action`, not by extending this set.
+_ENFORCEMENT_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset({
+    # API-key auth (external.py::api_key_context ->
+    # build_verified_principal_context): every request revalidates the key's
+    # backing user still has a live membership in the key's workspace AND
+    # still holds chat.generate (or is superadmin) -- RBAC-02. There is no
+    # require_action("chat.generate") in the dependency graph because the
+    # check happens inside the API-key principal-resolution dependency
+    # itself, not as a separate guard.
+    ("POST", "/external/v1/chat"),
+    ("POST", "/external/v1/openai/chat/completions"),
+    # Same API-key auth path as above. Declares "models.read" in
+    # ROUTE_POLICY, but the actual gate is "does this key's workspace
+    # membership resolve" (api_key_context/build_verified_principal_context)
+    # -- there is no separate models.read permission check on this route,
+    # by design: a key scoped to a workspace may always see that workspace's
+    # one configured chat model.
+    ("GET", "/external/v1/openai/models"),
+})
+
+
+def _iter_dependant_calls(dependant: Any) -> Iterator[Any]:
+    """Recursively yield every dependency callable (`Dependant.call`) in a
+    route's FastAPI dependency graph. `route.dependant` is the root
+    `Dependant` FastAPI built for the endpoint; `.dependencies` is the list
+    of `Depends(...)` it (transitively) resolves, each itself a `Dependant`
+    with its own nested `.dependencies` -- e.g. `Depends(require_action(...))`
+    wraps `Depends(get_tenant_context)` wraps `Depends(get_session)`. Walking
+    this is how `audit_route_enforcement` finds a `require_action` guard
+    wired ANYWHERE in the graph, not just as the route's direct dependency.
+    """
+    for sub in getattr(dependant, "dependencies", None) or ():
+        call = getattr(sub, "call", None)
+        if call is not None:
+            yield call
+        yield from _iter_dependant_calls(sub)
+
+
+def audit_route_enforcement(app: FastAPI) -> list[str]:
+    """CI gate (sec RAGZ-PUB-01b): every ROUTE_POLICY route must actually
+    ENFORCE the action it declares, not merely be cataloged under it.
+
+    For every (method, path) -> action entry in ROUTE_POLICY (except the
+    documented `_ENFORCEMENT_EXCEPTIONS`), this locates the mounted
+    `APIRoute` (via `_iter_api_routes`, the same router-tree walk
+    `audit_route_policy` uses for its hidden-route safety net) and recursively
+    walks `route.dependant` (`_iter_dependant_calls`) collecting every
+    `__ragz_required_action__` tag `require_action(...)` stamps onto its
+    `guard` closure (see tenancy/context.py). The route passes iff its
+    declared action appears among the tags found. This deliberately does NOT
+    care how many OTHER actions/guards are also wired -- only that the
+    declared one is present somewhere in the graph.
+    """
+    gaps: list[str] = []
+    route_index: dict[tuple[str, str], APIRoute] = {}
+    for full_path, route in _iter_api_routes(app.router.routes):
+        path = _normalize_path(full_path)
+        for method in route.methods or ():
+            if method in _HTTP_METHODS_UPPER:
+                route_index[(method, path)] = route
+
+    for (method, path), action in ROUTE_POLICY.items():
+        if (method, path) in _ENFORCEMENT_EXCEPTIONS:
+            continue
+        matched_route = route_index.get((method, path))
+        if matched_route is None:
+            gaps.append(
+                f"{method} {path}: declared in ROUTE_POLICY but no mounted route found"
+            )
+            continue
+        enforced_actions = {
+            getattr(call, "__ragz_required_action__", None)
+            for call in _iter_dependant_calls(matched_route.dependant)
+        }
+        enforced_actions.discard(None)
+        if action not in enforced_actions:
+            gaps.append(
+                f"{method} {path}: declares {action!r} but no "
+                f"require_action({action!r}) in dependency graph"
+            )
     return gaps

@@ -168,6 +168,10 @@ def require_role(*roles: str) -> Callable[..., Awaitable[TenantContext]]:
             raise AuthorizationError(f"requires role in {sorted(roles)}")
         return ctx
 
+    # sec RAGZ-PUB-01b: tag the closure with what it enforces so
+    # api/policy.py's dependency-graph enforcement gate can identify it by
+    # attribute instead of fragile closure-cell inspection.
+    guard.__ragz_required_roles__ = frozenset(roles)  # type: ignore[attr-defined]
     return guard
 
 
@@ -205,6 +209,11 @@ def require_action(
             raise AuthorizationError(f"requires permission {action}")
         return ctx
 
+    # sec RAGZ-PUB-01b: tag the closure with the action it enforces so
+    # api/policy.py's dependency-graph enforcement gate can prove a route
+    # actually enforces its ROUTE_POLICY-declared action, not merely that the
+    # action is cataloged.
+    guard.__ragz_required_action__ = action  # type: ignore[attr-defined]
     return guard
 
 
