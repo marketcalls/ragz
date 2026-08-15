@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
+from ragz.core.errors import BadRequestError
 from ragz.modules.email import service as email_service
 from ragz.modules.email import templates
 from ragz.modules.email.schemas import (
@@ -42,6 +43,26 @@ _SES_SECRET = "ses_secret_key"  # noqa: S105 - a secret NAME, not a secret
 _SECRET_NAMES = [_SMTP_SECRET, _SES_SECRET]
 
 
+def _reject_plaintext_smtp_in_public_deployments(config: EmailConfig, settings: Settings) -> None:
+    """RAGZ-PUB-05 follow-up: `smtp_use_tls=false` means the SMTP session
+    (including the authenticated username/password and the message body)
+    goes out in the clear. `EmailConfig` is DB-stored, not part of
+    `Settings`, so it can't be caught by the Settings fail-closed validator
+    (`core/config.py`) -- this is the single write path for the config
+    (`PUT /admin/email`), so enforcing it here means it's checked exactly
+    once, regardless of which sender (`smtp_sender.py`) later consumes the
+    stored config. dev/test stay permissive; production/staging reject."""
+    if (
+        settings.environment in ("production", "staging")
+        and config.provider == "smtp"
+        and not config.smtp_use_tls
+    ):
+        raise BadRequestError(
+            "smtp_use_tls=false is not permitted in production/staging -- plaintext SMTP "
+            "would send credentials and message bodies unencrypted"
+        )
+
+
 async def _to_out(session: AsyncSession) -> EmailConfigOut:
     config = await settings_service.get_email_config(session)
     present = await secrets_service.existing_secret_names(session, _SECRET_NAMES)
@@ -62,6 +83,7 @@ async def put_email_config_route(
     body: EmailConfigUpdate, session: SessionDep, settings: SettingsDep, ctx: SuperadminDep,
 ) -> EmailConfigOut:
     config = EmailConfig(**body.model_dump(exclude={"smtp_password", "ses_secret_key"}))
+    _reject_plaintext_smtp_in_public_deployments(config, settings)
     await settings_service.update_email_config(session, config, commit=False)
     if body.smtp_password is not None:
         await secrets_service.set_secret(

@@ -5,6 +5,9 @@ from urllib.parse import urlsplit
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ragz.core.crypto import load_kek
+from ragz.core.errors import SecretsError
+
 # Known dev-only default credentials (RAGZ-PUB-05): a production deployment
 # that still carries one of these literal values almost certainly means an
 # operator forgot to override it, not that they deliberately chose it -- so
@@ -12,6 +15,41 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _DEV_DEFAULT_DATABASE_URL = "postgresql+asyncpg://ragz:ragz@localhost:55432/ragz"
 _DEV_DEFAULT_MINIO_SECRET_KEY = "ragz-dev-123"  # noqa: S105 (dev-only default literal, compared not used)
 _DEV_DEFAULT_LITELLM_MASTER_KEY = "sk-ragz-dev-master"  # noqa: S105 (dev-only default literal, compared not used)
+# RAGZ-PUB-05 follow-up: the dev default database_url pairs the username
+# "ragz" with the password "ragz" -- an operator who repoints the HOST (e.g.
+# to a managed Postgres instance) but forgets to also change the credentials
+# is just as exposed as one who left the whole URL untouched. The validator
+# below checks the parsed userinfo components, not the literal string, so it
+# catches "ragz:ragz@" against ANY host/port/db name.
+_DEV_DEFAULT_DB_USER = "ragz"
+_DEV_DEFAULT_DB_PASSWORD = "ragz"  # noqa: S105 (dev-only default literal, compared not used)
+# RAGZ-PUB-05 follow-up: floor for machine-generated secrets (pepper, MinIO
+# secret key, LiteLLM master key). 16 chars is a defensible minimum -- a
+# randomly generated 16-char secret from a reasonable alphabet already clears
+# ~90+ bits of entropy, well above what's brute-forceable, while still being
+# short enough not to reject real (if unusually terse) production secrets.
+# It is a length FLOOR, not an entropy/complexity check -- deliberately
+# simple and fully deterministic.
+_MIN_SECRET_LENGTH = 16
+
+
+def _check_https_origin(value: str, field_name: str, errors: list[str]) -> None:
+    """RAGZ-PUB-05 follow-up: production/staging origins must be an exact
+    ``https://<host>`` origin -- not merely "not http". Any other scheme
+    (``ftp://``, ``javascript:``, no scheme at all) or a missing hostname is
+    rejected. Malformed values that `urlsplit` itself can't parse are also
+    rejected rather than allowed to slip through."""
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        errors.append(f"{field_name} is not a parseable URL (got {value!r})")
+        return
+    if parsed.scheme != "https" or not parsed.hostname:
+        errors.append(
+            f"{field_name} must be an https:// origin with a host (got {value!r}) -- "
+            "production/staging reject any other scheme (http, ftp, javascript:, ...) "
+            "or a missing/empty host"
+        )
 
 
 class Settings(BaseSettings):
@@ -101,42 +139,95 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _production_fails_closed(self) -> "Settings":
-        """RAGZ-PUB-05: production must not silently run with dev defaults.
-        dev/test/staging stay permissive; environment == "production" rejects
-        each known-insecure condition below with a clear message."""
-        if self.environment != "production":
+        """RAGZ-PUB-05: production/staging must not silently run with dev
+        defaults or otherwise-insecure config. dev/test stay permissive;
+        environment in ("production", "staging") -- both are public
+        deployment modes -- rejects each known-insecure condition below with
+        a clear message. staging was originally exempted from this guard;
+        that was itself a finding (a public staging deployment is just as
+        exposed as production) so it now shares the exact same checks."""
+        if self.environment not in ("production", "staging"):
             return self
 
         errors: list[str] = []
+
+        # -- api_key_pepper: non-empty AND long enough --
         if not self.api_key_pepper.strip():
             errors.append(
-                "api_key_pepper is empty -- production must set RAGZ_API_KEY_PEPPER "
+                "api_key_pepper is empty -- production/staging must set RAGZ_API_KEY_PEPPER "
                 "(the plain-SHA256 fallback is not acceptable outside dev/test)"
             )
+        elif len(self.api_key_pepper) < _MIN_SECRET_LENGTH:
+            errors.append(
+                f"api_key_pepper is only {len(self.api_key_pepper)} chars -- "
+                f"production/staging require at least {_MIN_SECRET_LENGTH}"
+            )
+
+        # -- database_url: reject the default "ragz:ragz" CREDENTIALS, not just
+        # the exact default URL string -- a re-hosted default is just as weak. --
+        try:
+            db_parsed = urlsplit(self.database_url)
+        except ValueError:
+            errors.append(f"database_url is not a parseable URL (got {self.database_url!r})")
+        else:
+            _default_creds = (
+                db_parsed.username == _DEV_DEFAULT_DB_USER
+                and db_parsed.password == _DEV_DEFAULT_DB_PASSWORD
+            )
+            if _default_creds:
+                errors.append(
+                    "database_url uses the default 'ragz:ragz' credentials (checked by "
+                    "username/password, independent of host/port/db name) -- set "
+                    "RAGZ_DATABASE_URL with unique production credentials"
+                )
+        # Belt-and-suspenders: still reject the exact literal default too (covers
+        # any future default whose credentials aren't a clean userinfo pair).
         if self.database_url == _DEV_DEFAULT_DATABASE_URL:
             errors.append("database_url is still the dev default -- set RAGZ_DATABASE_URL")
+
+        # -- minio_secret_key / litellm_master_key: reject the known dev-default
+        # token AND enforce the same minimum length as any other secret. --
         if self.minio_secret_key == _DEV_DEFAULT_MINIO_SECRET_KEY:
             errors.append("minio_secret_key is still the dev default -- set RAGZ_MINIO_SECRET_KEY")
+        if len(self.minio_secret_key) < _MIN_SECRET_LENGTH:
+            errors.append(
+                f"minio_secret_key is only {len(self.minio_secret_key)} chars -- "
+                f"production/staging require at least {_MIN_SECRET_LENGTH}"
+            )
         if self.litellm_master_key == _DEV_DEFAULT_LITELLM_MASTER_KEY:
             errors.append(
                 "litellm_master_key is still the dev default -- set RAGZ_LITELLM_MASTER_KEY"
             )
-        if self.public_api_base_url.startswith("http://"):
-            errors.append("public_api_base_url uses http:// -- production requires https")
-        elif not urlsplit(self.public_api_base_url).hostname:
-            # RAGZ-PUB-09 review (Imp1): a host-less public_api_base_url (e.g.
-            # "https://" or empty) would make trusted_hosts_for fall open to
-            # ["*"], silently disabling the Host allowlist. Reject at load.
+        if len(self.litellm_master_key) < _MIN_SECRET_LENGTH:
             errors.append(
-                "public_api_base_url has no parseable host -- set a full "
-                "https://<host> origin (the Host allowlist derives from it)"
+                f"litellm_master_key is only {len(self.litellm_master_key)} chars -- "
+                f"production/staging require at least {_MIN_SECRET_LENGTH}"
             )
-        if self.frontend_base_url.startswith("http://"):
-            errors.append("frontend_base_url uses http:// -- production requires https")
+
+        # -- public_api_base_url / frontend_base_url: exact https:// origin with a
+        # host -- not merely "not http://". Catches ftp://, javascript:, etc. --
+        _check_https_origin(self.public_api_base_url, "public_api_base_url", errors)
+        _check_https_origin(self.frontend_base_url, "frontend_base_url", errors)
+
+        # -- kek_file: non-empty path that actually resolves to a valid 32-byte
+        # KEK. load_kek() is the single sanctioned KEK-loading path (core/crypto.py);
+        # reusing it here means "does the validator accept this kek_file" and "will
+        # the app actually be able to decrypt secrets with it" can never disagree. --
         if not self.kek_file.strip():
             errors.append(
-                "kek_file is empty -- production must point RAGZ_KEK_FILE at a real KEK source"
+                "kek_file is empty -- production/staging must point RAGZ_KEK_FILE at a "
+                "real KEK source"
             )
+        else:
+            try:
+                load_kek(self.kek_file)
+            except (SecretsError, OSError, ValueError) as exc:
+                # SecretsError: missing file or wrong-length key (load_kek's own
+                # checks). OSError: exists-but-unreadable (permission denied,
+                # etc.) -- load_kek() only typed-guards the missing-file case.
+                # ValueError: malformed content that isn't even valid base64
+                # (base64.binascii.Error is a ValueError subclass).
+                errors.append(f"kek_file is not a valid, readable KEK source: {exc}")
 
         if errors:
             raise ValueError("insecure production configuration: " + "; ".join(errors))

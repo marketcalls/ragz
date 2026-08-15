@@ -1,10 +1,12 @@
-from typing import Any
+from collections.abc import Callable, Iterator
+from typing import Any, cast
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragz.core.config import Settings
+from ragz.core.config import Settings, get_settings
 from ragz.modules.auth.models import User
 from ragz.modules.email import service as email_service
 from ragz.modules.secrets import service as secrets_service
@@ -13,6 +15,33 @@ from ragz.modules.secrets import service as secrets_service
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": "pw123456"})
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.fixture
+def as_environment(
+    client: httpx.AsyncClient, test_settings: Settings
+) -> Iterator[Callable[[str], None]]:
+    """RAGZ-PUB-05 follow-up: lets a single test temporarily swap the
+    `get_settings` override on the already-built `client` app to a different
+    `environment`, so the production/staging-only SMTP-TLS gate
+    (`PUT /admin/email`) can be exercised without standing up a second
+    app/engine/client stack. Only `environment` changes -- everything else
+    (kek_file, etc.) stays `test_settings`'s, since the Settings fail-closed
+    validator itself is covered separately in `tests/core/test_production_config.py`
+    and isn't what this fixture is exercising. Restores the original
+    `test_settings` override afterward so later tests in the same run aren't
+    affected."""
+    transport = client._transport  # noqa: SLF001
+    assert isinstance(transport, httpx.ASGITransport)
+    app = cast(FastAPI, transport.app)
+
+    def _set(environment: str) -> None:
+        app.dependency_overrides[get_settings] = lambda: test_settings.model_copy(
+            update={"environment": environment}
+        )
+
+    yield _set
+    app.dependency_overrides[get_settings] = lambda: test_settings
 
 
 async def test_get_defaults(
@@ -165,4 +194,70 @@ async def test_send_test_email_misconfigured_provider_is_problem_json_not_500(
     assert r.headers["content-type"].startswith("application/problem+json")
     body = r.json()
     assert body["title"] == "Email delivery error"
+
+
+_SMTP_PLAINTEXT_PAYLOAD: dict[str, Any] = {
+    "provider": "smtp",
+    "from_email": "noreply@ragz.example",
+    "smtp_host": "smtp.example.com",
+    "smtp_use_tls": False,
+}
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+async def test_put_rejects_plaintext_smtp_in_public_deployments(
+    client: httpx.AsyncClient,
+    superadmin_headers: dict[str, str],
+    as_environment: Callable[[str], None],
+    environment: str,
+) -> None:
+    as_environment(environment)
+    r = await client.put(
+        "/api/v1/admin/email", json=_SMTP_PLAINTEXT_PAYLOAD, headers=superadmin_headers
+    )
+    assert r.status_code == 400
+    assert r.headers["content-type"].startswith("application/problem+json")
+    assert "smtp_use_tls" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+async def test_put_allows_tls_smtp_in_public_deployments(
+    client: httpx.AsyncClient,
+    superadmin_headers: dict[str, str],
+    as_environment: Callable[[str], None],
+    environment: str,
+) -> None:
+    as_environment(environment)
+    payload = dict(_SMTP_PLAINTEXT_PAYLOAD, smtp_use_tls=True)
+    r = await client.put("/api/v1/admin/email", json=payload, headers=superadmin_headers)
+    assert r.status_code == 200
+    assert r.json()["smtp_use_tls"] is True
+
+
+async def test_put_allows_plaintext_smtp_outside_production_staging(
+    client: httpx.AsyncClient, superadmin_headers: dict[str, str]
+) -> None:
+    # `client`'s default settings fixture uses environment="test" -- must stay
+    # permissive (dev/test never get this gate) so local dev and CI aren't broken.
+    r = await client.put(
+        "/api/v1/admin/email", json=_SMTP_PLAINTEXT_PAYLOAD, headers=superadmin_headers
+    )
+    assert r.status_code == 200
+    assert r.json()["smtp_use_tls"] is False
+
+
+@pytest.mark.parametrize("environment", ["production", "staging"])
+async def test_put_allows_ses_provider_regardless_of_smtp_tls_flag(
+    client: httpx.AsyncClient,
+    superadmin_headers: dict[str, str],
+    as_environment: Callable[[str], None],
+    environment: str,
+) -> None:
+    # The gate is specifically about the SMTP provider; a stale/default
+    # smtp_use_tls=False alongside provider="ses" is irrelevant (SMTP isn't
+    # even in use) and must not be rejected.
+    as_environment(environment)
+    payload = dict(_SMTP_PLAINTEXT_PAYLOAD, provider="ses")
+    r = await client.put("/api/v1/admin/email", json=payload, headers=superadmin_headers)
+    assert r.status_code == 200
 

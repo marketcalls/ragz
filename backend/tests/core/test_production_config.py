@@ -1,78 +1,188 @@
-"""RAGZ-PUB-05 (release blocker): production must fail closed instead of
-silently running with dev defaults. `environment` is now a closed enum, and
-`environment == "production"` triggers a model_validator that rejects an
-empty pepper, any known dev-default credential, http:// public URLs, and an
-empty KEK source. dev/test/staging stay permissive (no regression for local
-dev or CI)."""
+"""RAGZ-PUB-05 (release blocker) + follow-up hardening: production/staging
+must fail closed instead of silently running with dev defaults or otherwise
+insecure config. `environment` is a closed enum, and `environment in
+("production", "staging")` triggers a model_validator that rejects: an empty
+or too-short pepper; the default 'ragz:ragz' DB credentials (checked by
+parsed username/password, independent of host/port/db name); dev-default
+MinIO/LiteLLM tokens or too-short secrets; any public_api_base_url /
+frontend_base_url that isn't an exact https:// origin with a host (ftp://,
+javascript:, http://, hostless); and an empty/missing/unreadable/wrong-length
+KEK file. dev/test stay permissive (no regression for local dev or CI).
+staging was originally exempted from this validator -- that was itself part
+of the finding, since a public staging deployment is exposed the same way
+production is -- so it now shares the exact same checks (see the `staging`
+variants below)."""
+
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from ragz.core.config import Settings
-
-# A fully "safe" production configuration -- every field the validator checks
-# is overridden away from its dev default.
-_SAFE_PRODUCTION_KWARGS: dict[str, object] = {
-    "_env_file": None,
-    "environment": "production",
-    "api_key_pepper": "a-real-random-pepper-value",
-    "database_url": "postgresql+asyncpg://ragz_prod:s3cret-pw@db.internal:5432/ragz",
-    "minio_secret_key": "a-real-minio-secret",
-    "litellm_master_key": "sk-a-real-litellm-master-key",
-    "public_api_base_url": "https://api.example.com",
-    "frontend_base_url": "https://app.example.com",
-    "kek_file": "/etc/ragz/kek",
-}
+from ragz.modules.secrets.crypto import ensure_kek
 
 
-def test_production_empty_pepper_raises() -> None:
-    kwargs = dict(_SAFE_PRODUCTION_KWARGS, api_key_pepper="")
+@pytest.fixture
+def valid_kek_file(tmp_path: Path) -> str:
+    path = tmp_path / "kek"
+    ensure_kek(str(path))
+    return str(path)
+
+
+@pytest.fixture
+def safe_kwargs(valid_kek_file: str) -> dict[str, object]:
+    # A fully "safe" production configuration -- every field the validator
+    # checks is overridden away from its dev default / insecure value.
+    return {
+        "_env_file": None,
+        "environment": "production",
+        "api_key_pepper": "a-real-random-pepper-value",
+        "database_url": "postgresql+asyncpg://ragz_prod:s3cret-pw@db.internal:5432/ragz",
+        "minio_secret_key": "a-real-minio-secret",
+        "litellm_master_key": "sk-a-real-litellm-master-key",
+        "public_api_base_url": "https://api.example.com",
+        "frontend_base_url": "https://app.example.com",
+        "kek_file": valid_kek_file,
+    }
+
+
+@pytest.mark.parametrize("env", ["production", "staging"])
+def test_empty_pepper_raises(safe_kwargs: dict[str, object], env: str) -> None:
+    kwargs = dict(safe_kwargs, environment=env, api_key_pepper="")
     with pytest.raises(ValueError, match="api_key_pepper"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_dev_default_minio_secret_raises() -> None:
-    kwargs = dict(_SAFE_PRODUCTION_KWARGS, minio_secret_key="ragz-dev-123")  # noqa: S106
+def test_short_pepper_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, api_key_pepper="short1")
+    with pytest.raises(ValueError, match="api_key_pepper"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_dev_default_minio_secret_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, minio_secret_key="ragz-dev-123")  # noqa: S106
     with pytest.raises(ValueError, match="minio_secret_key"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_dev_default_litellm_master_key_raises() -> None:
-    kwargs = dict(_SAFE_PRODUCTION_KWARGS, litellm_master_key="sk-ragz-dev-master")  # noqa: S106
+def test_short_minio_secret_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, minio_secret_key="short1")  # noqa: S106
+    with pytest.raises(ValueError, match="minio_secret_key"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_dev_default_litellm_master_key_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, litellm_master_key="sk-ragz-dev-master")  # noqa: S106
     with pytest.raises(ValueError, match="litellm_master_key"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_dev_default_database_url_raises() -> None:
+def test_short_litellm_master_key_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, litellm_master_key="sk-short")  # noqa: S106
+    with pytest.raises(ValueError, match="litellm_master_key"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_dev_default_database_url_raises(safe_kwargs: dict[str, object]) -> None:
     kwargs = dict(
-        _SAFE_PRODUCTION_KWARGS,
+        safe_kwargs,
         database_url="postgresql+asyncpg://ragz:ragz@localhost:55432/ragz",
     )
     with pytest.raises(ValueError, match="database_url"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_http_public_api_base_url_raises() -> None:
-    kwargs = dict(_SAFE_PRODUCTION_KWARGS, public_api_base_url="http://api.example.com")
+def test_default_db_credentials_on_other_host_raises(safe_kwargs: dict[str, object]) -> None:
+    # RAGZ-PUB-05 follow-up: the exact-literal check alone missed this -- same
+    # default 'ragz:ragz' credentials, but re-hosted to a "real looking" host.
+    kwargs = dict(
+        safe_kwargs,
+        database_url="postgresql+asyncpg://ragz:ragz@postgres:5432/ragz",
+    )
+    with pytest.raises(ValueError, match="database_url"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_default_db_credentials_different_port_and_db_raises(
+    safe_kwargs: dict[str, object],
+) -> None:
+    kwargs = dict(
+        safe_kwargs,
+        database_url="postgresql+asyncpg://ragz:ragz@db.prod.internal:6543/otherdb",
+    )
+    with pytest.raises(ValueError, match="database_url"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_http_public_api_base_url_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, public_api_base_url="http://api.example.com")
     with pytest.raises(ValueError, match="public_api_base_url"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_http_frontend_base_url_raises() -> None:
-    kwargs = dict(_SAFE_PRODUCTION_KWARGS, frontend_base_url="http://app.example.com")
+@pytest.mark.parametrize(
+    "value",
+    ["ftp://api.example.com", "javascript:alert(1)", "https://", "not-a-url", ""],
+)
+def test_public_api_base_url_non_https_or_hostless_raises(
+    safe_kwargs: dict[str, object], value: str
+) -> None:
+    kwargs = dict(safe_kwargs, public_api_base_url=value)
+    with pytest.raises(ValueError, match="public_api_base_url"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_http_frontend_base_url_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, frontend_base_url="http://app.example.com")
     with pytest.raises(ValueError, match="frontend_base_url"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_empty_kek_file_raises() -> None:
-    kwargs = dict(_SAFE_PRODUCTION_KWARGS, kek_file="")
+@pytest.mark.parametrize(
+    "value",
+    ["ftp://app.example.com", "javascript:alert(1)", "https://", "not-a-url", ""],
+)
+def test_frontend_base_url_non_https_or_hostless_raises(
+    safe_kwargs: dict[str, object], value: str
+) -> None:
+    kwargs = dict(safe_kwargs, frontend_base_url=value)
+    with pytest.raises(ValueError, match="frontend_base_url"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_empty_kek_file_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(safe_kwargs, kek_file="")
     with pytest.raises(ValueError, match="kek_file"):
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_production_all_safe_values_constructs() -> None:
-    s = Settings(**_SAFE_PRODUCTION_KWARGS)  # type: ignore[arg-type]
-    assert s.environment == "production"
+def test_missing_kek_file_raises(safe_kwargs: dict[str, object], tmp_path: Path) -> None:
+    kwargs = dict(safe_kwargs, kek_file=str(tmp_path / "does-not-exist"))
+    with pytest.raises(ValueError, match="kek_file"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_corrupt_kek_file_raises(safe_kwargs: dict[str, object], tmp_path: Path) -> None:
+    # Right path, wrong content: not a valid base64-encoded 32-byte key.
+    path = tmp_path / "bad_kek"
+    path.write_bytes(b"too-short")
+    kwargs = dict(safe_kwargs, kek_file=str(path))
+    with pytest.raises(ValueError, match="kek_file"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("env", ["production", "staging"])
+def test_all_safe_values_constructs(safe_kwargs: dict[str, object], env: str) -> None:
+    s = Settings(**dict(safe_kwargs, environment=env))  # type: ignore[arg-type]
+    assert s.environment == env
+
+
+def test_staging_shares_the_same_checks_as_production(safe_kwargs: dict[str, object]) -> None:
+    # RAGZ-PUB-05 follow-up: staging used to be exempt from this validator
+    # entirely -- it must now reject the same insecure config production does.
+    kwargs = dict(safe_kwargs, environment="staging", api_key_pepper="")
+    with pytest.raises(ValueError, match="api_key_pepper"):
+        Settings(**kwargs)  # type: ignore[arg-type]
 
 
 def test_dev_defaults_still_construct_without_error() -> None:
