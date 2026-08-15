@@ -2121,6 +2121,39 @@ wheels = [
 ]
 
 [[package]]
+name = "liteparse"
+version = "2.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/80/f87b6a252479d91d6243feaa47e022fc4f251a29e94b8f3169fbe4603691/liteparse-2.12.0.tar.gz", hash = "sha256:c1d3615cf97ba0d74e992fe9f4cc005cbb157221e6cc1c28465bc99730e406f7", size = 462970, upload-time = "2026-08-13T04:40:56.767Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/b1/6789e1688c8dddc47d1ec8cb2a57f5ff0d1c03711d827852f3bd097bcb9a/liteparse-2.12.0-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:54188e413b02611d7154a72af5cc723cfc32b8faaa40f7ce77c72787b5f393b8", size = 12512599, upload-time = "2026-08-13T04:39:57.369Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/17/298aa215dbf2517739ef6ec4e79efa60ae80e0fe2ce6b36906ba10ed3a2a/liteparse-2.12.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:bfe2141e8d44168dc0e0c86b25428c9eafeb1da1023bd4625b2b40087aaa8a7a", size = 11907895, upload-time = "2026-08-13T04:39:59.683Z" },
+    { url = "https://files.pythonhosted.org/packages/45/84/4d133e190a14c2be9d86f76e580eec2b3f644ffdee11e838a494a1c3f650/liteparse-2.12.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:a81bf637b573335e9462c067a920f9ca3815a26decc563c694b404498eee0c0f", size = 13440063, upload-time = "2026-08-13T04:40:01.896Z" },
+    { url = "https://files.pythonhosted.org/packages/46/20/a9246bc492ea9def997a311092484694c1bbf13be5ca3ecdfe796159a0bf/liteparse-2.12.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:358ad939e2b27675aab30daffcd4e40a6238aaecb9f9cd82585ac2dcb4c0d749", size = 13711505, upload-time = "2026-08-13T04:40:03.903Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/fc/facbc24941d16f1a7b7d1b3d7a40e411f7fa3fecc6ce51e906b3b3551940/liteparse-2.12.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:6c5546694c7cbe7cd854856c9912e4e29ef976e590088a615db937199e7a0443", size = 16881010, upload-time = "2026-08-13T04:40:05.794Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/5a/1fd1f89015205a0990eb870e6c27eac4f3f680cf7834e8b0f8b3629fe4d0/liteparse-2.12.0-cp312-cp312-win_amd64.whl", hash = "sha256:3138bc2fdebe27285f76969846befa76b9f50941e217043a898d7724d8f031ca", size = 11942763, upload-time = "2026-08-13T04:40:08.693Z" },
+    { url = "https://files.pythonhosted.org/packages/63/db/f78a374b8ceb6316ac90234a5b9ebf542cc70cf48985bf21219a32511bf7/liteparse-2.12.0-cp312-cp312-win_arm64.whl", hash = "sha256:4f6571aefea1df77fbed6d0e0dd272ae5cbd16a92c1d83efe32a57a810126b5b", size = 11259475, upload-time = "2026-08-13T04:40:16.173Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/72/5bc81653a338889ed901c11a1512c76978817277cbd9b4d01c152c1d7e33/liteparse-2.12.0-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:1216b0fdc9e98b8a90151db1d505c3f78fadcdc85178c4f994f7b138136adde4", size = 12512468, upload-time = "2026-08-13T04:40:18.012Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/67/0ce407f66ae043e54fa31613bfb26e857787f3910d62954821cbe6a6785b/liteparse-2.12.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:570c1213ddb1f7e6233025f0adc7e6353eab813e45ea8d5bb68dc5f810ae050c", size = 11907318, upload-time = "2026-08-13T04:40:20.001Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/7a/d1f9d22bbfc63c55c6ce7099e5ba2af8196d121bde3455a736b9796340a1/liteparse-2.12.0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:78e72bcf6c8933c5ac4e119db87c334c8873bcb81ba8b46ed025776e7425435c", size = 13439560, upload-time = "2026-08-13T04:40:21.797Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/2b/1842cc547bc2c67a06b00fe7bdeb217f9ac91c3350066004d869082627c8/liteparse-2.12.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:2c287a618d8f35d8465702d264c0519d562c01fb895a1d0e90cff6b98b7ed037", size = 13710988, upload-time = "2026-08-13T04:40:23.68Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/25/762d5f8dc5da7b578fc475140411693b61b3bdb6fcc157854b13258b6618/liteparse-2.12.0-cp313-cp313-win_amd64.whl", hash = "sha256:53a3366deb4180faba85d5040bda8b054cc471cba104f64481f74cf9ae6d688a", size = 11942591, upload-time = "2026-08-13T04:40:25.58Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/b3/0792e765927dd23f8a07cb2deed3b2566698c9f69e14b7e80be8c2bcb383/liteparse-2.12.0-cp313-cp313-win_arm64.whl", hash = "sha256:29cef7651bd35ffbe4d3d77953186ac554dadf12cf0cc0aeab455aa0b7abb337", size = 11259554, upload-time = "2026-08-13T04:40:27.49Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/92/4a4e4708d1617d5b1b75048f38c3ffdc1e69882b9e3992dad4dd42ffac68/liteparse-2.12.0-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:61dc50c8050f38ac5fd61bbd0254d180c435319369cf509fbfc89f5dece0c73c", size = 12512364, upload-time = "2026-08-13T04:40:29.274Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/f9/886d85c009a9dc9e8b7190ddaa9fd55a3268aecfb2d5ef6bceb5dea19db1/liteparse-2.12.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:90ec891ed0a565791154fe3d3aec69be68ff9b243263cb65d8173c81a35b5e44", size = 11911150, upload-time = "2026-08-13T04:40:31.415Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/96/834750acc78bc55b0bef525e2044b484b3811aba72f66d0d2a0cbd5c4148/liteparse-2.12.0-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:a4d19b2dbb37cf7a83e9c30a55e0c24c518697095d3b96f51eb274538897dfe9", size = 13443640, upload-time = "2026-08-13T04:40:33.227Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/cb/4888a85844e7c56b0b86b8eec8ab160383554bc960cc8953e8be35efe599/liteparse-2.12.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:c93afc0ec794aeb5c154545e4ff519348df17772bdc624299131559c2175964b", size = 13713133, upload-time = "2026-08-13T04:40:35.02Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/ab/51e2d7c9419f749ecb1148e64dabb4ea72b86839126c89b24ee0d4920c8e/liteparse-2.12.0-cp314-cp314-win_amd64.whl", hash = "sha256:4ca71d8426885e5865dabcee49998bcaf11b47d1a6f8050518ed83c001f9812d", size = 11944260, upload-time = "2026-08-13T04:40:37.879Z" },
+    { url = "https://files.pythonhosted.org/packages/68/a2/65dad54f627362a350547a486c935a5049f07ab5c281f1a53add79363e6e/liteparse-2.12.0-cp314-cp314-win_arm64.whl", hash = "sha256:756af851b2820554afb9d364129efb0a1bccf2fe346d59e416aa44c5f63ffb11", size = 11258988, upload-time = "2026-08-13T04:40:39.685Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/8a/5ab3de9c846f62fbeb7976baead5f17c772ea6d8373cbb59a4a38bf94fa0/liteparse-2.12.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:bdf7eeee8f9779d0d5b1828ba583ac228b1bd006e6dd09e60838baf3a5f6bc97", size = 13436891, upload-time = "2026-08-13T04:40:41.497Z" },
+    { url = "https://files.pythonhosted.org/packages/58/ef/b98f935849f3e09e3c5108ed9725c1228f1d6c0b234439de679fe911e5c9/liteparse-2.12.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:2bccec7b46afce33f72e96abe851cce0352ecd9d4c7741e9f0e9d6813fd75470", size = 13712441, upload-time = "2026-08-13T04:40:43.205Z" },
+    { url = "https://files.pythonhosted.org/packages/22/64/07e9c3c3d93d970b4556144263b6e95d91da162f7cd953a93ea753b560be/liteparse-2.12.0-cp315-cp315-manylinux_2_28_aarch64.whl", hash = "sha256:d5f334ede1e4580acef34c8eb6486033247b8b0b415c1fcb08c817433ae7fd09", size = 13444506, upload-time = "2026-08-13T04:40:45.719Z" },
+    { url = "https://files.pythonhosted.org/packages/77/de/5d86e0c6e37cf9f66fe0bc1dca10898ececca4b7f3d0a1229eaf8a029a4b/liteparse-2.12.0-cp315-cp315-manylinux_2_28_x86_64.whl", hash = "sha256:f14d69d87ab63820158b5a705d955f7bbcd2916097b2e49d28f196039852925d", size = 13713932, upload-time = "2026-08-13T04:40:47.594Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/6d/48239d468bcc5af5694df66e4b0dca37119057934e36730a7165bfff28a3/liteparse-2.12.0-cp315-cp315t-manylinux_2_28_aarch64.whl", hash = "sha256:db109a966c7654e264e7356c36057b9b16e877a7af1ee5905e4d4568f9995d15", size = 13438719, upload-time = "2026-08-13T04:40:49.419Z" },
+    { url = "https://files.pythonhosted.org/packages/79/19/ce1c9bc5053dae48a70ab84d2b9d2f979d02705c170358aee67746b17b26/liteparse-2.12.0-cp315-cp315t-manylinux_2_28_x86_64.whl", hash = "sha256:c673741d4e71d7eaaf61ea763ee9b352c3f7237ccde68e087c19daf49ba77a47", size = 13710655, upload-time = "2026-08-13T04:40:51.304Z" },
+]
+
+[[package]]
 name = "locust"
 version = "2.45.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4030,6 +4063,7 @@ dependencies = [
     { name = "fastembed" },
     { name = "firecrawl-anydoc" },
     { name = "httpx" },
+    { name = "liteparse" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
@@ -4080,6 +4114,7 @@ requires-dist = [
     { name = "fastembed", specifier = ">=0.6" },
     { name = "firecrawl-anydoc", specifier = ">=0.1" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "liteparse", specifier = ">=2.12" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
     { name = "pyjwt", specifier = ">=2.8" },

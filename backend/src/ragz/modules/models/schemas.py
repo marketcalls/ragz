@@ -125,7 +125,7 @@ class ProviderSettingsOut(BaseModel):
 
 
 class ProviderSettingsUpdate(BaseModel):
-    document_parser: Literal["anydoc", "docling", "llamaparse"] | None = None
+    document_parser: Literal["anydoc", "docling", "llamaparse", "liteparse"] | None = None
     rerank_provider: Literal["local", "cohere"] | None = None
     cohere_rerank_model: Literal["rerank-v4.0-fast", "rerank-v4.0-pro"] | None = None
     # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has

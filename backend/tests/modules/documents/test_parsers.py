@@ -1,3 +1,4 @@
+import types
 from pathlib import Path
 
 import anydoc
@@ -6,7 +7,13 @@ import pytest
 
 from ragz.core.app_settings import set_app_setting
 from ragz.core.config import Settings
-from ragz.modules.documents.parsers import AnydocParser, LlamaParseParser, parse_document
+from ragz.modules.documents.parsers import (
+    AnydocParser,
+    LiteParseParser,
+    LlamaParseParser,
+    _markdown_to_blocks,
+    parse_document,
+)
 from ragz.modules.documents.pipeline import IngestFailure, PageBlock
 
 
@@ -87,6 +94,65 @@ async def test_parse_document_docling_when_selected(session, settings) -> None:
         session, settings, data=b"line one\n\nline two", filename="a.txt"
     )
     assert [b.text for b in blocks] == ["line one", "line two"]
+
+
+def test_markdown_to_blocks_stamps_given_page() -> None:
+    blocks = _markdown_to_blocks(
+        "## Heading\n\nbody\n\n| a | b |\n|---|---|\n| 1 | 2 |", page=7
+    )
+    assert blocks and all(b.page == 7 for b in blocks)
+    assert any(b.kind == "heading" for b in blocks)
+    assert any(b.kind == "table" for b in blocks)
+
+
+async def test_liteparse_maps_per_page_markdown_with_real_pages(monkeypatch) -> None:
+    class FakeLiteParse:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        def parse(self, data):
+            return types.SimpleNamespace(pages=[
+                types.SimpleNamespace(
+                    page_num=3, markdown="## HTTP Status Codes\n\ntext on page 3"
+                ),
+                types.SimpleNamespace(
+                    page_num=8, markdown="## Async\n\ntext on page 8"
+                ),
+            ])
+
+    monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
+    blocks = await LiteParseParser().parse(b"x", "d.pdf")
+    assert {b.page for b in blocks} == {3, 8}
+    headings = {b.text for b in blocks if b.kind == "heading"}
+    assert headings == {"HTTP Status Codes", "Async"}
+
+
+async def test_liteparse_empty_result_raises_ingest_failure(monkeypatch) -> None:
+    class FakeLiteParse:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        def parse(self, data):
+            return types.SimpleNamespace(pages=[])
+
+    monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
+    with pytest.raises(IngestFailure):
+        await LiteParseParser().parse(b"x", "d.pdf")
+
+
+async def test_parse_document_liteparse_when_selected(session, settings, monkeypatch) -> None:
+    await set_app_setting(session, "document_parser", "liteparse")
+
+    called = {}
+
+    async def _fake_parse(self, data, filename):
+        called["hit"] = True
+        return [PageBlock(page=4, text="lite", kind="text")]
+
+    monkeypatch.setattr(LiteParseParser, "parse", _fake_parse)
+    blocks = await parse_document(session, settings, data=b"x", filename="a.pdf")
+    assert called.get("hit") is True
+    assert [(b.page, b.text) for b in blocks] == [(4, "lite")]
 
 
 async def test_parse_document_llamaparse_without_key_raises(session, settings) -> None:

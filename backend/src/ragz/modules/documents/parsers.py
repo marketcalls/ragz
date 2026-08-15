@@ -35,11 +35,11 @@ _TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$")
 _ANYDOC_FORMAT_HINTS: dict[str, "anydoc.Format"] = {".csv": "csv"}
 
 
-def _markdown_to_blocks(markdown: str) -> list[PageBlock]:
-    """Map anydoc's flat GFM Markdown to PageBlocks. No page boundaries exist
-    in the input, so every block is page=1 (documented trade-off); headings
-    carry `level` so the existing chunker derives section trails, and GFM
-    pipe tables are emitted whole as one `table` block (the chunker emits a
+def _markdown_to_blocks(markdown: str, page: int = 1) -> list[PageBlock]:
+    """Map flat GFM Markdown to PageBlocks. anydoc has no page boundaries so it
+    defaults page=1 (documented trade-off); liteparse passes the real page_num.
+    Headings carry `level` so the existing chunker derives section trails, and
+    GFM pipe tables are emitted whole as one `table` block (the chunker emits a
     table as its own chunk). Everything else is text, split on blank lines."""
     lines = markdown.splitlines()
     blocks: list[PageBlock] = []
@@ -48,7 +48,7 @@ def _markdown_to_blocks(markdown: str) -> list[PageBlock]:
     def flush_para() -> None:
         text = "\n".join(para).strip()
         if text:
-            blocks.append(PageBlock(page=1, text=text, kind="text"))
+            blocks.append(PageBlock(page=page, text=text, kind="text"))
         para.clear()
 
     i = 0
@@ -58,7 +58,7 @@ def _markdown_to_blocks(markdown: str) -> list[PageBlock]:
         if heading:
             flush_para()
             blocks.append(
-                PageBlock(page=1, text=heading.group(2).strip(),
+                PageBlock(page=page, text=heading.group(2).strip(),
                           kind="heading", level=len(heading.group(1)))
             )
             i += 1
@@ -75,7 +75,7 @@ def _markdown_to_blocks(markdown: str) -> list[PageBlock]:
             while i < len(lines) and "|" in lines[i] and lines[i].strip():
                 table.append(lines[i])
                 i += 1
-            blocks.append(PageBlock(page=1, text="\n".join(table).strip(), kind="table"))
+            blocks.append(PageBlock(page=page, text="\n".join(table).strip(), kind="table"))
             continue
         if line.strip():
             para.append(line)
@@ -157,6 +157,27 @@ class AnydocParser:
         return blocks
 
 
+class LiteParseParser:
+    """run-llama liteparse (PDFium, self-hosted, offline): per-page markdown
+    with a real page_num -> blocks. Fast like anydoc, page-accurate like
+    docling. OCR off by default (text PDFs); flip ocr_enabled for scanned."""
+
+    async def parse(self, data: bytes, filename: str) -> list[PageBlock]:
+        from liteparse import LiteParse
+
+        def _convert() -> list[PageBlock]:
+            res = LiteParse(ocr_enabled=False, quiet=True, output_format="markdown").parse(data)
+            blocks: list[PageBlock] = []
+            for page in res.pages:
+                blocks.extend(_markdown_to_blocks(page.markdown or "", page=page.page_num))
+            return blocks
+
+        blocks = await asyncio.to_thread(_convert)
+        if not blocks:
+            raise IngestFailure("liteparse produced no extractable text")
+        return blocks
+
+
 async def parse_document(
     session: AsyncSession, settings: Settings, *, data: bytes, filename: str
 ) -> list[PageBlock]:
@@ -177,6 +198,8 @@ async def parse_document(
             ocr_enabled=settings.ocr_enabled,
             ocr_min_chars_per_page=settings.ocr_min_chars_per_page,
         )
+    if parser == "liteparse":
+        return await LiteParseParser().parse(data, filename)
     # anydoc is the default (parser == "anydoc", or unset/unknown).
     import anydoc
     is_pdf = Path(filename).suffix.lower() == ".pdf"
