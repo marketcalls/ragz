@@ -81,13 +81,15 @@ const modelC: ModelOut = {
 };
 
 const patchMutate = vi.fn();
+const createSpy = vi.fn();
 
 beforeEach(() => {
   useAdminModels.mockReturnValue({ data: [modelA, modelB, modelC], isPending: false });
   useCatalog.mockReturnValue({ data: { entries: [], new_available: 0 } });
   usePatchModel.mockReturnValue({ mutate: patchMutate, isPending: false });
   useDeleteModel.mockReturnValue({ mutate: vi.fn(), isPending: false });
-  useCreateModel.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  createSpy.mockResolvedValue(undefined);
+  useCreateModel.mockReturnValue({ mutate: vi.fn(), mutateAsync: createSpy, isPending: false });
 });
 
 afterEach(() => {
@@ -165,4 +167,49 @@ test('the Type column displays the modality of each model', async () => {
   await user.click(screen.getByRole('button', { name: 'embedding models' }));
   // On embedding tab, verify embedding models show 'embedding' modality
   expect(screen.getByText('embedding', { selector: 'td' })).toBeInTheDocument();
+});
+
+test('renders a searchable provider-card grid (e.g. an Anthropic card)', () => {
+  render(<ModelsPage />);
+  expect(screen.getByRole('button', { name: /anthropic/i })).toBeInTheDocument();
+});
+
+test('typing in the provider search narrows the grid', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  expect(screen.getByText('Cohere')).toBeInTheDocument();
+  await user.type(screen.getByLabelText('Search providers'), 'anthropic');
+  expect(screen.queryByText('Cohere')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /anthropic/i })).toBeInTheDocument();
+});
+
+test('registers a suggested model from a provider card with a prefilled body', async () => {
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  await user.click(screen.getByRole('button', { name: /anthropic/i }));
+  const claudeCheckboxes = await screen.findAllByRole('checkbox', { name: /claude/i });
+  await user.click(claudeCheckboxes[0]!);
+  await user.click(screen.getByRole('button', { name: /add selected/i }));
+  expect(createSpy).toHaveBeenCalled();
+  const body = createSpy.mock.calls[0]![0];
+  expect(body.provider_kind).toBe('litellm');
+  expect(body.litellm_model_name).toMatch(/^anthropic\//);
+  expect(body.modality).toBe('chat');
+});
+
+test('a suggested model already registered renders checked and disabled', async () => {
+  const anthropicModel: ModelOut = {
+    ...modelA,
+    id: 'm4',
+    provider_kind: 'litellm',
+    litellm_model_name: 'anthropic/claude-opus-4-8',
+    display_name: 'Opus',
+  };
+  useAdminModels.mockReturnValue({ data: [modelA, modelB, modelC, anthropicModel], isPending: false });
+  const user = userEvent.setup();
+  render(<ModelsPage />);
+  await user.click(screen.getByRole('button', { name: /anthropic/i }));
+  const registeredCheckbox = await screen.findByRole('checkbox', { name: /claude-opus-4-8/i });
+  expect(registeredCheckbox).toBeChecked();
+  expect(registeredCheckbox).toBeDisabled();
 });

@@ -5,6 +5,7 @@ import type { CatalogEntryOut, ModelOut } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
@@ -12,6 +13,9 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
 
 import { ModelFormDialog } from './model-form-dialog';
+import { CREATABLE_PROVIDERS, countConfigured, ProviderPanel } from './provider-panel';
+import { ProviderIcon } from './provider-icon';
+import type { CatalogProvider } from './provider-catalog';
 import { useAdminModels, useCatalog, useDeleteModel, usePatchModel } from './queries';
 
 function syncTone(status: ModelOut['sync_status']): StatusTone {
@@ -32,6 +36,13 @@ export function ModelsPage() {
   const [formKey, setFormKey] = useState(0);
   const [removing, setRemoving] = useState<ModelOut | null>(null);
   const [tab, setTab] = useState<'chat' | 'embedding'>('chat');
+  const [providerQuery, setProviderQuery] = useState('');
+  const [activeProvider, setActiveProvider] = useState<CatalogProvider | null>(null);
+
+  const filteredProviders = useMemo(() => {
+    const q = providerQuery.trim().toLowerCase();
+    return q ? CREATABLE_PROVIDERS.filter((p) => p.name.toLowerCase().includes(q)) : CREATABLE_PROVIDERS;
+  }, [providerQuery]);
 
   const catalogByName = useMemo(
     () => new Map((catalog.data?.entries ?? []).map((e): [string, CatalogEntryOut] => [e.name, e])),
@@ -59,6 +70,46 @@ export function ModelsPage() {
       />
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-4xl">
+          <div className="mb-6">
+            <h2 className="mb-2 text-[13px] font-semibold text-ink">Providers</h2>
+            <Input
+              type="search"
+              placeholder="Search providers…"
+              aria-label="Search providers"
+              value={providerQuery}
+              onChange={(e) => setProviderQuery(e.target.value)}
+              className="mb-3 max-w-xs"
+            />
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+              {filteredProviders.map((provider) => {
+                const configured = countConfigured(provider, models.data ?? []);
+                return (
+                  <button
+                    key={provider.id}
+                    type="button"
+                    onClick={() => setActiveProvider(provider)}
+                    className="flex flex-col items-start gap-2 rounded-lg border border-line bg-bg p-3 text-left hover:bg-subtle"
+                  >
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <ProviderIcon provider={provider} className="h-8 w-8" />
+                      {configured > 0 ? (
+                        <StatusPill tone="success">{configured} configured</StatusPill>
+                      ) : null}
+                    </div>
+                    <span className="text-[13px] font-medium text-ink">{provider.name}</span>
+                    <div className="flex flex-wrap gap-1">
+                      {provider.capabilities.map((c) => (
+                        <StatusPill key={c} tone="muted" className="capitalize">
+                          {c}
+                        </StatusPill>
+                      ))}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <h2 className="mb-2 text-[13px] font-semibold text-ink">Registered models</h2>
           <div className="mb-3 flex gap-1">
             {(['chat', 'embedding'] as const).map((t) => (
               <button
@@ -198,6 +249,20 @@ export function ModelsPage() {
         onOpenChange={(o) => !o && setFormTarget(null)}
         model={formTarget === 'create' ? null : formTarget}
       />
+      <Dialog open={activeProvider !== null} onOpenChange={(o) => !o && setActiveProvider(null)}>
+        {activeProvider ? (
+          <DialogContent
+            title={activeProvider.name}
+            description="Enter the credentials once and pick the models to register."
+          >
+            <ProviderPanel
+              provider={activeProvider}
+              registered={models.data ?? []}
+              onClose={() => setActiveProvider(null)}
+            />
+          </DialogContent>
+        ) : null}
+      </Dialog>
       <Dialog open={removing !== null} onOpenChange={(o) => !o && setRemoving(null)}>
         <DialogContent
           title="Remove model"
