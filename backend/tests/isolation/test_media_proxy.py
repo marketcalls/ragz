@@ -26,7 +26,9 @@ from ragz.core.db import build_session_factory
 from ragz.modules.chat import media
 
 
-def _png_bytes(size: tuple[int, int] = (3, 3), color: tuple[int, int, int] = (200, 30, 30)) -> bytes:
+def _png_bytes(
+    size: tuple[int, int] = (3, 3), color: tuple[int, int, int] = (200, 30, 30)
+) -> bytes:
     img = Image.new("RGB", size, color)
     buf = BytesIO()
     img.save(buf, format="PNG")
@@ -122,7 +124,7 @@ def test_ref_carries_minting_org_capability_model(test_settings: Settings) -> No
         ("10.0.0.5", True),      # private
         ("169.254.1.1", True),   # link-local
         ("::1", True),           # loopback v6
-        ("0.0.0.0", True),       # unspecified
+        ("0.0.0.0", True),  # noqa: S104 — test data (unspecified addr), not a bind
         ("93.184.216.34", False),  # public
     ],
 )
