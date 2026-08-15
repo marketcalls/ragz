@@ -7,31 +7,46 @@ audit_route_enforcement closes that gap by walking each route's FastAPI
 dependency tree and requiring the declared action's require_action(...) tag
 to actually be present.
 
-Scope note: this task (PUB-01b) finishes PUB-01's own cleanup in
-documents.py/workspaces.py (the modules PUB-01 already converted, minus four
-stragglers still on require_role: PUT .../acl, PUT .../approved,
-POST /workspaces, POST .../members) and adds the gate itself. It does NOT
-sweep the rest of the app: audit_route_enforcement(app) still reports ~46
-further gaps in unrelated route modules (admin_roles.py, admin_secrets.py,
-admin_sso.py, admin_bots.py, admin_feedback.py, users.py, groups.py, auth.py,
-settings.py, superadmin_ops.py, usage.py, quota routes) that declare a granular
-action but are gated by require_role(...) instead -- pre-existing, tracked debt
-predating PUB-01, not a regression introduced or hidden here.
+Scope note: PUB-01b finished PUB-01's own cleanup in documents.py/workspaces.py
+(the modules PUB-01 already converted, plus four stragglers moved off
+require_role: PUT .../acl, PUT .../approved, POST /workspaces, POST
+.../members) and added the gate itself. It did NOT sweep the rest of the app:
+audit_route_enforcement(app) reports ~49 further gaps in unrelated route
+modules (admin_roles.py, admin_secrets.py, admin_sso.py, admin_bots.py,
+admin_feedback.py, users.py, groups.py, auth.py, settings.py,
+superadmin_ops.py, usage.py, quota routes) that declare a granular action but
+are gated by require_role(...) instead of require_action(...).
 
-That remaining debt is fail-SAFE (under- not over-permissive: a role-template
-grant of e.g. "roles.author" is currently just silently ineffective against the
-literal require_role("admin") check, never a privilege escalation). The review
-that surfaced this found that claim was NOT yet true for three routes that were
-actually BARE auth (only get_tenant_context, no require_role AND no
-require_action) despite declaring a granular action -- GET /api/v1/models
-(models.read), GET /api/v1/usage/me (quota.read), POST /api/v1/client-errors
-(client_errors.report). Those are the same bypassable-deny class as PUB-01's
-original finding, so they were fixed here (wired to require_action). What is
-left is now uniformly require_role-gated, and
-`test_every_route_policy_route_has_authz_enforcement` below PINS that invariant:
-no ROUTE_POLICY route may be bare auth. `test_documents_and_workspaces_routes_are_enforced`
-asserts full require_action coverage for the modules this task owns; the whole
-app is intentionally not yet at `audit_route_enforcement(app) == []`."""
+sec RAGZ-PUB-01 (policy-drift closure): that remaining debt is fail-SAFE
+(under- not over-permissive -- a role-template grant of e.g. "roles.author" is
+silently ineffective against the literal require_role("admin")/require_role()
+check, never a privilege escalation), but the PUB-01b test suite used to
+accept it by NOT asserting anything about the gap list's *contents*: any route
+carrying ANY require_role(...) guard silently passed
+`test_every_route_policy_route_has_authz_enforcement`, so a brand-new route
+wired to a role guard that does NOT actually match its declared action's
+intent (or, worse, no guard at all sharing the same undifferentiated "it's
+require_role, that's fine" bucket) could slip in unnoticed -- that IS the
+policy-drift finding. This is now closed by making the gap set exact:
+`_ROLE_ONLY_ENFORCEMENT` in api/policy.py explicitly catalogues, with a
+justification, every one of those ~49 routes and the exact role guard
+(superadmin-only via require_role()/require_role("superadmin"), or
+admin+superadmin via require_role("admin")) that gates it.
+`test_no_unmodeled_enforcement_gaps` below asserts
+`audit_unmodeled_enforcement_gaps(app) == []` -- i.e. every gap
+`audit_route_enforcement` reports is now either fixed (require_action wired)
+or named in the catalog; nothing else may pass silently.
+`test_role_only_catalog_has_no_stale_entries` asserts the catalog can't drift
+the other way either: every entry must still be a real, currently-reported
+gap that genuinely carries a require_role(...) guard, so fixing a route (or
+deleting it) forces removing its catalog entry, and nothing bare-auth can hide
+behind a catalog line. Together with
+`test_every_route_policy_route_has_authz_enforcement` (no ROUTE_POLICY route
+may be bare auth) and `test_documents_and_workspaces_routes_are_enforced`
+(full require_action coverage for the modules PUB-01b owns), the debt this
+gate reports is now explicitly modeled and pinned, not silently permitted --
+`audit_unmodeled_enforcement_gaps(app) == []` is the CI invariant, even though
+`audit_route_enforcement(app) == []` deliberately is not (yet)."""
 from typing import Annotated
 
 from fastapi import Depends
@@ -40,11 +55,13 @@ from ragz.api.app import create_app
 from ragz.api.policy import (
     _ENFORCEMENT_EXCEPTIONS,
     _HTTP_METHODS_UPPER,
+    _ROLE_ONLY_ENFORCEMENT,
     ROUTE_POLICY,
     _iter_api_routes,
     _iter_dependant_calls,
     _normalize_path,
     audit_route_enforcement,
+    audit_unmodeled_enforcement_gaps,
 )
 from ragz.modules.tenancy.context import TenantContext, require_action, require_role
 
@@ -202,6 +219,49 @@ def test_every_route_policy_route_has_authz_enforcement():
         if not action_tags and not has_role:
             bare.append((method, path))
     assert bare == [], f"ROUTE_POLICY routes with no authz guard (bare auth): {bare}"
+
+
+def test_no_unmodeled_enforcement_gaps():
+    """sec RAGZ-PUB-01 closure: the real CI invariant. audit_route_enforcement
+    still reports gaps (routes enforcing their declared action via
+    require_role(...) instead of require_action(...)), but every single one
+    must now be accounted for in `_ROLE_ONLY_ENFORCEMENT`. A new route that
+    declares a ROUTE_POLICY action and wires neither require_action nor an
+    already-catalogued role guard produces an UNMODELED gap and fails here --
+    closing the "any require_role silently excuses it" hole the original
+    policy-drift finding flagged."""
+    app = create_app()
+    assert audit_unmodeled_enforcement_gaps(app) == []
+
+
+def test_role_only_catalog_has_no_stale_entries():
+    """The catalog must stay exact in both directions:
+
+    1. every `_ROLE_ONLY_ENFORCEMENT` key must be a (method, path)
+       `audit_route_enforcement` still actually reports as a gap -- so fixing
+       a route (wiring require_action) or deleting it forces removing the
+       now-stale catalog entry instead of leaving dead cover behind; and
+    2. every catalogued route must genuinely carry a `require_role(...)`
+       guard in its live dependency graph -- so nothing bare-auth (or
+       anything else) can hide behind a catalog line that claims "role-only"
+       without it being true.
+    """
+    app = create_app()
+    gap_keys = _gap_keys(audit_route_enforcement(app))
+    idx = _route_index(app)
+    for key in _ROLE_ONLY_ENFORCEMENT:
+        assert key in gap_keys, (
+            f"{key} is catalogued in _ROLE_ONLY_ENFORCEMENT but "
+            "audit_route_enforcement no longer reports it as a gap -- "
+            "remove the stale entry"
+        )
+        route = idx.get(key)
+        assert route is not None, f"{key} catalogued but no mounted route found"
+        _, has_role = _enforcement_tags(route)
+        assert has_role, (
+            f"{key} catalogued as role-only but has no require_role(...) "
+            "guard in its dependency graph"
+        )
 
 
 def test_pub01b_review_fix_routes_enforce_their_action():

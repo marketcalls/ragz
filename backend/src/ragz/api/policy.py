@@ -339,6 +339,145 @@ _ENFORCEMENT_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset({
 })
 
 
+# sec RAGZ-PUB-01 (closure): the ~49 pre-existing ROUTE_POLICY routes that
+# audit_route_enforcement reports because they enforce their declared action
+# through a role gate (require_role(...)) rather than require_action(...).
+# This is fail-safe under-permissiveness, not a privilege-escalation bypass
+# (see test_route_enforcement.py's module docstring for the full argument),
+# but it must be an EXACT, EXPLICITLY MODELED set -- not "any role guard
+# passes". A brand-new route that declares an action in ROUTE_POLICY and
+# wires neither require_action(...) NOR one of these exact (method, path)
+# entries now fails CI via audit_unmodeled_enforcement_gaps below. Do not add
+# a route here just to make a test pass -- wire require_action instead,
+# unless it is a genuine, reviewed, deliberate role-only exception like the
+# ones already catalogued.
+#
+# Value = short justification: which role guard actually gates the route, and
+# why role-only enforcement is acceptable here. Derived from a live
+# introspection of each route's `__ragz_required_roles__` tag: frozenset()
+# (require_role() with no args) and frozenset({"superadmin"})
+# (require_role("superadmin")) are behaviorally identical -- both
+# superadmin-only, since require_role's superadmin bypass fires before the
+# named-role check either way; frozenset({"admin"}) (require_role("admin"))
+# is admin+superadmin. test_role_only_catalog_has_no_stale_entries re-derives
+# this from the live dependency graph and fails if it ever drifts from what's
+# written here.
+_ROLE_ONLY_ENFORCEMENT: dict[tuple[str, str], str] = {
+    # invitations
+    ("POST", "/api/v1/auth/invitations"):
+        "admin+superadmin (require_role('admin')) -- org user invitations",
+    # users
+    ("GET", "/api/v1/users"):
+        "admin+superadmin (require_role('admin')) -- org user directory",
+    ("PATCH", "/api/v1/users/{user_id}"):
+        "admin+superadmin (require_role('admin')) -- role assignment",
+    ("PUT", "/api/v1/users/{user_id}/custom-role"):
+        "admin+superadmin (require_role('admin')) -- role assignment",
+    # groups (ACL group administration)
+    ("GET", "/api/v1/groups"):
+        "admin+superadmin (require_role('admin')) -- ACL group administration",
+    ("POST", "/api/v1/groups"):
+        "admin+superadmin (require_role('admin')) -- ACL group administration",
+    ("DELETE", "/api/v1/groups/{group_id}"):
+        "admin+superadmin (require_role('admin')) -- ACL group administration",
+    ("PUT", "/api/v1/groups/{group_id}/members/{user_id}"):
+        "admin+superadmin (require_role('admin')) -- ACL group administration",
+    ("DELETE", "/api/v1/groups/{group_id}/members/{user_id}"):
+        "admin+superadmin (require_role('admin')) -- ACL group administration",
+    # roles (role-template authoring)
+    ("GET", "/api/v1/admin/roles"):
+        "admin+superadmin (require_role('admin')) -- role-template listing",
+    ("POST", "/api/v1/admin/roles"):
+        "superadmin-only (require_role('superadmin')) -- role-template authoring",
+    ("PATCH", "/api/v1/admin/roles/{role_template_id}"):
+        "superadmin-only (require_role('superadmin')) -- role-template authoring",
+    ("DELETE", "/api/v1/admin/roles/{role_template_id}"):
+        "superadmin-only (require_role('superadmin')) -- role-template authoring",
+    ("POST", "/api/v1/admin/roles/{role_template_id}/activate"):
+        "superadmin-only (require_role('superadmin')) -- role-template authoring",
+    ("POST", "/api/v1/admin/roles/{role_template_id}/rollback"):
+        "superadmin-only (require_role('superadmin')) -- role-template authoring",
+    ("GET", "/api/v1/admin/roles/{role_template_id}/impact"):
+        "admin+superadmin (require_role('admin')) -- role-template listing",
+    # sso / cross-org platform administration
+    ("GET", "/api/v1/admin/sso"):
+        "superadmin-only (require_role('superadmin')) -- SSO configuration",
+    ("PUT", "/api/v1/admin/sso"):
+        "superadmin-only (require_role('superadmin')) -- SSO configuration",
+    ("GET", "/api/v1/admin/orgs"):
+        "superadmin-only (require_role('superadmin')) -- cross-org platform administration",
+    ("PUT", "/api/v1/admin/orgs/{org_id}/sso-domains"):
+        "superadmin-only (require_role('superadmin')) -- cross-org platform administration",
+    # secrets
+    ("PUT", "/api/v1/admin/secrets/{name}"):
+        "superadmin-only (require_role()) -- credential/secret management",
+    ("GET", "/api/v1/admin/secrets"):
+        "superadmin-only (require_role()) -- credential/secret management",
+    ("DELETE", "/api/v1/admin/secrets/{name}"):
+        "superadmin-only (require_role()) -- credential/secret management",
+    # feedback
+    ("GET", "/api/v1/admin/feedback"):
+        "admin+superadmin (require_role('admin')) -- answer feedback review",
+    # bots (Telegram/Slack/Discord integration credentials)
+    ("POST", "/api/v1/admin/bots"):
+        "superadmin-only (require_role()) -- bot integration credential management",
+    ("GET", "/api/v1/admin/bots"):
+        "superadmin-only (require_role()) -- bot integration credential management",
+    ("PATCH", "/api/v1/admin/bots/{bot_id}"):
+        "superadmin-only (require_role()) -- bot integration credential management",
+    ("DELETE", "/api/v1/admin/bots/{bot_id}"):
+        "superadmin-only (require_role()) -- bot integration credential management",
+    # api-keys
+    ("POST", "/api/v1/admin/api-keys"):
+        "superadmin-only (require_role()) -- API key issuance/management",
+    ("GET", "/api/v1/admin/api-keys"):
+        "superadmin-only (require_role()) -- API key issuance/management",
+    ("DELETE", "/api/v1/admin/api-keys/{key_id}"):
+        "superadmin-only (require_role()) -- API key issuance/management",
+    # models (registry administration)
+    ("GET", "/api/v1/admin/models"):
+        "superadmin-only (require_role()) -- model registry administration",
+    ("POST", "/api/v1/admin/models"):
+        "superadmin-only (require_role()) -- model registry administration",
+    ("PATCH", "/api/v1/admin/models/{model_id}"):
+        "superadmin-only (require_role()) -- model registry administration",
+    ("DELETE", "/api/v1/admin/models/{model_id}"):
+        "superadmin-only (require_role()) -- model registry administration",
+    ("GET", "/api/v1/admin/models/catalog"):
+        "superadmin-only (require_role()) -- model registry administration",
+    ("POST", "/api/v1/admin/models/catalog/refresh"):
+        "superadmin-only (require_role()) -- model registry administration",
+    # settings / email
+    ("GET", "/api/v1/admin/settings"):
+        "superadmin-only (require_role()) -- platform settings administration",
+    ("PUT", "/api/v1/admin/settings"):
+        "superadmin-only (require_role()) -- platform settings administration",
+    ("GET", "/api/v1/admin/email"):
+        "superadmin-only (require_role()) -- SMTP/email settings administration",
+    ("PUT", "/api/v1/admin/email"):
+        "superadmin-only (require_role()) -- SMTP/email settings administration",
+    ("POST", "/api/v1/admin/email/test"):
+        "superadmin-only (require_role()) -- SMTP/email settings administration",
+    # quotas
+    ("GET", "/api/v1/admin/orgs/{org_id}/quota"):
+        "superadmin-only (require_role('superadmin')) -- org quota administration",
+    ("PUT", "/api/v1/admin/orgs/{org_id}/quota"):
+        "superadmin-only (require_role('superadmin')) -- org quota administration",
+    ("GET", "/api/v1/users/{user_id}/quota"):
+        "admin+superadmin (require_role('admin')) -- per-user quota administration",
+    ("PUT", "/api/v1/users/{user_id}/quota"):
+        "admin+superadmin (require_role('admin')) -- per-user quota administration",
+    # usage
+    ("GET", "/api/v1/admin/usage/orgs"):
+        "superadmin-only (require_role('superadmin')) -- cross-org usage analytics",
+    # superadmin health / ops
+    ("GET", "/api/v1/superadmin/health"):
+        "superadmin-only (require_role()) -- platform health/ops",
+    ("GET", "/api/v1/superadmin/client-errors"):
+        "superadmin-only (require_role()) -- platform health/ops",
+}
+
+
 def _iter_dependant_calls(dependant: Any) -> Iterator[Any]:
     """Recursively yield every dependency callable (`Dependant.call`) in a
     route's FastAPI dependency graph. `route.dependant` is the root
@@ -399,3 +538,28 @@ def audit_route_enforcement(app: FastAPI) -> list[str]:
                 f"require_action({action!r}) in dependency graph"
             )
     return gaps
+
+
+def audit_unmodeled_enforcement_gaps(app: FastAPI) -> list[str]:
+    """sec RAGZ-PUB-01 (closure): the CI invariant this whole module exists
+    to make exact. `audit_route_enforcement`'s gap list used to be treated by
+    the test suite as "any require_role(...) guard excuses the gap" -- which
+    meant a brand-new route wired to NEITHER require_action NOR any role
+    guard at all (bare auth, or nothing) could hide undetected among the same
+    undifferentiated list. This filters those gaps down to the ones NOT
+    already named in `_ROLE_ONLY_ENFORCEMENT`, the explicit, reviewed catalog
+    of deliberate role-only exceptions.
+
+    The result must be `== []`: every gap `audit_route_enforcement` reports
+    is now either fixed (require_action wired) or catalogued with a
+    justification -- there is no third, silent option. A new route that
+    declares a ROUTE_POLICY action and enforces it via neither mechanism
+    fails this (and therefore CI) immediately.
+    """
+    modeled = set(_ROLE_ONLY_ENFORCEMENT)
+    unmodeled: list[str] = []
+    for gap in audit_route_enforcement(app):
+        method, path = gap.split(":", 1)[0].split(" ", 1)
+        if (method, path) not in modeled:
+            unmodeled.append(gap)
+    return unmodeled
