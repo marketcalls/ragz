@@ -15,8 +15,16 @@ const tooltipContentStyle = {
 
 // Grouped (side-by-side) bars — no stackId, unlike StackedBars.
 export function GroupedBar({
-  data, categoryKey, keys,
-}: { data: Record<string, string | number>[]; categoryKey: string; keys: string[] }) {
+  data, categoryKey, keys, horizontal = false,
+}: {
+  data: Record<string, string | number>[];
+  categoryKey: string;
+  keys: string[];
+  // Swaps the category/value axis pairing: category on Y, value on X
+  // (recharts BarChart `layout="vertical"`) — long category labels read
+  // left-to-right instead of being truncated/rotated on a crowded X axis.
+  horizontal?: boolean;
+}) {
   const p = useChartPalette();
 
   if (data.length === 0 || keys.length === 0) {
@@ -27,11 +35,26 @@ export function GroupedBar({
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-        <CartesianGrid stroke={p.grid} vertical={false} />
-        <XAxis dataKey={categoryKey} tick={{ fill: p.axis, fontSize: 12 }} tickLine={false}
-               axisLine={{ stroke: p.grid }} minTickGap={24} />
-        <YAxis tick={{ fill: p.axis, fontSize: 12 }} tickLine={false} axisLine={false} />
+      <BarChart
+        data={data}
+        layout={horizontal ? 'vertical' : 'horizontal'}
+        margin={{ top: 4, right: 8, bottom: 0, left: horizontal ? 0 : -16 }}
+      >
+        <CartesianGrid stroke={p.grid} vertical={horizontal} horizontal={!horizontal} />
+        {horizontal ? (
+          <>
+            <XAxis type="number" tick={{ fill: p.axis, fontSize: 12 }} tickLine={false}
+                   axisLine={{ stroke: p.grid }} />
+            <YAxis type="category" dataKey={categoryKey} tick={{ fill: p.axis, fontSize: 12 }}
+                   tickLine={false} axisLine={false} width={96} />
+          </>
+        ) : (
+          <>
+            <XAxis dataKey={categoryKey} tick={{ fill: p.axis, fontSize: 12 }} tickLine={false}
+                   axisLine={{ stroke: p.grid }} minTickGap={24} />
+            <YAxis tick={{ fill: p.axis, fontSize: 12 }} tickLine={false} axisLine={false} />
+          </>
+        )}
         <Tooltip cursor={{ fill: 'transparent' }} contentStyle={tooltipContentStyle} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         {keys.map((k, i) => (

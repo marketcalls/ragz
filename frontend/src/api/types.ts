@@ -147,6 +147,18 @@ export type ArticleCardBlock = components['schemas']['ArticleCardBlock'];
 export type FollowUpsBlock = components['schemas']['FollowUpsBlock'];
 export type AccordionBlock = components['schemas']['AccordionBlock'];
 export type AccordionItem = components['schemas']['AccordionItem'];
+// T-A (backend, 2026-08-16) added these three block types to the wire schema
+// (chat/blocks.py) alongside the new ChartKind values this file's Block
+// union otherwise exists for. Their dedicated renderers are a separate
+// frontend task -- included here as TYPES ONLY so TabItem.blocks/
+// AccordionItem.blocks/CarouselItem.blocks (which come straight off the
+// generated schema and already allow these) type-check against this union.
+// RenderBlock's switch has no case for them yet, so its `default: return
+// null` whitelist branch handles them at runtime -- same as any other
+// not-yet-implemented block type -- until that follow-up task lands.
+export type StepsBlock = components['schemas']['StepsBlock'];
+export type ButtonsBlock = components['schemas']['ButtonsBlock'];
+export type CarouselBlock = components['schemas']['CarouselBlock'];
 export type Block =
   | TextBlock
   | ChartBlock
@@ -161,7 +173,10 @@ export type Block =
   | TabsBlock
   | FormBlock
   | FollowUpsBlock
-  | AccordionBlock;
+  | AccordionBlock
+  | StepsBlock
+  | ButtonsBlock
+  | CarouselBlock;
 
 export type DocumentStatus = DocumentOut['status'];
 

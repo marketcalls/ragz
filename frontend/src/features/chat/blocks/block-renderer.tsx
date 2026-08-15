@@ -33,7 +33,11 @@ import { DonutChart } from '@/components/charts/donut-chart';
 import { GroupedBar } from '@/components/charts/grouped-bar';
 import { RadarChart } from '@/components/charts/radar-chart';
 import { RadialGauge } from '@/components/charts/radial-gauge';
+import { ScatterChart } from '@/components/charts/scatter-chart';
+import { SingleStackedBar } from '@/components/charts/single-stacked-bar';
+import { Sparkline } from '@/components/charts/sparkline';
 import { StackedArea } from '@/components/charts/stacked-area';
+import { StackedBars } from '@/components/charts/stacked-bars';
 import { ChartCard } from '@/components/charts/chart-card';
 import { TimeSeriesLine } from '@/components/charts/time-series-line';
 import { Markdown } from '@/components/markdown/markdown';
@@ -126,25 +130,59 @@ function toChip(source: { title: string; document_id?: string | null; page?: num
   };
 }
 
-// Maps a validated ChartBlock onto one of the Phase-1 chart primitives.
-// Returns null whenever the block's data doesn't fit the chosen chart's
-// required shape -- the caller renders nothing rather than crash or show a
-// misleading "No data" placeholder for a fundamentally malformed block.
+// Shared by 'donut'/'pie': both need a { name, value }[] series keyed off
+// category_key/x_key (the label) and keys[0] (the numeric value). Returns
+// null on any non-numeric value, same "malformed -> render nothing" contract
+// as every other case below.
+function toCategoryValuePoints(
+  data: ChartBlockT['data'],
+  nameKey: string | null | undefined,
+  valueKey: string | null | undefined,
+): { name: string; value: number }[] | null {
+  if (!nameKey || !valueKey || data.length === 0) return null;
+  const points: { name: string; value: number }[] = [];
+  for (const row of data) {
+    const value = row[valueKey];
+    if (!isFiniteNumber(value)) return null;
+    points.push({ name: String(row[nameKey]), value });
+  }
+  return points;
+}
+
+// Shared by 'radial_gauge'/'semi_gauge': both read a single row's value/max
+// (keys[0]/keys[1], defaulting to 'value'/'max' fields, max defaulting to
+// 100 when absent).
+function toGaugeValue(
+  data: ChartBlockT['data'],
+  keys: string[] | null | undefined,
+): { value: number; max: number } | null {
+  const row = data[0];
+  if (!row) return null;
+  const valueKey = keys?.[0] ?? 'value';
+  const maxKey = keys?.[1] ?? 'max';
+  const value = row[valueKey];
+  const max = maxKey in row ? row[maxKey] : 100;
+  if (!isFiniteNumber(value) || !isFiniteNumber(max)) return null;
+  return { value, max };
+}
+
+// Maps a validated ChartBlock onto one of the chart primitives. Returns null
+// whenever the block's data doesn't fit the chosen chart's required shape --
+// the caller renders nothing rather than crash or show a misleading "No
+// data" placeholder for a fundamentally malformed block.
 function renderChart(block: ChartBlockT): ReactNode | null {
   const { chart, data, x_key, category_key, keys } = block;
 
   switch (chart) {
     case 'donut': {
-      const nameKey = category_key ?? x_key;
-      const valueKey = keys?.[0];
-      if (!nameKey || !valueKey || data.length === 0) return null;
-      const points: { name: string; value: number }[] = [];
-      for (const row of data) {
-        const value = row[valueKey];
-        if (!isFiniteNumber(value)) return null;
-        points.push({ name: String(row[nameKey]), value });
-      }
+      const points = toCategoryValuePoints(data, category_key ?? x_key, keys?.[0]);
+      if (!points) return null;
       return <DonutChart data={points} />;
+    }
+    case 'pie': {
+      const points = toCategoryValuePoints(data, category_key ?? x_key, keys?.[0]);
+      if (!points) return null;
+      return <DonutChart data={points} variant="pie" />;
     }
     case 'radar': {
       const categoryKey = category_key ?? x_key;
@@ -163,15 +201,59 @@ function renderChart(block: ChartBlockT): ReactNode | null {
       if (!categoryKey || !keys || keys.length === 0 || data.length === 0) return null;
       return <GroupedBar data={data} categoryKey={categoryKey} keys={keys} />;
     }
-    case 'radial_gauge': {
+    case 'horizontal_bar': {
+      const categoryKey = category_key ?? x_key;
+      if (!categoryKey || !keys || keys.length === 0 || data.length === 0) return null;
+      return <GroupedBar data={data} categoryKey={categoryKey} keys={keys} horizontal />;
+    }
+    case 'stacked_bars': {
+      const xKey = x_key ?? category_key;
+      if (!xKey || !keys || keys.length === 0 || data.length === 0) return null;
+      return <StackedBars data={data} xKey={xKey} keys={keys} />;
+    }
+    case 'single_stacked_bar': {
       const row = data[0];
-      if (!row) return null;
-      const valueKey = keys?.[0] ?? 'value';
-      const maxKey = keys?.[1] ?? 'max';
-      const value = row[valueKey];
-      const max = maxKey in row ? row[maxKey] : 100;
-      if (!isFiniteNumber(value) || !isFiniteNumber(max)) return null;
-      return <RadialGauge value={value} max={max} label={block.title ?? undefined} />;
+      if (!row || !keys || keys.length === 0) return null;
+      const values: Record<string, number> = {};
+      for (const k of keys) {
+        const v = row[k];
+        if (!isFiniteNumber(v)) return null;
+        values[k] = v;
+      }
+      return <SingleStackedBar data={values} keys={keys} />;
+    }
+    case 'sparkline': {
+      const valueKey = keys?.[0];
+      if (!valueKey || data.length === 0) return null;
+      const points: number[] = [];
+      for (const row of data) {
+        const value = row[valueKey];
+        if (!isFiniteNumber(value)) return null;
+        points.push(value);
+      }
+      return <Sparkline data={points} />;
+    }
+    case 'scatter': {
+      const yKey = keys?.[0];
+      const zKey = keys?.[1];
+      if (!x_key || !yKey || data.length === 0) return null;
+      for (const row of data) {
+        if (!isFiniteNumber(row[x_key]) || !isFiniteNumber(row[yKey])) return null;
+        if (zKey && !isFiniteNumber(row[zKey])) return null;
+      }
+      return <ScatterChart data={data} xKey={x_key} yKey={yKey} zKey={zKey} />;
+    }
+    case 'radial_gauge': {
+      const gauge = toGaugeValue(data, keys);
+      if (!gauge) return null;
+      return <RadialGauge value={gauge.value} max={gauge.max} label={block.title ?? undefined} />;
+    }
+    case 'semi_gauge': {
+      const gauge = toGaugeValue(data, keys);
+      if (!gauge) return null;
+      return (
+        <RadialGauge value={gauge.value} max={gauge.max} label={block.title ?? undefined} variant="semi" />
+      );
     }
     case 'line': {
       const xKey = x_key ?? category_key;

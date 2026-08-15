@@ -9,8 +9,16 @@ const WARNING_AT = 0.7;
 const DANGER_AT = 0.9;
 
 export function RadialGauge({
-  value, max, label, valueLabel,
-}: { value: number; max: number; label?: string; valueLabel?: string }) {
+  value, max, label, valueLabel, variant = 'full',
+}: {
+  value: number;
+  max: number;
+  label?: string;
+  valueLabel?: string;
+  // 'semi' renders a half-circle gauge (180deg sweep) instead of the full
+  // 360deg ring -- same value/color-threshold logic either way.
+  variant?: 'full' | 'semi';
+}) {
   const p = useChartPalette();
 
   if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) {
@@ -20,14 +28,16 @@ export function RadialGauge({
   const ratio = Math.min(Math.max(value / max, 0), 1);
   const color = ratio >= DANGER_AT ? p.danger : ratio >= WARNING_AT ? p.warning : p.accent;
   const data = [{ name: label ?? 'value', value: ratio * 100 }];
+  const startAngle = variant === 'semi' ? 180 : 90;
+  const endAngle = variant === 'semi' ? 0 : -270;
 
   return (
     <div className="relative h-full w-full">
       <ResponsiveContainer width="100%" height="100%">
         <RadialBarChart
           data={data}
-          startAngle={90}
-          endAngle={-270}
+          startAngle={startAngle}
+          endAngle={endAngle}
           innerRadius="72%"
           outerRadius="100%"
           barSize={12}

@@ -1916,7 +1916,7 @@ export interface components {
             /** Label */
             label: string;
             /** Blocks */
-            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"])[];
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"] | components["schemas"]["StepsBlock"] | components["schemas"]["ButtonsBlock"])[];
         };
         /**
          * AclUpdate
@@ -1933,6 +1933,19 @@ export interface components {
         AclUpdate: {
             /** Acl Group Ids */
             acl_group_ids: string[] | null;
+        };
+        /** ActionButton */
+        ActionButton: {
+            /** Label */
+            label: string;
+            /** Message */
+            message: string;
+            /**
+             * Variant
+             * @default primary
+             * @enum {string}
+             */
+            variant: "primary" | "secondary";
         };
         /** AnswerQualityOut */
         AnswerQualityOut: {
@@ -2251,6 +2264,16 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** ButtonsBlock */
+        ButtonsBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "buttons";
+            /** Items */
+            items: components["schemas"]["ActionButton"][];
+        };
         /** CalloutBlock */
         CalloutBlock: {
             /**
@@ -2267,6 +2290,21 @@ export interface components {
             title?: string | null;
             /** Body */
             body: string;
+        };
+        /** CarouselBlock */
+        CarouselBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "carousel";
+            /** Items */
+            items: components["schemas"]["CarouselItem"][];
+        };
+        /** CarouselItem */
+        CarouselItem: {
+            /** Blocks */
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"] | components["schemas"]["StepsBlock"] | components["schemas"]["ButtonsBlock"])[];
         };
         /** CatalogEntryOut */
         CatalogEntryOut: {
@@ -2312,7 +2350,7 @@ export interface components {
              * Chart
              * @enum {string}
              */
-            chart: "bar" | "line" | "area" | "stacked_area" | "donut" | "radar" | "radial_gauge" | "grouped_bar";
+            chart: "bar" | "line" | "area" | "stacked_area" | "donut" | "radar" | "radial_gauge" | "grouped_bar" | "scatter" | "horizontal_bar" | "sparkline" | "stacked_bars" | "single_stacked_bar" | "pie" | "semi_gauge";
             /** Title */
             title?: string | null;
             /** Subtitle */
@@ -2957,7 +2995,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "text" | "number" | "select" | "multiselect" | "date" | "daterange" | "card_select";
+            kind: "text" | "number" | "select" | "multiselect" | "date" | "daterange" | "card_select" | "slider" | "radio";
             /** Options */
             options?: string[] | null;
             /** Option Details */
@@ -2969,6 +3007,12 @@ export interface components {
             required: boolean;
             /** Placeholder */
             placeholder?: string | null;
+            /** Min */
+            min?: number | null;
+            /** Max */
+            max?: number | null;
+            /** Step */
+            step?: number | null;
         };
         /** GoldenQueryCreate */
         GoldenQueryCreate: {
@@ -3200,7 +3244,7 @@ export interface components {
             citations: components["schemas"]["CitationOut"][];
             feedback: components["schemas"]["FeedbackOut"] | null;
             /** Blocks */
-            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"] | components["schemas"]["AccordionBlock"])[] | null;
+            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"] | components["schemas"]["AccordionBlock"] | components["schemas"]["StepsBlock"] | components["schemas"]["ButtonsBlock"] | components["schemas"]["CarouselBlock"])[] | null;
             /** Attachments */
             attachments?: components["schemas"]["AttachmentOut"][] | null;
             /** Children */
@@ -3933,12 +3977,29 @@ export interface components {
             /** Domains */
             domains: string[];
         };
+        /** StepItem */
+        StepItem: {
+            /** Title */
+            title: string;
+            /** Details */
+            details?: string | null;
+        };
+        /** StepsBlock */
+        StepsBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "steps";
+            /** Items */
+            items: components["schemas"]["StepItem"][];
+        };
         /** TabItem */
         TabItem: {
             /** Label */
             label: string;
             /** Blocks */
-            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"])[];
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"] | components["schemas"]["FollowUpsBlock"] | components["schemas"]["StepsBlock"] | components["schemas"]["ButtonsBlock"])[];
         };
         /** TableBlock */
         TableBlock: {

@@ -38,3 +38,12 @@ test('renders a No data state for empty keys', () => {
   render(<GroupedBar data={data} categoryKey="day" keys={[]} />);
   expect(screen.getByText('No data')).toBeInTheDocument();
 });
+
+test('horizontal swaps the category axis onto Y (still renders one bar series per key)', () => {
+  const { container } = render(
+    <GroupedBar data={data} categoryKey="day" keys={['workspaceA', 'workspaceB']} horizontal />,
+  );
+  expect(container.querySelectorAll('.recharts-bar')).toHaveLength(2);
+  const yAxisTicks = container.querySelectorAll('.recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value');
+  expect(Array.from(yAxisTicks).map((t) => t.textContent)).toEqual(['Mon', 'Tue']);
+});

@@ -15,8 +15,14 @@ const tooltipContentStyle = {
 };
 
 export function DonutChart({
-  data, centerLabel,
-}: { data: { name: string; value: number }[]; centerLabel?: string }) {
+  data, centerLabel, variant = 'donut',
+}: {
+  data: { name: string; value: number }[];
+  centerLabel?: string;
+  // 'pie' drops the donut hole (innerRadius 0) -- same series/legend/tooltip
+  // behavior, just a full pie instead of a ring.
+  variant?: 'donut' | 'pie';
+}) {
   const p = useChartPalette();
 
   if (data.length === 0) {
@@ -34,7 +40,7 @@ export function DonutChart({
             data={data}
             dataKey="value"
             nameKey="name"
-            innerRadius="60%"
+            innerRadius={variant === 'pie' ? 0 : '60%'}
             outerRadius="100%"
             paddingAngle={2}
             {...CHART_ANIMATION}

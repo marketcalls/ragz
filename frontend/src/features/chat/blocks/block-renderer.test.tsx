@@ -103,6 +103,176 @@ test('chart block whose rows have non-numeric values for the value key renders n
   expect(container.textContent).toBe('');
 });
 
+test('chart block (scatter) renders one point per data row', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'scatter',
+      x_key: 'age',
+      keys: ['income'],
+      data: [
+        { age: 25, income: 40000 },
+        { age: 35, income: 60000 },
+        { age: 45, income: 80000 },
+      ],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelectorAll('.recharts-scatter-symbol')).toHaveLength(3);
+});
+
+test('chart block (scatter) with a missing x_key renders nothing', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'scatter', keys: ['income'], data: [{ income: 1 }] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (scatter) with empty data renders nothing', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'scatter', x_key: 'age', keys: ['income'], data: [] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (horizontal_bar) renders a bar per data row', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'horizontal_bar',
+      category_key: 'team',
+      keys: ['score'],
+      data: [
+        { team: 'Alpha', score: 10 },
+        { team: 'Beta', score: 20 },
+      ],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelectorAll('.recharts-bar-rectangle')).toHaveLength(2);
+});
+
+test('chart block (horizontal_bar) with empty data renders nothing', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'horizontal_bar', category_key: 'team', keys: ['score'], data: [] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (sparkline) renders a line', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'sparkline',
+      keys: ['value'],
+      data: [{ value: 1 }, { value: 4 }, { value: 2 }],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelectorAll('.recharts-line')).toHaveLength(1);
+});
+
+test('chart block (sparkline) with a non-numeric value renders nothing', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'sparkline', keys: ['value'], data: [{ value: 'nope' }] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (stacked_bars) renders one bar series per key', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'stacked_bars',
+      x_key: 'day',
+      keys: ['gpt4o', 'claude'],
+      data: [
+        { day: 'Mon', gpt4o: 12, claude: 8 },
+        { day: 'Tue', gpt4o: 18, claude: 10 },
+      ],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelectorAll('.recharts-bar')).toHaveLength(2);
+});
+
+test('chart block (stacked_bars) with empty keys renders nothing', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'stacked_bars', x_key: 'day', keys: [], data: [{ day: 'Mon' }] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (single_stacked_bar) renders one bar segment per key', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'single_stacked_bar',
+      keys: ['approved', 'pending', 'rejected'],
+      data: [{ approved: 40, pending: 30, rejected: 30 }],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelectorAll('.recharts-bar')).toHaveLength(3);
+});
+
+test('chart block (single_stacked_bar) with a non-numeric segment renders nothing', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'single_stacked_bar',
+      keys: ['approved', 'pending'],
+      data: [{ approved: 40, pending: 'nope' }],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (pie) renders one pie sector per data point', () => {
+  const blocks: Block[] = [
+    {
+      type: 'chart',
+      chart: 'pie',
+      category_key: 'model',
+      keys: ['tokens'],
+      data: [
+        { model: 'gpt-4o', tokens: 40 },
+        { model: 'claude', tokens: 60 },
+      ],
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelectorAll('.recharts-pie-sector')).toHaveLength(2);
+});
+
+test('chart block (pie) with malformed data renders nothing', () => {
+  const blocks: Block[] = [{ type: 'chart', chart: 'pie', data: [{ foo: 'bar' }] }];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
+test('chart block (semi_gauge) renders a radial bar', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'semi_gauge', keys: ['value', 'max'], data: [{ value: 42, max: 100 }] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('.recharts-radial-bar-sector')).toBeInTheDocument();
+});
+
+test('chart block (semi_gauge) with a non-finite value renders nothing', () => {
+  const blocks: Block[] = [
+    { type: 'chart', chart: 'semi_gauge', keys: ['value', 'max'], data: [{ value: Number.NaN, max: 100 }] },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(container.querySelector('svg')).not.toBeInTheDocument();
+});
+
 test('info_card renders title, subtitle, and markdown body', () => {
   const blocks: Block[] = [
     {
