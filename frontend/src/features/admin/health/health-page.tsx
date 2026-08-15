@@ -53,7 +53,17 @@ const DEPENDENCY_ROWS: ReadonlyArray<[string, keyof SystemHealthDeps]> = [
   ['Reranker (TEI)', 'reranker'],
 ];
 
-function DependencyStatusBadge({ dep }: { dep: DependencyHealth }) {
+function DependencyStatusBadge({ dep }: { dep: DependencyHealth | undefined }) {
+  // A dep can be absent if the backend predates this probe (version skew) or
+  // omitted the field — render a neutral "Unknown" pill rather than crashing
+  // the whole page on `undefined.status`.
+  if (dep === undefined) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-secondary">
+        Unknown
+      </span>
+    );
+  }
   const ok = dep.status === 'ok';
   return (
     <span
@@ -66,8 +76,8 @@ function DependencyStatusBadge({ dep }: { dep: DependencyHealth }) {
   );
 }
 
-function DependencyLatency({ dep }: { dep: DependencyHealth }) {
-  if (dep.latency_ms === undefined) return <span className="text-secondary">—</span>;
+function DependencyLatency({ dep }: { dep: DependencyHealth | undefined }) {
+  if (dep?.latency_ms === undefined) return <span className="text-secondary">—</span>;
   const slow = dep.status === 'ok' && dep.latency_ms >= SLOW_LATENCY_MS;
   const tone = slow ? 'font-semibold text-warning' : dep.status === 'error' ? 'text-danger' : 'text-ink';
   return (

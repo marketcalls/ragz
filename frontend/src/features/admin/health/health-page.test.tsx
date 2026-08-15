@@ -111,6 +111,27 @@ test('a down reranker renders an Error badge for that dependency while others st
   expect(screen.getAllByText('OK')).toHaveLength(4);
 });
 
+test('an older backend that omits new dependency probes degrades to Unknown rows, not a crash', () => {
+  // Version skew: the frontend renders the new dependency table but the
+  // backend predates these probes, so db/redis/minio/embedder/reranker are
+  // absent from its response. This used to throw `undefined.status` and
+  // white-screen the whole page; now each missing dep is an "Unknown" row.
+  const partial = {
+    queues: healthyHealth.queues,
+    qdrant: healthyHealth.qdrant,
+    litellm: healthyHealth.litellm,
+    orgs: healthyHealth.orgs,
+  } as unknown as SystemHealth;
+  useSystemHealth.mockReturnValue({ data: partial, isPending: false });
+  useClientErrors.mockReturnValue({ data: [], isPending: false });
+
+  render(<HealthPage />);
+
+  // Five dependency rows, all Unknown; page renders instead of crashing.
+  expect(screen.getAllByText('Unknown')).toHaveLength(5);
+  expect(screen.getByText('Embedder (TEI)')).toBeInTheDocument();
+});
+
 test('a slow (high-latency) but healthy dependency is visually flagged distinctly from a normal one', () => {
   const slowHealth: SystemHealth = {
     ...healthyHealth,
