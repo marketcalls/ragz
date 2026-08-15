@@ -1,9 +1,9 @@
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from ragz.core.crypto import load_kek
 from ragz.core.errors import SecretsError
@@ -156,6 +156,33 @@ class Settings(BaseSettings):
     # off by default so a fresh install only pays for the per-user cap.
     web_search_daily_limit_per_user: int = 50
     web_search_daily_limit_per_org: int = 0
+
+    # sec RAGZ-PUB-06 follow-up: IPs/CIDRs of this deployment's own trusted
+    # reverse proxy(ies)/CDN egress ranges (e.g. an ALB, nginx, Cloudflare).
+    # Empty (the default) means trust NONE -- every request's real client IP
+    # is the direct TCP peer, exactly as before this setting existed, so a
+    # fresh install / dev / test needs zero configuration to keep working.
+    # Set this in production ONLY when the app sits behind a real reverse
+    # proxy: `core/client_ip.py::client_ip` then honors `X-Forwarded-For`,
+    # but ONLY when the immediate peer is one of these networks -- from any
+    # other peer, XFF is attacker-controlled and is ignored outright. Accepts
+    # either a comma-separated string (e.g. "10.0.0.0/8, 172.16.5.4") via env
+    # var or a real list programmatically; bare IPs are treated as /32 (or
+    # /128 for IPv6).
+    trusted_proxies: Annotated[list[str], NoDecode] = []
+
+    @field_validator("trusted_proxies", mode="before")
+    @classmethod
+    def _split_trusted_proxies(cls, value: object) -> object:
+        """`NoDecode` above stops pydantic-settings' default JSON-array
+        decode for this field (which would reject a plain comma-separated
+        env var with a confusing JSONDecodeError) -- this validator does the
+        actual parsing instead. A `str` (from the env var) is split on
+        commas; anything else (e.g. a list passed in directly, as tests do)
+        passes through unchanged."""
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     @model_validator(mode="after")
     def _production_fails_closed(self) -> "Settings":

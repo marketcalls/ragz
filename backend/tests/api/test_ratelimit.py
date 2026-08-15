@@ -3,11 +3,14 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from ragz.core import ratelimit as ratelimit_module
-from ragz.core.errors import RateLimitExceeded
-from ragz.core.ratelimit import check_rate_limit
+from ragz.core.config import Settings
+from ragz.core.errors import RagzError, RateLimitExceeded
+from ragz.core.ratelimit import check_rate_limit, rate_limit
 from ragz.modules.auth.models import User
 
 
@@ -107,3 +110,80 @@ async def test_oidc_status_rate_limited(client: httpx.AsyncClient) -> None:
         await client.get("/api/v1/auth/oidc/status")
     r = await client.get("/api/v1/auth/oidc/status")
     assert r.status_code == 429
+
+
+def _build_probe_app(redis_client: Redis, scope: str, limit: int = 2) -> FastAPI:
+    """Minimal standalone app carrying just `rate_limit()` on one route --
+    the real `client` fixture's ASGITransport hardcodes a single fixed peer
+    for its whole lifetime (httpx.ASGITransport's `client` tuple), so these
+    tests build their own app + transport per peer address instead."""
+    app = FastAPI()
+    app.state.redis = redis_client
+
+    @app.exception_handler(RagzError)
+    async def _handle_ragz_error(request: Any, exc: RagzError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+    @app.get("/probe", dependencies=[Depends(rate_limit(scope, limit=limit, window_seconds=60))])
+    async def probe() -> dict[str, bool]:
+        return {"ok": True}
+
+    return app
+
+
+async def test_rate_limit_keys_on_resolved_client_ip_behind_trusted_proxy(
+    redis_client: Redis, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RAGZ-PUB-06 follow-up: behind a configured trusted reverse proxy, two
+    different real clients -- distinguished only by X-Forwarded-For, sharing
+    the same TCP peer (the proxy) -- get INDEPENDENT rate-limit buckets."""
+    trusted_peer = "10.10.10.10"
+    settings = Settings(_env_file=None, trusted_proxies=[f"{trusted_peer}/32"])
+    monkeypatch.setattr(ratelimit_module, "get_settings", lambda: settings)
+
+    app = _build_probe_app(redis_client, scope="probe_trusted")
+    transport = httpx.ASGITransport(app=app, client=(trusted_peer, 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as probe_client:
+        for _ in range(2):
+            assert (
+                await probe_client.get("/probe", headers={"X-Forwarded-For": "1.1.1.1"})
+            ).status_code == 200
+        assert (
+            await probe_client.get("/probe", headers={"X-Forwarded-For": "1.1.1.1"})
+        ).status_code == 429
+
+        # A different real client behind the SAME proxy peer: untouched budget.
+        for _ in range(2):
+            assert (
+                await probe_client.get("/probe", headers={"X-Forwarded-For": "2.2.2.2"})
+            ).status_code == 200
+        assert (
+            await probe_client.get("/probe", headers={"X-Forwarded-For": "2.2.2.2"})
+        ).status_code == 429
+
+
+async def test_rate_limit_ignores_spoofed_xff_from_untrusted_peer(
+    redis_client: Redis, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spoof-resistance guarantee at the rate-limit call site: a direct
+    (non-proxy) caller varying X-Forwarded-For per request must NOT escape
+    the limit by "becoming" a different client each time -- every request
+    shares one bucket keyed on the real (untrusted) peer."""
+    settings = Settings(_env_file=None, trusted_proxies=["10.10.10.10/32"])
+    monkeypatch.setattr(ratelimit_module, "get_settings", lambda: settings)
+
+    app = _build_probe_app(redis_client, scope="probe_untrusted")
+    untrusted_peer = "203.0.113.5"
+    transport = httpx.ASGITransport(app=app, client=(untrusted_peer, 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as probe_client:
+        assert (
+            await probe_client.get("/probe", headers={"X-Forwarded-For": "9.9.9.9"})
+        ).status_code == 200
+        assert (
+            await probe_client.get("/probe", headers={"X-Forwarded-For": "8.8.8.8"})
+        ).status_code == 200
+        # Third request, yet another spoofed identity -- still the same
+        # bucket (keyed on the real peer), so the limit trips here.
+        assert (
+            await probe_client.get("/probe", headers={"X-Forwarded-For": "7.7.7.7"})
+        ).status_code == 429

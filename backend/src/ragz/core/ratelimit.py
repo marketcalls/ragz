@@ -3,6 +3,8 @@ from collections.abc import Awaitable, Callable
 from fastapi import Request
 from redis.asyncio import Redis
 
+from ragz.core.client_ip import client_ip
+from ragz.core.config import get_settings
 from ragz.core.errors import RateLimitExceeded
 
 
@@ -78,9 +80,28 @@ async def record_daily_usage(redis: Redis, key: str, ttl_seconds: int) -> None:
 def rate_limit(
     scope: str, limit: int = 10, window_seconds: int = 60
 ) -> Callable[[Request], Awaitable[None]]:
+    """Per-scope, per-real-client-IP fixed-window limiter (sec RAGZ-PUB-06).
+
+    Keys on `client_ip()` (`core/client_ip.py`), not the raw TCP peer:
+    behind a reverse proxy every caller would otherwise share the proxy's
+    one peer address, making this limiter useless (one caller's traffic
+    throttles every other tenant's). `client_ip()` only trusts
+    `X-Forwarded-For` from a configured trusted proxy -- with
+    `Settings.trusted_proxies` empty (the default), this is byte-for-byte
+    the previous `request.client.host`-keyed behavior.
+
+    `get_settings()` is called directly (not via FastAPI `Depends`) so this
+    guard behaves identically whether it runs as a declared route
+    dependency (the common case) or is invoked directly as
+    `await rate_limit(...)( request)` (oidc.py's callback route, which needs
+    the guard on its own try/except path rather than FastAPI's dependency
+    error path) -- a `Depends(...)` default wouldn't resolve in the latter
+    call shape.
+    """
+
     async def guard(request: Request) -> None:
-        client_ip = request.client.host if request.client else "unknown"
+        ip = client_ip(request, get_settings())
         redis: Redis = request.app.state.redis
-        await check_rate_limit(redis, f"rl:{scope}:{client_ip}", limit, window_seconds)
+        await check_rate_limit(redis, f"rl:{scope}:{ip}", limit, window_seconds)
 
     return guard
