@@ -1,11 +1,16 @@
 import hashlib
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
-from ragz.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
+from ragz.core.errors import (
+    ConflictError,
+    NotFoundError,
+    OrgResourceQuotaExceeded,
+    WorkspaceAccessDenied,
+)
 from ragz.core.storage import build_storage
 from ragz.modules.audit.service import record_audit
 from ragz.modules.documents import folders as folders_service
@@ -15,6 +20,50 @@ from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Group
 from ragz.modules.tenancy.reembed_models import ReembedJob
 from ragz.modules.tenancy.service import get_workspace_checked
+
+
+async def _enforce_org_upload_quota(
+    session: AsyncSession, org_id: UUID, new_file_bytes: int
+) -> None:
+    """sec RAGZ-PUB-03 (bounded slice): per-org document-count + storage-byte
+    caps, checked BEFORE the new document row is created or its bytes are
+    stored (fail fast -- a rejected upload must never orphan a MinIO object or
+    a partial DB row). Either setting at 0 (the default) disables that
+    dimension's check, so a fresh install/dev/test stays unbounded exactly as
+    before this existed.
+
+    Counts/sums every Document row currently owned by the org: a row mid
+    status="deleting" still occupies real Postgres/object-storage space until
+    the worker's delete task actually removes it, so it is intentionally
+    included -- conservative (never under-counts), never exploitable via a
+    slow delete. A new VERSION of an existing document is just another row
+    with its own bytes and is counted the same as any other upload --
+    versioning is not exempted from either cap; keeping one rule for every
+    row is simpler and cannot be worked around by re-uploading under the same
+    filename.
+    """
+    settings = get_settings()
+    if settings.org_max_documents <= 0 and settings.org_max_storage_bytes <= 0:
+        return
+    count, total_bytes = (
+        await session.execute(
+            select(
+                func.count(Document.id),
+                func.coalesce(func.sum(Document.size_bytes), 0),
+            ).where(Document.org_id == org_id)
+        )
+    ).one()
+    if settings.org_max_documents > 0 and count >= settings.org_max_documents:
+        raise OrgResourceQuotaExceeded(
+            f"organization document limit reached ({settings.org_max_documents} documents)"
+        )
+    if (
+        settings.org_max_storage_bytes > 0
+        and total_bytes + new_file_bytes > settings.org_max_storage_bytes
+    ):
+        raise OrgResourceQuotaExceeded(
+            f"organization storage limit reached ({settings.org_max_storage_bytes} bytes)"
+        )
 
 
 async def create_from_upload(
@@ -30,6 +79,7 @@ async def create_from_upload(
     ws = await get_workspace_checked(session, ctx, workspace_id)
     if folder_id is not None:
         await folders_service.get_folder_checked(session, ctx, folder_id, workspace_id=ws.id)
+    await _enforce_org_upload_quota(session, ctx.org_id, len(data))
     reembed_in_progress = (
         await session.execute(
             select(ReembedJob.id).where(

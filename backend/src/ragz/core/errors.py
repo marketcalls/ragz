@@ -72,3 +72,14 @@ class SsrfBlocked(RagzError):
 class QuotaExceeded(RagzError):
     status_code = 429
     title = "Token quota exhausted"
+
+
+class OrgResourceQuotaExceeded(RagzError):
+    """sec RAGZ-PUB-03 (bounded slice): per-org document-count / storage-byte
+    cap reached (modules/documents/service.py::create_from_upload). Distinct
+    from QuotaExceeded (token spend, 429) -- this is a capacity limit on
+    stored resources, so 413 Payload Too Large (mirrors PayloadTooLarge's
+    per-file cap) fits both the count and the byte dimension."""
+
+    status_code = 413
+    title = "Organization storage quota exceeded"

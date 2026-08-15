@@ -157,6 +157,16 @@ class Settings(BaseSettings):
     web_search_daily_limit_per_user: int = 50
     web_search_daily_limit_per_org: int = 0
 
+    # sec RAGZ-PUB-03 (bounded slice): per-ORGANIZATION resource caps enforced
+    # at upload time (modules/documents/service.py::create_from_upload), so a
+    # single tenant cannot fill shared Postgres/Qdrant/object storage without
+    # bound. 0 = disabled (the default) -- a fresh install / dev / test keeps
+    # today's unbounded behavior with zero configuration. Other PUB-03
+    # dimensions (OCR pages, embedding tokens, queue depth, job concurrency,
+    # provider spend) are intentionally OUT of this slice's scope.
+    org_max_documents: int = 0
+    org_max_storage_bytes: int = 0
+
     # sec RAGZ-PUB-06 follow-up: IPs/CIDRs of this deployment's own trusted
     # reverse proxy(ies)/CDN egress ranges (e.g. an ALB, nginx, Cloudflare).
     # Empty (the default) means trust NONE -- every request's real client IP
