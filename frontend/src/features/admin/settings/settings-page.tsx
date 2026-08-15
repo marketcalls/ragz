@@ -13,6 +13,7 @@ import {
   useUpdateProviderSettings,
   type ChunkMethod,
   type CohereRerankModel,
+  type GenerativeUiImages,
   type WebSearchProvider,
 } from './queries';
 
@@ -26,6 +27,7 @@ export function SettingsPage() {
   const [rerank, setRerank] = useState<'local' | 'cohere'>('local');
   const [cohereModel, setCohereModel] = useState<CohereRerankModel>('rerank-v4.0-fast');
   const [webSearch, setWebSearch] = useState<WebSearchProvider>('duckduckgo');
+  const [generativeUiImages, setGenerativeUiImages] = useState<GenerativeUiImages>('off');
   const [defaultChunk, setDefaultChunk] = useState<ChunkMethod>('heading');
   // API keys are write-only: never populated from the query response, always
   // start blank, and are cleared again after every save attempt.
@@ -39,6 +41,7 @@ export function SettingsPage() {
       setRerank(settings.data.rerank_provider);
       setCohereModel(settings.data.cohere_rerank_model);
       setWebSearch(settings.data.web_search_provider);
+      setGenerativeUiImages(settings.data.generative_ui_images);
       setDefaultChunk(settings.data.default_chunk_method);
     }
   }, [settings.data]);
@@ -59,6 +62,7 @@ export function SettingsPage() {
       document_parser: parser,
       rerank_provider: rerank,
       web_search_provider: webSearch,
+      generative_ui_images: generativeUiImages,
       default_chunk_method: defaultChunk,
       // Only sent when Cohere is the selected reranker — matches the spec
       // intent (cohere_rerank_model is a Cohere-only knob) and avoids
@@ -190,6 +194,21 @@ export function SettingsPage() {
                   />
                 </div>
               ) : null}
+              <div>
+                <Label htmlFor="generativeuiimages">Generative UI images</Label>
+                <NativeSelect
+                  id="generativeuiimages"
+                  value={generativeUiImages}
+                  onChange={(e) => setGenerativeUiImages(e.target.value as GenerativeUiImages)}
+                >
+                  <option value="off">Off (no web images)</option>
+                  <option value="web_results">Web search results</option>
+                </NativeSelect>
+                <p className="mt-1 text-xs text-muted">
+                  Show real images from web-search results inside generated cards. Images are
+                  proxied server-side; never loaded directly from third-party hosts.
+                </p>
+              </div>
             </section>
 
             <section className="space-y-3">

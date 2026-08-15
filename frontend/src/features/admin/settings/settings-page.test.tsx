@@ -18,6 +18,7 @@ const settings: ProviderSettings = {
   cohere_rerank_model: 'rerank-v4.0-fast',
   web_search_provider: 'duckduckgo',
   default_chunk_method: 'heading',
+  generative_ui_images: 'off',
   llamaparse_key_set: false,
   cohere_key_set: false,
   tavily_key_set: false,
@@ -177,6 +178,26 @@ test('offers liteparse (the recommended default) as a parser option', async () =
 
   expect(await screen.findByRole('option', { name: /liteparse/i })).toBeInTheDocument();
   expect(screen.getByLabelText(/document parser/i)).toHaveValue('liteparse');
+});
+
+test('renders the generative UI images select defaulting to Off', async () => {
+  render(<SettingsPage />);
+
+  expect(await screen.findByLabelText(/generative ui images/i)).toHaveValue('off');
+});
+
+test('changing generative UI images to web results and saving sends it in the PUT body', async () => {
+  render(<SettingsPage />);
+
+  await userEvent.selectOptions(
+    screen.getByLabelText(/generative ui images/i),
+    'web_results',
+  );
+  await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ generative_ui_images: 'web_results' }),
+  );
 });
 
 test('shows an error message and retry button when the settings query fails', async () => {

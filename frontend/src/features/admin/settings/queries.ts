@@ -11,6 +11,7 @@ import { api } from '@/api/client';
 export type CohereRerankModel = 'rerank-v4.0-fast' | 'rerank-v4.0-pro';
 export type WebSearchProvider = 'duckduckgo' | 'tavily';
 export type ChunkMethod = 'heading' | 'fixed' | 'page' | 'table_qa';
+export type GenerativeUiImages = 'off' | 'web_results';
 
 export interface ProviderSettings {
   document_parser: 'anydoc' | 'docling' | 'llamaparse' | 'liteparse';
@@ -18,6 +19,7 @@ export interface ProviderSettings {
   cohere_rerank_model: CohereRerankModel;
   web_search_provider: WebSearchProvider;
   default_chunk_method: ChunkMethod;
+  generative_ui_images: GenerativeUiImages;
   llamaparse_key_set: boolean;
   cohere_key_set: boolean;
   tavily_key_set: boolean;
@@ -29,6 +31,7 @@ export interface ProviderSettingsUpdate {
   cohere_rerank_model?: CohereRerankModel;
   web_search_provider?: WebSearchProvider;
   default_chunk_method?: ChunkMethod;
+  generative_ui_images?: GenerativeUiImages;
   llamaparse_api_key?: string;
   cohere_api_key?: string;
   tavily_api_key?: string;

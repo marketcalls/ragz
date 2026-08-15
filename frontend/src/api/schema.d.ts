@@ -973,6 +973,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/media/image/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Proxied Image */
+        get: operations["get_proxied_image_api_v1_media_image__ref__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/secrets/{name}": {
         parameters: {
             query?: never;
@@ -3601,6 +3618,11 @@ export interface components {
             llamaparse_key_set: boolean;
             /** Cohere Key Set */
             cohere_key_set: boolean;
+            /**
+             * Generative Ui Images
+             * @enum {string}
+             */
+            generative_ui_images: "off" | "web_results";
         };
         /** ProviderSettingsUpdate */
         ProviderSettingsUpdate: {
@@ -3614,6 +3636,8 @@ export interface components {
             web_search_provider?: ("duckduckgo" | "tavily") | null;
             /** Default Chunk Method */
             default_chunk_method?: ("heading" | "fixed" | "page" | "table_qa") | null;
+            /** Generative Ui Images */
+            generative_ui_images?: ("off" | "web_results") | null;
             /** Llamaparse Api Key */
             llamaparse_api_key?: string | null;
             /** Cohere Api Key */
@@ -6078,6 +6102,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthorizationOut"];
+                };
+            };
+        };
+    };
+    get_proxied_image_api_v1_media_image__ref__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
