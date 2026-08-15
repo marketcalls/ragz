@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,7 +73,14 @@ export function LoginPage() {
           />
         </div>
         <div>
-          <Label htmlFor="password">Password</Label>
+          <div className="mb-1 flex items-center justify-between">
+            <Label htmlFor="password" className="mb-0">
+              Password
+            </Label>
+            <Link to="/forgot-password" className="text-[12px] text-accent hover:underline">
+              Forgot password?
+            </Link>
+          </div>
           <Input
             id="password"
             type="password"

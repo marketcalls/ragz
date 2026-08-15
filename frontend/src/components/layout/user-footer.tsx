@@ -1,4 +1,5 @@
-import { LogOut } from 'lucide-react';
+import { LogOut, UserCog } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { useClaims } from '@/lib/use-claims';
@@ -18,6 +19,11 @@ export function UserFooter() {
       </div>
       <div className="flex items-center">
         <ThemeToggle />
+        <Button variant="ghost" size="icon" aria-label="Account settings" asChild>
+          <Link to="/account">
+            <UserCog className="h-4 w-4" aria-hidden />
+          </Link>
+        </Button>
         <Button variant="ghost" size="icon" aria-label="Sign out" onClick={() => logout.mutate()}>
           <LogOut className="h-4 w-4" aria-hidden />
         </Button>

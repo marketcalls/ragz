@@ -44,6 +44,10 @@ const NO_REFRESH = new Set([
   '/api/v1/auth/login',
   '/api/v1/auth/refresh',
   '/api/v1/auth/invitations/accept',
+  // Wrong current-password 401 on this authenticated route is a real
+  // answer, not an expired access token -- retrying after a refresh would
+  // just double the request without changing the outcome.
+  '/api/v1/auth/change-password',
 ]);
 
 export async function authFetch(input: Request): Promise<Response> {

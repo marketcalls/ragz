@@ -63,3 +63,32 @@ export function useAcceptInvite() {
     },
   });
 }
+
+// Enumeration-safe on the backend already (identical 202 whether or not the
+// email exists) -- callers must not branch UI copy on success vs. error.
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: async (body: { email: string }) => {
+      const { error } = await api.POST('/api/v1/auth/forgot-password', { body });
+      if (error) throw new Error(problemDetail(error));
+    },
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: async (body: { token: string; new_password: string }) => {
+      const { error } = await api.POST('/api/v1/auth/reset-password', { body });
+      if (error) throw new Error(problemDetail(error));
+    },
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: async (body: { current_password: string; new_password: string }) => {
+      const { error } = await api.POST('/api/v1/auth/change-password', { body });
+      if (error) throw new Error(problemDetail(error));
+    },
+  });
+}

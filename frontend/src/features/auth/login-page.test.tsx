@@ -190,3 +190,18 @@ test('safeReturnTo rejects protocol-relative and backslash host-escape targets',
   expect(safeReturnTo('\\\\evil.com')).toBe('/');
   expect(safeReturnTo(42)).toBe('/');
 });
+
+test('shows a "Forgot password?" link to /forgot-password', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: Request) => {
+      if (req.url.includes('/api/v1/auth/oidc/status')) return ssoStatusResponse(false);
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  renderPage();
+  expect(await screen.findByRole('link', { name: 'Forgot password?' })).toHaveAttribute(
+    'href',
+    '/forgot-password',
+  );
+});

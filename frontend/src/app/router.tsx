@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
+import { AccountPage } from '@/features/account/account-page';
 import { ApiKeysPage } from '@/features/admin/api-keys/api-keys-page';
 import { AuditPage } from '@/features/admin/audit/audit-page';
 import { BotsPage } from '@/features/admin/bots/bots-page';
@@ -13,7 +14,9 @@ import { RolesPage } from '@/features/admin/roles/roles-page';
 import { SettingsPage } from '@/features/admin/settings/settings-page';
 import { UsersPage } from '@/features/admin/users/users-page';
 import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
+import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
 import { LoginPage } from '@/features/auth/login-page';
+import { ResetPasswordPage } from '@/features/auth/reset-password-page';
 import { ChatPage } from '@/features/chat/chat-page';
 import { DocumentsPage } from '@/features/documents/documents-page';
 
@@ -26,6 +29,8 @@ export const router = createBrowserRouter([
   { path: '/', element: <LandingGate /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/invite', element: <AcceptInvitePage /> },
+  { path: '/forgot-password', element: <ForgotPasswordPage /> },
+  { path: '/reset-password', element: <ResetPasswordPage /> },
   {
     element: <RequireAuth />,
     children: [
@@ -35,6 +40,7 @@ export const router = createBrowserRouter([
           { path: '/chat', element: <ChatPage /> },
           { path: '/chat/:chatId', element: <ChatPage /> },
           { path: '/documents', element: <DocumentsPage /> },
+          { path: '/account', element: <AccountPage /> },
           {
             element: <RequireRole role="admin" />,
             children: [
