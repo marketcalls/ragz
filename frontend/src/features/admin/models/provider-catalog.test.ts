@@ -28,4 +28,26 @@ describe('PROVIDER_CATALOG', () => {
     expect(by('anthropic')?.models.some((m) => m.litellm_model_name.startsWith('anthropic/'))).toBe(true);
     expect(by('ollama')?.needs_base_url).toBe(true);
   });
+  it('includes the supplemental inference-engine providers as litellm passthroughs', () => {
+    const by = (id: string) => PROVIDER_CATALOG.find((p) => p.id === id);
+    const supplements = ['baseten', 'fireworks-ai', 'cerebras', 'sambanova', 'hyperbolic', 'lambda', 'nebius'];
+    for (const id of supplements) {
+      const p = by(id);
+      expect(p, `provider ${id} present`).toBeDefined();
+      expect(p?.provider_kind).toBe('litellm');
+      expect(p?.needs_api_key).toBe(true);
+      expect(p?.models.length).toBeGreaterThan(0);
+      // supplement models never opt into reasoning by default
+      expect(p?.models.every((m) => !m.supports_reasoning)).toBe(true);
+    }
+  });
+  it('includes the explicitly-required Baseten DeepSeek V4 Flash entry', () => {
+    const baseten = PROVIDER_CATALOG.find((p) => p.id === 'baseten');
+    const flash = baseten?.models.find(
+      (m) => m.litellm_model_name === 'baseten/deepseek-ai/DeepSeek-V4-Flash-0731',
+    );
+    expect(flash).toBeDefined();
+    expect(flash?.display_name).toBe('deepseek-ai/DeepSeek-V4-Flash-0731');
+    expect(flash?.supports_reasoning).toBeFalsy();
+  });
 });

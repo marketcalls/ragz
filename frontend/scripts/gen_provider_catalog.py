@@ -37,6 +37,97 @@ KIND_MAP: dict[str, tuple[str, str, str | None]] = {
 }
 DEFAULT = ("litellm", "", None)  # unknown providers: litellm passthrough, custom-only
 
+# Hand-curated supplement of popular inference-engine providers that ragflow's
+# llm_factories.json does not ship. All route through LiteLLM's verbatim
+# passthrough (provider_kind="litellm") with an API key. Model names are pulled
+# from LiteLLM's authoritative model_catalog snapshot; do NOT set
+# supports_reasoning here (several — e.g. Baseten DeepSeek V4 Flash — reject the
+# reasoning_effort param in LiteLLM, so reasoning must default off).
+# display_name strips the leading LiteLLM provider prefix for readability.
+def _sup(name: str, ctx: int | None = None) -> dict:
+    entry = {
+        "litellm_model_name": name,
+        "display_name": name.split("/", 1)[1] if "/" in name else name,
+        "modality": "chat",
+    }
+    if ctx:
+        entry["context_tokens"] = ctx
+    return entry
+
+def _provider(pid: str, pname: str, models: list[dict]) -> dict:
+    return {
+        "id": pid,
+        "name": pname,
+        "provider_kind": "litellm",
+        "needs_api_key": True,
+        "capabilities": ["chat"],
+        "icon": pid,
+        "models": models,
+    }
+
+SUPPLEMENT: list[dict] = [
+    _provider("baseten", "Baseten", [
+        _sup("baseten/deepseek-ai/DeepSeek-V4-Flash-0731", 1000000),
+        _sup("baseten/deepseek-ai/DeepSeek-V3.1"),
+        _sup("baseten/moonshotai/Kimi-K2-Thinking"),
+        _sup("baseten/moonshotai/Kimi-K2.5"),
+        _sup("baseten/zai-org/GLM-4.7"),
+        _sup("baseten/openai/gpt-oss-120b"),
+        _sup("baseten/deepseek-ai/DeepSeek-V3-0324"),
+    ]),
+    _provider("fireworks-ai", "Fireworks AI", [
+        _sup("fireworks_ai/accounts/fireworks/models/deepseek-v3p1"),
+        _sup("fireworks_ai/accounts/fireworks/models/deepseek-r1-0528"),
+        _sup("fireworks_ai/accounts/fireworks/models/deepseek-v3-0324"),
+        _sup("fireworks_ai/accounts/fireworks/models/llama4-maverick-instruct-basic"),
+        _sup("fireworks_ai/accounts/fireworks/models/llama4-scout-instruct-basic"),
+        _sup("fireworks_ai/accounts/fireworks/models/qwen3-235b-a22b"),
+        _sup("fireworks_ai/accounts/fireworks/models/kimi-k2-instruct"),
+        _sup("fireworks_ai/accounts/fireworks/models/gpt-oss-120b"),
+    ]),
+    _provider("cerebras", "Cerebras", [
+        _sup("cerebras/zai-glm-4.7"),
+        _sup("cerebras/qwen-3-32b"),
+        _sup("cerebras/gpt-oss-120b"),
+        _sup("cerebras/llama-3.3-70b"),
+    ]),
+    _provider("sambanova", "SambaNova", [
+        _sup("sambanova/DeepSeek-V3.1"),
+        _sup("sambanova/DeepSeek-V3.2"),
+        _sup("sambanova/Qwen3-32B"),
+        _sup("sambanova/gpt-oss-120b"),
+        _sup("sambanova/Meta-Llama-3.3-70B-Instruct"),
+        _sup("sambanova/Llama-4-Maverick-17B-128E-Instruct"),
+        _sup("sambanova/DeepSeek-V3-0324"),
+    ]),
+    _provider("hyperbolic", "Hyperbolic", [
+        _sup("hyperbolic/deepseek-ai/DeepSeek-V3-0324"),
+        _sup("hyperbolic/deepseek-ai/DeepSeek-R1-0528"),
+        _sup("hyperbolic/moonshotai/Kimi-K2-Instruct"),
+        _sup("hyperbolic/meta-llama/Llama-3.3-70B-Instruct"),
+        _sup("hyperbolic/Qwen/Qwen3-235B-A22B"),
+        _sup("hyperbolic/meta-llama/Meta-Llama-3.1-405B-Instruct"),
+    ]),
+    _provider("lambda", "Lambda", [
+        _sup("lambda_ai/llama3.3-70b-instruct-fp8"),
+        _sup("lambda_ai/qwen3-32b-fp8"),
+        _sup("lambda_ai/deepseek-v3-0324"),
+        _sup("lambda_ai/deepseek-r1-0528"),
+        _sup("lambda_ai/llama-4-maverick-17b-128e-instruct-fp8"),
+        _sup("lambda_ai/llama-4-scout-17b-16e-instruct"),
+        _sup("lambda_ai/qwen25-coder-32b-instruct"),
+    ]),
+    _provider("nebius", "Nebius", [
+        _sup("nebius/deepseek-ai/DeepSeek-V3-0324"),
+        _sup("nebius/deepseek-ai/DeepSeek-R1-0528"),
+        _sup("nebius/Qwen/Qwen3-235B-A22B"),
+        _sup("nebius/Qwen/Qwen3-32B"),
+        _sup("nebius/meta-llama/Llama-3.3-70B-Instruct"),
+        _sup("nebius/meta-llama/Meta-Llama-3.1-405B-Instruct"),
+        _sup("nebius/google/gemma-3-27b-it"),
+    ]),
+]
+
 def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
@@ -96,6 +187,13 @@ for f in facs:
         "icon": slug(f["name"]),
         "models": models,
     })
+
+existing_ids = {p["id"] for p in providers}
+for sup in SUPPLEMENT:
+    if sup["id"] in existing_ids:
+        raise SystemExit(f"supplement provider id collides with ragflow output: {sup['id']!r}")
+    existing_ids.add(sup["id"])
+    providers.append(sup)
 
 providers.sort(key=lambda p: p["name"].lower())
 header = (

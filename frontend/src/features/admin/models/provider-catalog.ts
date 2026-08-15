@@ -802,6 +802,54 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
     "models": []
   },
   {
+    "id": "baseten",
+    "name": "Baseten",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "baseten",
+    "models": [
+      {
+        "litellm_model_name": "baseten/deepseek-ai/DeepSeek-V4-Flash-0731",
+        "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "modality": "chat",
+        "context_tokens": 1000000
+      },
+      {
+        "litellm_model_name": "baseten/deepseek-ai/DeepSeek-V3.1",
+        "display_name": "deepseek-ai/DeepSeek-V3.1",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "baseten/moonshotai/Kimi-K2-Thinking",
+        "display_name": "moonshotai/Kimi-K2-Thinking",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "baseten/moonshotai/Kimi-K2.5",
+        "display_name": "moonshotai/Kimi-K2.5",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "baseten/zai-org/GLM-4.7",
+        "display_name": "zai-org/GLM-4.7",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "baseten/openai/gpt-oss-120b",
+        "display_name": "openai/gpt-oss-120b",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "baseten/deepseek-ai/DeepSeek-V3-0324",
+        "display_name": "deepseek-ai/DeepSeek-V3-0324",
+        "modality": "chat"
+      }
+    ]
+  },
+  {
     "id": "bedrock",
     "name": "Bedrock",
     "provider_kind": "litellm",
@@ -840,6 +888,38 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
         "display_name": "Qwen/Qwen3-Embedding-0.6B",
         "modality": "embedding",
         "context_tokens": 32768
+      }
+    ]
+  },
+  {
+    "id": "cerebras",
+    "name": "Cerebras",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "cerebras",
+    "models": [
+      {
+        "litellm_model_name": "cerebras/zai-glm-4.7",
+        "display_name": "zai-glm-4.7",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "cerebras/qwen-3-32b",
+        "display_name": "qwen-3-32b",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "cerebras/gpt-oss-120b",
+        "display_name": "gpt-oss-120b",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "cerebras/llama-3.3-70b",
+        "display_name": "llama-3.3-70b",
+        "modality": "chat"
       }
     ]
   },
@@ -1702,6 +1782,58 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
     "models": []
   },
   {
+    "id": "fireworks-ai",
+    "name": "Fireworks AI",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "fireworks-ai",
+    "models": [
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/deepseek-v3p1",
+        "display_name": "accounts/fireworks/models/deepseek-v3p1",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/deepseek-r1-0528",
+        "display_name": "accounts/fireworks/models/deepseek-r1-0528",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/deepseek-v3-0324",
+        "display_name": "accounts/fireworks/models/deepseek-v3-0324",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/llama4-maverick-instruct-basic",
+        "display_name": "accounts/fireworks/models/llama4-maverick-instruct-basic",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/llama4-scout-instruct-basic",
+        "display_name": "accounts/fireworks/models/llama4-scout-instruct-basic",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/qwen3-235b-a22b",
+        "display_name": "accounts/fireworks/models/qwen3-235b-a22b",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/kimi-k2-instruct",
+        "display_name": "accounts/fireworks/models/kimi-k2-instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "fireworks_ai/accounts/fireworks/models/gpt-oss-120b",
+        "display_name": "accounts/fireworks/models/gpt-oss-120b",
+        "modality": "chat"
+      }
+    ]
+  },
+  {
     "id": "futurmix",
     "name": "FuturMix",
     "provider_kind": "litellm",
@@ -2256,6 +2388,48 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
     ],
     "icon": "huggingface",
     "models": []
+  },
+  {
+    "id": "hyperbolic",
+    "name": "Hyperbolic",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "hyperbolic",
+    "models": [
+      {
+        "litellm_model_name": "hyperbolic/deepseek-ai/DeepSeek-V3-0324",
+        "display_name": "deepseek-ai/DeepSeek-V3-0324",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "hyperbolic/deepseek-ai/DeepSeek-R1-0528",
+        "display_name": "deepseek-ai/DeepSeek-R1-0528",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "hyperbolic/moonshotai/Kimi-K2-Instruct",
+        "display_name": "moonshotai/Kimi-K2-Instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "hyperbolic/meta-llama/Llama-3.3-70B-Instruct",
+        "display_name": "meta-llama/Llama-3.3-70B-Instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "hyperbolic/Qwen/Qwen3-235B-A22B",
+        "display_name": "Qwen/Qwen3-235B-A22B",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "hyperbolic/meta-llama/Meta-Llama-3.1-405B-Instruct",
+        "display_name": "meta-llama/Meta-Llama-3.1-405B-Instruct",
+        "modality": "chat"
+      }
+    ]
   },
   {
     "id": "jiekou-ai",
@@ -2860,6 +3034,53 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
     ]
   },
   {
+    "id": "lambda",
+    "name": "Lambda",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "lambda",
+    "models": [
+      {
+        "litellm_model_name": "lambda_ai/llama3.3-70b-instruct-fp8",
+        "display_name": "llama3.3-70b-instruct-fp8",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "lambda_ai/qwen3-32b-fp8",
+        "display_name": "qwen3-32b-fp8",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "lambda_ai/deepseek-v3-0324",
+        "display_name": "deepseek-v3-0324",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "lambda_ai/deepseek-r1-0528",
+        "display_name": "deepseek-r1-0528",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "lambda_ai/llama-4-maverick-17b-128e-instruct-fp8",
+        "display_name": "llama-4-maverick-17b-128e-instruct-fp8",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "lambda_ai/llama-4-scout-17b-16e-instruct",
+        "display_name": "llama-4-scout-17b-16e-instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "lambda_ai/qwen25-coder-32b-instruct",
+        "display_name": "qwen25-coder-32b-instruct",
+        "modality": "chat"
+      }
+    ]
+  },
+  {
     "id": "lm-studio",
     "name": "LM-Studio",
     "provider_kind": "litellm",
@@ -3225,6 +3446,53 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
         "display_name": "deepseek-chat",
         "modality": "chat",
         "context_tokens": 128000
+      }
+    ]
+  },
+  {
+    "id": "nebius",
+    "name": "Nebius",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "nebius",
+    "models": [
+      {
+        "litellm_model_name": "nebius/deepseek-ai/DeepSeek-V3-0324",
+        "display_name": "deepseek-ai/DeepSeek-V3-0324",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "nebius/deepseek-ai/DeepSeek-R1-0528",
+        "display_name": "deepseek-ai/DeepSeek-R1-0528",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "nebius/Qwen/Qwen3-235B-A22B",
+        "display_name": "Qwen/Qwen3-235B-A22B",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "nebius/Qwen/Qwen3-32B",
+        "display_name": "Qwen/Qwen3-32B",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "nebius/meta-llama/Llama-3.3-70B-Instruct",
+        "display_name": "meta-llama/Llama-3.3-70B-Instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "nebius/meta-llama/Meta-Llama-3.1-405B-Instruct",
+        "display_name": "meta-llama/Meta-Llama-3.1-405B-Instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "nebius/google/gemma-3-27b-it",
+        "display_name": "google/gemma-3-27b-it",
+        "modality": "chat"
       }
     ]
   },
@@ -4088,6 +4356,53 @@ export const PROVIDER_CATALOG: CatalogProvider[] = [
         "display_name": "ibm-granite/granite-embedding-278m-multilingual:1f76d42a05f120e12272746d5a2d86b525c13420773f795a4cbef9117d8685f1",
         "modality": "embedding",
         "context_tokens": 512
+      }
+    ]
+  },
+  {
+    "id": "sambanova",
+    "name": "SambaNova",
+    "provider_kind": "litellm",
+    "needs_api_key": true,
+    "capabilities": [
+      "chat"
+    ],
+    "icon": "sambanova",
+    "models": [
+      {
+        "litellm_model_name": "sambanova/DeepSeek-V3.1",
+        "display_name": "DeepSeek-V3.1",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "sambanova/DeepSeek-V3.2",
+        "display_name": "DeepSeek-V3.2",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "sambanova/Qwen3-32B",
+        "display_name": "Qwen3-32B",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "sambanova/gpt-oss-120b",
+        "display_name": "gpt-oss-120b",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "sambanova/Meta-Llama-3.3-70B-Instruct",
+        "display_name": "Meta-Llama-3.3-70B-Instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "sambanova/Llama-4-Maverick-17B-128E-Instruct",
+        "display_name": "Llama-4-Maverick-17B-128E-Instruct",
+        "modality": "chat"
+      },
+      {
+        "litellm_model_name": "sambanova/DeepSeek-V3-0324",
+        "display_name": "DeepSeek-V3-0324",
+        "modality": "chat"
       }
     ]
   },
