@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
 from ragz.core.config import get_settings
-from ragz.core.errors import NotFoundError, PayloadTooLarge, WorkspaceAccessDenied
+from ragz.core.errors import (
+    ConflictError,
+    NotFoundError,
+    PayloadTooLarge,
+    WorkspaceAccessDenied,
+)
 from ragz.core.storage import build_storage
 from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents import metadata as metadata_service
@@ -38,6 +43,13 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 # etc. still run unconditionally.
 UploadDep = Annotated[TenantContext, Depends(require_action("documents.upload"))]
 DeleteDep = Annotated[TenantContext, Depends(require_action("documents.delete"))]
+# Per-document Reindex: re-runs the chunk->embed ingest pipeline for one
+# document (same mutation class as an upload/ingest -- it (re)writes the
+# document's index points), so it reuses the existing WRITE action
+# "documents.upload" rather than minting a new permission. That action is held
+# by admin/contributor and is NOT in DEFAULT_USER_PERMISSIONS, so a plain
+# reader cannot trigger a reindex.
+ReindexDep = Annotated[TenantContext, Depends(require_action("documents.upload"))]
 # Task 5 (RBAC-03): document listing had no permission gate at all -- any
 # authenticated member could list regardless of role-template contents.
 ListDep = Annotated[TenantContext, Depends(require_action("documents.list"))]
@@ -185,6 +197,37 @@ async def delete_document(
     await session.commit()
     enqueue_delete(doc.id, ctx.user_id)
     return {"status": "deletion scheduled"}
+
+
+@router.post("/documents/{document_id}/reindex", status_code=202)
+async def reindex_document(
+    document_id: UUID, session: SessionDep, ctx: ReindexDep
+) -> dict[str, str]:
+    """Re-runs the chunk->embed ingest pipeline for a single document
+    (enqueue_reindex -> documents.reindex Celery task). This route only
+    ENQUEUES: if the document's stored raw file/artifacts are missing the job
+    fails at parse like any other ingest failure -- that's surfaced on the
+    document's status, not here.
+
+    ACL-CRITICAL (identical posture to get_document_file): a reindex acts on
+    the document's CONTENT, so user_can_access_document is re-checked
+    explicitly after get_document_checked -- a plain member who can SEE a
+    restricted document in a listing but isn't in its ACL group must get the
+    same non-leaking denial as an unknown document, never a reindex.
+    """
+    doc = await service.get_document_checked(session, ctx, document_id)
+    if not service.user_can_access_document(ctx, doc):
+        raise WorkspaceAccessDenied("workspace not found or not accessible")
+    # Only reindex from a settled state: an already-queued/processing document
+    # is mid-ingest (a second reindex would race it) and a deleting one is on
+    # its way out. indexed (refresh/re-embed) and failed (retry) are the two
+    # states where a manual reindex is meaningful.
+    if doc.status not in ("indexed", "failed"):
+        raise ConflictError(
+            "document is not in a reindexable state (must be indexed or failed)"
+        )
+    enqueue_reindex(doc.id)
+    return {"status": "reindexing"}
 
 
 # sec RAGZ-PUB-01: the former combined PATCH /documents/{id} took only CtxDep

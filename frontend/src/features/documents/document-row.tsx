@@ -1,4 +1,4 @@
-import { Check, Lock, Pin, Tags, Trash2, Undo2 } from 'lucide-react';
+import { Check, Lock, Pin, RotateCw, Tags, Trash2, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DocumentOut, MetadataFieldOut } from '@/api/types';
@@ -13,7 +13,7 @@ import { useClaims } from '@/lib/use-claims';
 
 import { AclDialog } from './acl-dialog';
 import { MetadataDialog } from './metadata-dialog';
-import { useSetApproved } from './queries';
+import { useReindexDocument, useSetApproved } from './queries';
 import { formatBytes, statusPresentation } from './status';
 
 export function DocumentRow({
@@ -45,6 +45,11 @@ export function DocumentRow({
   const { tone, label } = statusPresentation(doc);
   const restricted = Boolean(doc.acl_group_ids && doc.acl_group_ids.length > 0);
   const setApproved = useSetApproved(workspaceId);
+  const reindex = useReindexDocument(workspaceId);
+  // Reindex re-runs chunk->embed for the document. Only meaningful from a
+  // settled state (mirrors the backend's 409 guard): a document that is
+  // already indexed (refresh) or failed (retry).
+  const canReindex = doc.status === 'indexed' || doc.status === 'failed';
   return (
     <TR className={dimmed ? 'opacity-60' : undefined}>
       <TD className="max-w-[320px] truncate font-medium">
@@ -98,6 +103,23 @@ export function DocumentRow({
             aria-hidden
           />
         </Button>
+        {canReindex ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Reindex ${doc.filename}`}
+            title="Re-run indexing for this document"
+            disabled={reindex.isPending}
+            onClick={() =>
+              reindex.mutate(doc.id, {
+                onSuccess: () => toast.success('Reindexing…'),
+                onError: (err) => toast.error(err.message),
+              })
+            }
+          >
+            <RotateCw className="h-4 w-4" aria-hidden />
+          </Button>
+        ) : null}
         {isAdmin ? (
           <Button
             variant="ghost"

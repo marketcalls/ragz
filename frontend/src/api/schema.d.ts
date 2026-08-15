@@ -482,6 +482,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reindex Document
+         * @description Re-runs the chunk->embed ingest pipeline for a single document
+         *     (enqueue_reindex -> documents.reindex Celery task). This route only
+         *     ENQUEUES: if the document's stored raw file/artifacts are missing the job
+         *     fails at parse like any other ingest failure -- that's surfaced on the
+         *     document's status, not here.
+         *
+         *     ACL-CRITICAL (identical posture to get_document_file): a reindex acts on
+         *     the document's CONTENT, so user_can_access_document is re-checked
+         *     explicitly after get_document_checked -- a plain member who can SEE a
+         *     restricted document in a listing but isn't in its ACL group must get the
+         *     same non-leaking denial as an unknown document, never a reindex.
+         */
+        post: operations["reindex_document_api_v1_documents__document_id__reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{document_id}/pin": {
         parameters: {
             query?: never;
@@ -4622,6 +4652,39 @@ export interface operations {
         };
     };
     delete_document_api_v1_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reindex_document_api_v1_documents__document_id__reindex_post: {
         parameters: {
             query?: never;
             header?: never;

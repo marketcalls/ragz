@@ -60,6 +60,20 @@ export function usePinDocument(workspaceId: string | null) {
   });
 }
 
+export function useReindexDocument(workspaceId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (documentId: string) => {
+      const { data, error } = await api.POST('/api/v1/documents/{document_id}/reindex', {
+        params: { path: { document_id: documentId } },
+      });
+      if (error) throw new Error(problemDetail(error));
+      return data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
+  });
+}
+
 export function useSetApproved(workspaceId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

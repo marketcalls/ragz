@@ -126,6 +126,40 @@ test('admins see the approve toggle and can approve a document', async () => {
   expect(JSON.parse(await req.clone().text())).toEqual({ approved: true });
 });
 
+test('reindex button is shown for an indexed document and calls the reindex route', async () => {
+  const fetchMock = vi.fn(
+    async (_req: Request) =>
+      new Response(JSON.stringify({ status: 'reindexing' }), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  const user = userEvent.setup();
+  renderRow();
+
+  await user.click(screen.getByRole('button', { name: 'Reindex report.pdf' }));
+
+  await waitFor(() =>
+    expect(fetchMock.mock.calls.some(([req]: [Request]) => req.url.includes('/reindex'))).toBe(
+      true,
+    ),
+  );
+  const req = fetchMock.mock.calls.find(([r]: [Request]) => r.url.includes('/reindex'))![0] as Request;
+  expect(req.method).toBe('POST');
+  expect(req.url).toContain('/api/v1/documents/d1/reindex');
+});
+
+test('reindex button is shown for a failed document', () => {
+  renderRow({ status: 'failed' });
+  expect(screen.getByRole('button', { name: 'Reindex report.pdf' })).toBeInTheDocument();
+});
+
+test('reindex button is hidden while the document is still processing', () => {
+  renderRow({ status: 'processing' });
+  expect(screen.queryByRole('button', { name: 'Reindex report.pdf' })).not.toBeInTheDocument();
+});
+
 test('admins can unapprove an approved document', async () => {
   setAccessToken(tokenFor('admin'));
   const fetchMock = stubFetchForApproval(false);

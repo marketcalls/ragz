@@ -148,6 +148,10 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/workspaces/{workspace_id}/documents"): "documents.list",
     ("GET", "/api/v1/documents/{document_id}/file"): "documents.content.read",
     ("DELETE", "/api/v1/documents/{document_id}"): "documents.delete",
+    # Per-document Reindex re-runs the ingest pipeline (a WRITE to the index),
+    # so it reuses "documents.upload" -- enforced via require_action, so it is
+    # NOT a _ROLE_ONLY_ENFORCEMENT exception.
+    ("POST", "/api/v1/documents/{document_id}/reindex"): "documents.upload",
     # sec RAGZ-PUB-01: the former combined PATCH /documents/{id} (pin AND move
     # under auth-only) is split into two single-action endpoints.
     ("PATCH", "/api/v1/documents/{document_id}/pin"): "documents.pin",
