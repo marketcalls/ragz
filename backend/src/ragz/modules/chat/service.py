@@ -24,6 +24,7 @@ from ragz.core.config import Settings, get_settings
 from ragz.core.db import naive_utc
 from ragz.core.errors import ConflictError, NotFoundError, UpstreamError
 from ragz.core.storage import build_storage
+from ragz.modules.auth.models import User
 from ragz.modules.chat.agent import AgentGathered, AgentStep, AgentToolResult, run_agent_gather
 from ragz.modules.chat.blocks import validate_blocks
 from ragz.modules.chat.blocks_emit import generate_blocks
@@ -1093,11 +1094,14 @@ class FeedbackQueueRow:
     comment: str | None
     citations: list[Citation]
     created_at: datetime
+    user_id: UUID | None
+    user_email: str | None
 
 
 async def list_feedback_queue(
     session: AsyncSession, ctx: TenantContext,
-    *, rating: str = "down", workspace_id: UUID | None = None,
+    *, rating: str | None = None, workspace_id: UUID | None = None,
+    user_id: UUID | None = None, start: datetime | None = None, end: datetime | None = None,
     cursor: str | None = None, limit: int = 50,
 ) -> tuple[list[FeedbackQueueRow], str | None]:
     """Keyset-paginated, org-scoped (iron rule 1: every org-owned-table query
@@ -1107,11 +1111,19 @@ async def list_feedback_queue(
         select(MessageFeedback, Message, Chat)
         .join(Message, Message.id == MessageFeedback.message_id)
         .join(Chat, Chat.id == Message.chat_id)
-        .where(Chat.org_id == ctx.org_id, MessageFeedback.rating == rating)
+        .where(Chat.org_id == ctx.org_id)
         .order_by(MessageFeedback.created_at.desc(), MessageFeedback.message_id.desc())
     )
+    if rating is not None:
+        stmt = stmt.where(MessageFeedback.rating == rating)
     if workspace_id is not None:
         stmt = stmt.where(Chat.workspace_id == workspace_id)
+    if user_id is not None:
+        stmt = stmt.where(MessageFeedback.created_by == user_id)
+    if start is not None:
+        stmt = stmt.where(MessageFeedback.created_at >= start)
+    if end is not None:
+        stmt = stmt.where(MessageFeedback.created_at < end)
     if cursor:
         try:
             ts_raw, id_raw = cursor.split("|", 1)
@@ -1162,6 +1174,20 @@ async def list_feedback_queue(
         ).scalars():
             citations_by_message[c.message_id].append(c)
 
+    # Batch-load the feedback authors' emails (iron rule 1: re-scope on
+    # ctx.org_id at this query site too).
+    author_ids = [fb.created_by for fb, _, _ in rows if fb.created_by is not None]
+    authors: dict[UUID, str] = {}
+    if author_ids:
+        authors = {
+            u.id: u.email
+            for u in (
+                await session.execute(
+                    select(User).where(User.id.in_(author_ids), User.org_id == ctx.org_id)
+                )
+            ).scalars()
+        }
+
     result = [
         FeedbackQueueRow(
             message_id=m.id, chat_id=chat.id, workspace_id=chat.workspace_id,
@@ -1173,6 +1199,8 @@ async def list_feedback_queue(
             answer=m.content, rating=fb.rating, comment=fb.comment,
             citations=sorted(citations_by_message.get(m.id, []), key=lambda c: c.marker),
             created_at=fb.created_at,
+            user_id=fb.created_by,
+            user_email=authors.get(fb.created_by) if fb.created_by is not None else None,
         )
         for fb, m, chat in rows
     ]

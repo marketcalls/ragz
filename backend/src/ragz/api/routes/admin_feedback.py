@@ -26,6 +26,8 @@ class FeedbackQueueItemOut(BaseModel):
     comment: str | None
     citations: list[CitationOut]
     created_at: datetime
+    user_id: UUID | None
+    user_email: str | None
 
 
 class FeedbackQueuePageOut(BaseModel):
@@ -37,13 +39,17 @@ class FeedbackQueuePageOut(BaseModel):
 async def get_feedback_queue(
     session: SessionDep,
     ctx: AdminDep,
-    rating: str = "down",
+    rating: str | None = None,
     workspace_id: UUID | None = None,
+    user_id: UUID | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> FeedbackQueuePageOut:
     rows, next_cursor = await service.list_feedback_queue(
-        session, ctx, rating=rating, workspace_id=workspace_id, cursor=cursor, limit=limit,
+        session, ctx, rating=rating, workspace_id=workspace_id,
+        user_id=user_id, start=start, end=end, cursor=cursor, limit=limit,
     )
     return FeedbackQueuePageOut(
         items=[
@@ -52,6 +58,7 @@ async def get_feedback_queue(
                 question=r.question, answer=r.answer, rating=r.rating, comment=r.comment,
                 citations=[CitationOut.model_validate(c) for c in r.citations],
                 created_at=r.created_at,
+                user_id=r.user_id, user_email=r.user_email,
             )
             for r in rows
         ],

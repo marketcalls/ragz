@@ -2656,6 +2656,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** User Id */
+            user_id: string | null;
+            /** User Email */
+            user_email: string | null;
         };
         /** FeedbackQueuePageOut */
         FeedbackQueuePageOut: {
@@ -6250,8 +6254,11 @@ export interface operations {
     get_feedback_queue_api_v1_admin_feedback_get: {
         parameters: {
             query?: {
-                rating?: string;
+                rating?: string | null;
                 workspace_id?: string | null;
+                user_id?: string | null;
+                start?: string | null;
+                end?: string | null;
                 cursor?: string | null;
                 limit?: number;
             };

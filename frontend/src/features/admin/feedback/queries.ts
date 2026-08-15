@@ -5,6 +5,9 @@ import { api } from '@/api/client';
 export type FeedbackFilters = {
   rating?: string;
   workspace_id?: string;
+  user_id?: string;
+  start?: string;
+  end?: string;
 };
 
 export function useFeedbackQueue(filters: FeedbackFilters) {
