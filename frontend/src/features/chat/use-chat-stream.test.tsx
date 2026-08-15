@@ -195,7 +195,7 @@ test('tool_result frames accumulate into toolResults, paired to their agent_step
       type: 'tool_result',
       result: {
         n: 1, tool: 'web_search',
-        results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+        results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test', snippet: 'ISO 45001 is an OHS standard.' }],
       },
     },
     { type: 'token', delta: 'Per ISO 45001.' },
@@ -221,7 +221,7 @@ test('tool_result frames accumulate into toolResults, paired to their agent_step
   expect(result.current.toolResults).toEqual([
     {
       n: 1, tool: 'web_search',
-      results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+      results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test', snippet: 'ISO 45001 is an OHS standard.' }],
     },
   ]);
 });
@@ -231,7 +231,7 @@ test('toolResults resets to empty on a fresh send (back to IDLE)', async () => {
     async (_url: string, _body: unknown, onEvent: (e: ChatSseEvent) => void) => {
       onEvent({
         type: 'tool_result',
-        result: { n: 1, tool: 'web_search', results: [{ title: 't', url: 'https://x.test', source: 'x.test' }] },
+        result: { n: 1, tool: 'web_search', results: [{ title: 't', url: 'https://x.test', source: 'x.test', snippet: '' }] },
       });
     },
   );

@@ -292,6 +292,7 @@ async def test_web_search_tool_produces_url_citations(
                 "title": web_searcher.results[0].title,
                 "url": web_searcher.results[0].url,
                 "source": "example.test",
+                "snippet": web_searcher.results[0].snippet,
             },
         ]
         sources = next(d for n, d in frames if n == "sources")["sources"]
@@ -405,9 +406,11 @@ async def test_web_search_tool_result_frame_bounded_and_hostname_parsed(
     leading www. stripped -- a hostile/misbehaving search provider can't
     inflate the SSE stream or the rendered card."""
     long_title = "x" * 500
+    long_snippet = "y" * 800
     results = [
         WebResult(
-            title=f"{long_title}-{i}", url=f"https://www.example{i}.test/path", snippet="s",
+            title=f"{long_title}-{i}", url=f"https://www.example{i}.test/path",
+            snippet=long_snippet,
         )
         for i in range(12)
     ]
@@ -451,6 +454,7 @@ async def test_web_search_tool_result_frame_bounded_and_hostname_parsed(
     assert len(items) == 8  # capped, not the 12 the searcher returned
     assert all(len(item["title"]) <= 200 for item in items)
     assert all(len(item["url"]) <= 2048 for item in items)
+    assert all(len(item["snippet"]) <= 300 for item in items)  # snippet bounded too
     assert items[0]["source"] == "example0.test"  # leading www. stripped
 
 

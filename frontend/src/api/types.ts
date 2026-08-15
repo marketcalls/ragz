@@ -206,6 +206,7 @@ export interface ToolResultItem {
   title: string;
   url: string;
   source: string;
+  snippet: string;
 }
 
 export interface ToolResultInfo {

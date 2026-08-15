@@ -1265,6 +1265,7 @@ def persist_stopped_detached(
 _TOOL_RESULT_MAX_ITEMS = 8
 _TOOL_RESULT_TITLE_MAX_CHARS = 200
 _TOOL_RESULT_URL_MAX_CHARS = 2048
+_TOOL_RESULT_SNIPPET_MAX_CHARS = 300
 _TOOL_RESULT_SOURCE_MAX_CHARS = 100
 
 
@@ -1292,6 +1293,7 @@ def _tool_result_items(web_results: Sequence[WebResult]) -> list[ToolResultItem]
             title=r.title[:_TOOL_RESULT_TITLE_MAX_CHARS],
             url=r.url[:_TOOL_RESULT_URL_MAX_CHARS],
             source=_web_result_source(r.url),
+            snippet=r.snippet[:_TOOL_RESULT_SNIPPET_MAX_CHARS],
         )
         for r in web_results[:_TOOL_RESULT_MAX_ITEMS]
     ]

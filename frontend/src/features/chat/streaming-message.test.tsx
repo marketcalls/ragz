@@ -95,7 +95,7 @@ test('agentSteps/toolResults captured live flow through to the "Behind the scene
           {
             n: 1,
             tool: 'web_search',
-            results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+            results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test', snippet: 'ISO 45001 is an OHS standard.' }],
           },
         ],
       }}

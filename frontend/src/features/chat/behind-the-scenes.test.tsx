@@ -36,8 +36,18 @@ test('a web_search step with results is expandable and lists title + source host
       n: 1,
       tool: 'web_search',
       results: [
-        { title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' },
-        { title: 'Seeking Alpha take', url: 'https://www.seekingalpha.com/x', source: 'seekingalpha.com' },
+        {
+          title: 'ISO 45001 overview',
+          url: 'https://example.test/iso',
+          source: 'example.test',
+          snippet: 'ISO 45001 is an OHS standard.',
+        },
+        {
+          title: 'Seeking Alpha take',
+          url: 'https://www.seekingalpha.com/x',
+          source: 'seekingalpha.com',
+          snippet: 'Analysts weigh in on the outlook.',
+        },
       ],
     },
   ];
@@ -48,8 +58,10 @@ test('a web_search step with results is expandable and lists title + source host
   await user.click(card);
   expect(screen.getByText('ISO 45001 overview')).toBeInTheDocument();
   expect(screen.getByText('example.test')).toBeInTheDocument();
+  expect(screen.getByText('ISO 45001 is an OHS standard.')).toBeInTheDocument();
   expect(screen.getByText('Seeking Alpha take')).toBeInTheDocument();
   expect(screen.getByText('seekingalpha.com')).toBeInTheDocument();
+  expect(screen.getByText('Analysts weigh in on the outlook.')).toBeInTheDocument();
 });
 
 test('a non-web_search step (or a web_search step without results) is not expandable', async () => {
@@ -68,7 +80,7 @@ test('a non-http(s) result url renders as plain text, never as a link', async ()
     {
       n: 1,
       tool: 'web_search',
-      results: [{ title: 'Suspicious result', url: 'javascript:alert(1)', source: '' }],
+      results: [{ title: 'Suspicious result', url: 'javascript:alert(1)', source: '', snippet: '' }],
     },
   ];
   const user = userEvent.setup();
@@ -86,7 +98,14 @@ test('an http(s) result url renders as a link with safe target/rel attributes', 
     {
       n: 1,
       tool: 'web_search',
-      results: [{ title: 'ISO 45001 overview', url: 'https://example.test/iso', source: 'example.test' }],
+      results: [
+        {
+          title: 'ISO 45001 overview',
+          url: 'https://example.test/iso',
+          source: 'example.test',
+          snippet: 'ISO 45001 is an OHS standard.',
+        },
+      ],
     },
   ];
   const user = userEvent.setup();

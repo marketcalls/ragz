@@ -97,7 +97,8 @@ def test_blocks_event_empty() -> None:
 def test_tool_result_event_shape() -> None:
     items = [
         ToolResultItem(
-            title="ISO 45001 overview", url="https://example.test/iso", source="example.test"
+            title="ISO 45001 overview", url="https://example.test/iso", source="example.test",
+            snippet="ISO 45001 is an OHS standard.",
         ),
     ]
     e = tool_result_event(n=1, tool="web_search", results=items)
@@ -107,7 +108,7 @@ def test_tool_result_event_shape() -> None:
         "tool": "web_search",
         "results": [
             {"title": "ISO 45001 overview", "url": "https://example.test/iso",
-             "source": "example.test"},
+             "source": "example.test", "snippet": "ISO 45001 is an OHS standard."},
         ],
     }
 

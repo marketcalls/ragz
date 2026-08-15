@@ -10,6 +10,9 @@ import { cn } from '@/lib/cn';
 // persisted (chat/service.py doesn't write them to Message), so a reloaded
 // history shows no section at all. That's an accepted gap, not a bug: the
 // underlying citations/answer are unaffected.
+//
+// Web-search results render as openui-inspired source cards: favicon +
+// hostname header, title link, and a short snippet of context.
 
 function isHttpUrl(url: string): boolean {
   try {
@@ -20,25 +23,57 @@ function isHttpUrl(url: string): boolean {
   }
 }
 
-function ToolResultRow({ result }: { result: ToolResultItem }) {
+// Favicon for a result's hostname. Uses DuckDuckGo's icon service (DDG is the
+// default web-search provider, so it's the consistent, privacy-respecting
+// choice), rel=no-referrer so the chat URL never leaks, and falls back to a
+// neutral globe glyph the moment the icon 404s or the host is blank/non-http.
+function Favicon({ hostname }: { hostname: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!hostname || failed) {
+    return <Globe className="h-4 w-4 shrink-0 text-muted" aria-hidden />;
+  }
   return (
-    <li className="flex items-center gap-2 rounded px-2 py-1.5 text-[12px] hover:bg-subtle">
-      <Globe className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
-      {isHttpUrl(result.url) ? (
+    <img
+      src={`https://icons.duckduckgo.com/ip3/${hostname}.ico`}
+      alt=""
+      aria-hidden
+      width={16}
+      height={16}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="h-4 w-4 shrink-0 rounded-sm"
+    />
+  );
+}
+
+function SourceCard({ result }: { result: ToolResultItem }) {
+  const http = isHttpUrl(result.url);
+  return (
+    <li className="rounded-md border border-line bg-bg p-2.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted">
+        <Favicon hostname={http ? result.source : ''} />
+        <span className="min-w-0 truncate">{result.source || 'web'}</span>
+      </div>
+      {http ? (
         <a
           href={result.url}
           target="_blank"
           rel="noreferrer noopener"
-          className="min-w-0 flex-1 truncate text-ink underline-offset-2 hover:underline"
+          className="block text-[12.5px] font-medium text-ink underline-offset-2 hover:underline"
         >
           {result.title}
         </a>
       ) : (
-        // Non-http(s) url from the search provider: render as plain text,
-        // never as a link (no javascript:/data: hrefs reach the DOM).
-        <span className="min-w-0 flex-1 truncate text-ink">{result.title}</span>
+        // Non-http(s) url from the search provider: render as plain text, never
+        // as a link (no javascript:/data: hrefs reach the DOM).
+        <span className="block text-[12.5px] font-medium text-ink">{result.title}</span>
       )}
-      <span className="shrink-0 text-muted">{result.source}</span>
+      {result.snippet ? (
+        <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-secondary">
+          {result.snippet}
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -60,7 +95,11 @@ function StepCard({ step, result }: { step: AgentStepInfo; result?: ToolResultIn
           expandable && 'cursor-pointer hover:text-ink',
         )}
       >
-        <Search className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+        {step.tool === 'web_search' ? (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+        ) : (
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+        )}
         <span className="min-w-0 flex-1 truncate">
           Called the <span className="font-medium text-ink">{step.tool}</span> tool
         </span>
@@ -75,8 +114,8 @@ function StepCard({ step, result }: { step: AgentStepInfo; result?: ToolResultIn
         ) : null}
       </button>
       {expandable && expanded ? (
-        <ul className="space-y-0.5 border-t border-line px-1.5 py-1.5">
-          {result?.results.map((r, i) => <ToolResultRow key={`${r.url}-${i}`} result={r} />)}
+        <ul className="grid gap-1.5 border-t border-line p-1.5">
+          {result?.results.map((r, i) => <SourceCard key={`${r.url}-${i}`} result={r} />)}
         </ul>
       ) : null}
     </div>
