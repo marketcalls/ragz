@@ -24,6 +24,29 @@ async def check_rate_limit(redis: Redis, key: str, limit: int, window_seconds: i
         raise RateLimitExceeded("rate limit exceeded, retry later")
 
 
+async def peek_rate_limit(redis: Redis, key: str, limit: int) -> None:
+    """Raise RateLimitExceeded if `key` is already AT/OVER `limit`, WITHOUT
+    incrementing. Pairs with `record_failure` to build a failure-only throttle
+    (RAGZ-PUB-06): a limiter that increments on every attempt would let an
+    attacker lock a victim's account just by flooding it, and would count a
+    legitimate user's successful logins toward the cap. Here the counter only
+    advances on actual failures (`record_failure`), and this read-only check
+    gates the next attempt."""
+    raw = await redis.get(key)
+    if raw is not None and int(raw) >= limit:
+        raise RateLimitExceeded("rate limit exceeded, retry later")
+
+
+async def record_failure(redis: Redis, key: str, window_seconds: int) -> None:
+    """INCR a failure counter and arm its window TTL (nx, self-healing) in one
+    pipeline. Same fixed-window mechanics as check_rate_limit, but split from
+    the check so callers increment ONLY on a failed outcome."""
+    pipe = redis.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, window_seconds, nx=True)
+    await pipe.execute()
+
+
 def rate_limit(
     scope: str, limit: int = 10, window_seconds: int = 60
 ) -> Callable[[Request], Awaitable[None]]:

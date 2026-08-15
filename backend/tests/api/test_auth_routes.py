@@ -26,6 +26,54 @@ async def test_login_bad_password_problem_json(
     assert r.json()["title"] == "Authentication failed"
 
 
+async def test_failed_login_increments_account_failure_counter(
+    client: httpx.AsyncClient, seeded_user: User, redis_client
+) -> None:
+    """RAGZ-PUB-06: a failed login advances the per-account failure counter."""
+    r = await client.post("/api/v1/auth/login", json={"email": "a@acme.com", "password": "bad"})
+    assert r.status_code == 401
+    assert int(await redis_client.get("rl:login_account:a@acme.com")) == 1
+
+
+async def test_login_account_throttle_blocks_even_correct_password(
+    client: httpx.AsyncClient, seeded_user: User, redis_client
+) -> None:
+    """RAGZ-PUB-06: once an account is at its failed-attempt cap (as a
+    distributed botnet would drive it, spread across IPs the per-IP limiter
+    never sees), the next attempt is throttled BEFORE the credential check --
+    proven here with the CORRECT password still returning 429."""
+    await redis_client.set("rl:login_account:a@acme.com", 10)  # _LOGIN_ACCOUNT_MAX_FAILURES
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}
+    )
+    assert r.status_code == 429
+
+
+async def test_successful_login_clears_account_failure_counter(
+    client: httpx.AsyncClient, seeded_user: User, redis_client
+) -> None:
+    """A real user who mistyped a few times isn't left throttled once they get
+    in: a success below the cap clears the counter."""
+    await redis_client.set("rl:login_account:a@acme.com", 5)
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}
+    )
+    assert r.status_code == 200
+    assert await redis_client.get("rl:login_account:a@acme.com") is None
+
+
+async def test_login_account_throttle_is_per_account(
+    client: httpx.AsyncClient, seeded_user: User, redis_client
+) -> None:
+    """The cap is keyed per account, so throttling one email does not block
+    another."""
+    await redis_client.set("rl:login_account:someone-else@acme.com", 10)
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}
+    )
+    assert r.status_code == 200  # a different account is unaffected
+
+
 async def test_refresh_and_logout(client: httpx.AsyncClient, seeded_user: User) -> None:
     r = await client.post(
         "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}
