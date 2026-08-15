@@ -127,6 +127,29 @@ async def test_change_password_rate_limited(
     assert r.status_code == 429
 
 
+async def test_change_password_invalidates_old_access_token(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    """sec RAGZ-PUB-06: the access token used to authenticate the
+    change-password call itself is now minted-before-the-bump -- it must be
+    rejected on the very next request, well before its 15-min JWT expiry. A
+    fresh login (new password) mints a token that validates normally."""
+    headers = await _login_headers(client, seeded_user.email, "pw123456")
+    r = await client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "pw123456", "new_password": "new-password-123"},
+        headers=headers,
+    )
+    assert r.status_code == 204
+
+    stale = await client.get("/api/v1/me/authorization", headers=headers)
+    assert stale.status_code == 401
+
+    fresh_headers = await _login_headers(client, seeded_user.email, "new-password-123")
+    fresh = await client.get("/api/v1/me/authorization", headers=fresh_headers)
+    assert fresh.status_code == 200
+
+
 async def test_change_password_min_length_validation(
     client: httpx.AsyncClient, seeded_user: User
 ) -> None:

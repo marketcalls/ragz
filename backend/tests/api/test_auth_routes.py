@@ -74,6 +74,21 @@ async def test_login_account_throttle_is_per_account(
     assert r.status_code == 200  # a different account is unaffected
 
 
+async def test_login_token_carries_current_security_version(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    """sec RAGZ-PUB-06: login mints an access token stamped with the user's
+    CURRENT security_version, and that token validates normally on an
+    authenticated route."""
+    r = await client.post(
+        "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}
+    )
+    assert r.status_code == 200
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    me = await client.get("/api/v1/me/authorization", headers=headers)
+    assert me.status_code == 200
+
+
 async def test_refresh_and_logout(client: httpx.AsyncClient, seeded_user: User) -> None:
     r = await client.post(
         "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}

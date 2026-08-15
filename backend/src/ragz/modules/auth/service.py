@@ -72,6 +72,7 @@ async def _issue_pair(
     await session.commit()
     access = issue_access_token(
         user_id=user.id, org_id=user.org_id, role=user.role,
+        security_version=user.security_version,
         signing_key=signing_key, ttl_seconds=settings.access_token_ttl_seconds,
     )
     return TokenPair(access_token=access, refresh_token=raw_refresh)
@@ -285,6 +286,10 @@ async def reset_password(
         raise AuthenticationError("invalid or expired reset token")
     user.password_hash = hash_password(new_password)
     token.used_at = now.replace(tzinfo=None)
+    # sec RAGZ-PUB-06: bump so every access token minted before this reset --
+    # still live for up to 15 more minutes otherwise -- stops validating on
+    # its next request (tenancy.context.get_tenant_context's sv check).
+    user.security_version += 1
     await _revoke_all_refresh_tokens(session, user.id)
     await record_audit(
         session, org_id=user.org_id, actor_id=user.id, action="password.reset",
@@ -317,6 +322,10 @@ async def change_password(
     if not verify_password(user.password_hash, current_password):
         raise AuthenticationError("current password is incorrect")
     user.password_hash = hash_password(new_password)
+    # sec RAGZ-PUB-06: bump so every access token minted before this change --
+    # still live for up to 15 more minutes otherwise -- stops validating on
+    # its next request (tenancy.context.get_tenant_context's sv check).
+    user.security_version += 1
     await _revoke_all_refresh_tokens(session, user.id)
     await record_audit(
         session, org_id=user.org_id, actor_id=user.id, action="password.changed",

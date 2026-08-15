@@ -267,6 +267,38 @@ async def test_reset_password_revokes_all_refresh_tokens(
     assert refresh.status_code == 401
 
 
+async def test_reset_password_invalidates_old_access_token(
+    client: httpx.AsyncClient, seeded_user: User, recorder: _Recorder
+) -> None:
+    """sec RAGZ-PUB-06: an access token minted before the reset must be
+    rejected on its next use, not survive until its 15-min JWT expiry. A
+    fresh login (new password) mints a token that validates normally."""
+    login = await client.post(
+        "/api/v1/auth/login", json={"email": seeded_user.email, "password": "pw123456"}
+    )
+    assert login.status_code == 200
+    stale_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    await client.post("/api/v1/auth/forgot-password", json={"email": seeded_user.email})
+    token = recorder.raw_token()
+    r = await client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": token, "new_password": "new-password-123"},
+    )
+    assert r.status_code == 204
+
+    stale = await client.get("/api/v1/me/authorization", headers=stale_headers)
+    assert stale.status_code == 401
+
+    new = await client.post(
+        "/api/v1/auth/login",
+        json={"email": seeded_user.email, "password": "new-password-123"},
+    )
+    fresh_headers = {"Authorization": f"Bearer {new.json()['access_token']}"}
+    fresh = await client.get("/api/v1/me/authorization", headers=fresh_headers)
+    assert fresh.status_code == 200
+
+
 async def test_reset_password_sends_changed_email(
     client: httpx.AsyncClient, seeded_user: User, recorder: _Recorder
 ) -> None:

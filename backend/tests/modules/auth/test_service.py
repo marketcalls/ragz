@@ -5,11 +5,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import get_or_create_signing_key
 from ragz.core.config import Settings
 from ragz.core.errors import AuthenticationError
 from ragz.modules.auth.models import RefreshToken, User
 from ragz.modules.auth.passwords import hash_password
 from ragz.modules.auth.service import login, login_oidc, logout, rotate_refresh
+from ragz.modules.auth.tokens import decode_access_token
 from ragz.modules.tenancy.models import Organization
 
 SETTINGS = Settings(_env_file=None)
@@ -123,6 +125,32 @@ async def test_expired_revoked_token_inside_grace_still_rejected(
     # benign rejection (not a theft signal): the winner's session survives
     pair3 = await rotate_refresh(session, raw_refresh=pair2.refresh_token, settings=SETTINGS)
     assert pair3.refresh_token
+
+
+async def test_rotate_refresh_after_security_version_bump_reissues_current_sv(
+    session: AsyncSession,
+) -> None:
+    """sec RAGZ-PUB-06: rotate_refresh re-loads the user row on every call, so
+    a refresh presented AFTER security_version was bumped mints a NEW access
+    token stamped with the CURRENT value -- re-syncing that session instead
+    of being permanently locked out like a stale access token is. Bumps the
+    column directly (not via change_password/reset_password, which also
+    revoke every refresh-token family) to isolate this exact code path."""
+    user = await make_user(session)
+    pair1 = await login(
+        session, email="u@acme.com", password="pw123456", settings=SETTINGS  # noqa: S106
+    )
+    signing_key = await get_or_create_signing_key(session, SETTINGS)
+    old_claims = decode_access_token(pair1.access_token, signing_key)
+    assert old_claims.sv == 0
+
+    user.security_version = 1
+    session.add(user)
+    await session.commit()
+
+    pair2 = await rotate_refresh(session, raw_refresh=pair1.refresh_token, settings=SETTINGS)
+    new_claims = decode_access_token(pair2.access_token, signing_key)
+    assert new_claims.sv == 1
 
 
 async def test_logout_revoked_token_gets_no_grace(session: AsyncSession) -> None:

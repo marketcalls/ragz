@@ -159,6 +159,13 @@ async def get_tenant_context(
     user = result.scalar_one_or_none()
     if user is None or not user.active:
         raise AuthenticationError("unknown or inactive user")
+    if claims.sv != user.security_version:
+        # sec RAGZ-PUB-06: the token was minted before the user's most recent
+        # password change/reset (which bumps security_version) -- reject even
+        # though the JWT itself hasn't hit its 15-min expiry yet. Refresh
+        # rotation re-reads the CURRENT security_version (auth.service's
+        # _issue_pair), so a refresh after the change re-syncs and works.
+        raise AuthenticationError("token invalidated by credential change")
     return await build_context_for_user(session, user)
 
 
