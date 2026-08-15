@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from ragz.api.routes.admin_audit import router as admin_audit_router
 from ragz.api.routes.admin_bots import router as admin_bots_router
@@ -35,7 +36,13 @@ from ragz.api.routes.superadmin_ops import router as superadmin_ops_router
 from ragz.api.routes.usage import router as usage_router
 from ragz.api.routes.users import router as users_router
 from ragz.api.routes.workspaces import router as workspaces_router
-from ragz.core.config import get_settings
+from ragz.api.security_middleware import (
+    BodySizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+    body_size_ceiling_bytes,
+    trusted_hosts_for,
+)
+from ragz.core.config import Settings, get_settings
 from ragz.core.db import build_engine, build_session_factory
 from ragz.core.errors import RagzError
 from ragz.core.logging import configure_logging
@@ -79,12 +86,21 @@ def create_app(
     llm_completer: LLMCompleter | None = None,
     web_searcher: WebSearcher | None = None,
     bot_outbound_transport: httpx.AsyncBaseTransport | None = None,
+    settings: Settings | None = None,
 ) -> FastAPI:
     configure_logging()
+    if settings is None:
+        settings = get_settings()
+    # RAGZ-PUB-09: Swagger UI + the raw OpenAPI schema are a reconnaissance
+    # gift to an attacker (routes, param shapes, auth scheme) -- gate both
+    # off in production while leaving dev/test/staging exactly as before.
+    docs_enabled = settings.environment != "production"
     app = FastAPI(
-        title="Ragz", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=_lifespan
+        title="Ragz",
+        docs_url="/api/docs" if docs_enabled else None,
+        openapi_url="/api/openapi.json" if docs_enabled else None,
+        lifespan=_lifespan,
     )
-    settings = get_settings()
     if session_factory is None:
         session_factory = build_session_factory(
             build_engine(
@@ -178,7 +194,24 @@ def create_app(
     app.include_router(external_router, prefix="/external/v1")
     app.include_router(bots_router, prefix="/external/bots")
 
+    # Middleware order: Starlette runs the LAST-added `add_middleware` call
+    # OUTERMOST (first on the request, last on the response). RequestID and
+    # SecurityHeaders are added first here so TrustedHost + BodySizeLimit end
+    # up outermost -- rejecting a bad Host or an oversized body before any
+    # inner work (request-id binding, route handling) ever runs. Effective
+    # stack, outer -> inner: TrustedHost -> BodySizeLimit -> SecurityHeaders
+    # -> RequestID -> (Starlette's own exception handling) -> routes.
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(
+        SecurityHeadersMiddleware, hsts=(settings.environment == "production")
+    )
+    app.add_middleware(
+        BodySizeLimitMiddleware, max_bytes=body_size_ceiling_bytes(settings.max_upload_mb)
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=trusted_hosts_for(settings.environment, settings.public_api_base_url),
+    )
 
     if settings.sentry_dsn:
         try:
