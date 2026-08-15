@@ -243,10 +243,12 @@ async def request_password_reset(
             ),
             settings=settings,
         )
-    except EmailError:
+    except EmailError as exc:
         # Best-effort: a provider outage must never surface to the caller
-        # (enum-safety) nor block the token from having been issued.
-        structlog.get_logger().error("password_reset_email_failed", exc_info=True)
+        # (enum-safety) nor block the token from having been issued. Log the
+        # error MESSAGE only (no exc_info) so a raw reset token that lives in
+        # this scope can never reach the logs via a traceback frame (Rule 3).
+        structlog.get_logger().error("password_reset_email_failed", error=str(exc))
 
 
 async def reset_password(
@@ -254,9 +256,15 @@ async def reset_password(
 ) -> None:
     token = (
         await session.execute(
-            select(PasswordResetToken).where(
+            select(PasswordResetToken)
+            .where(
                 PasswordResetToken.token_hash == _hash(raw_token, settings.api_key_pepper)
             )
+            # RAGZ-PUB-06 review: lock the row so single-use is atomic. Without
+            # this, two concurrent requests carrying the same raw token can both
+            # read used_at IS NULL and both succeed. Mirrors rotate_refresh's
+            # with_for_update() on the refresh token.
+            .with_for_update()
         )
     ).scalar_one_or_none()
     now = datetime.now(UTC)
