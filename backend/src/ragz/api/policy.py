@@ -251,6 +251,11 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/usage/me/daily"): "quota.read",
     ("GET", "/api/v1/admin/usage/summary"): "analytics.view",
     ("GET", "/api/v1/admin/usage/orgs"): "analytics.view",
+    # reports (design 2026-08-15): both declare the reports.view.self FLOOR
+    # (enforced via require_action, so no _ROLE_ONLY_ENFORCEMENT entry needed);
+    # per-scope escalation (department/org/platform) is in-handler.
+    ("GET", "/api/v1/reports/usage"): "reports.view.self",
+    ("GET", "/api/v1/reports/usage/export"): "reports.view.self",
     # ops
     ("GET", "/api/v1/superadmin/health"): "platform.health",
     ("POST", "/api/v1/client-errors"): "client_errors.report",

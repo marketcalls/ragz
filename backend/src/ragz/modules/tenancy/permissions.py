@@ -39,6 +39,14 @@ PERMISSIONS = frozenset({
     "analytics.view", "feedback.review", "evals.read", "evals.manage", "evals.run",
     "platform.health", "platform.orgs.manage", "settings.manage",
     "client_errors.report",
+    # Cost reporting (design 2026-08-15): scoped usage/cost views. self is the
+    # member floor (in DEFAULT_USER_PERMISSIONS below); department/org are
+    # auto-held by admins (non-carve-out). platform is superadmin-only and is
+    # NEVER trusted from this action alone -- reports.py enforces it with an
+    # explicit ctx.role == "superadmin" check, because an org admin auto-holds
+    # every non-carve-out action including this one.
+    "reports.view.self", "reports.view.department",
+    "reports.view.org", "reports.view.platform",
     # Legacy (kept for backward compatibility with persisted RoleTemplate rows;
     # no route checks this flag after Task 6 retires it from new grants)
     "chat.use",
@@ -52,4 +60,7 @@ PERMISSIONS = frozenset({
 DEFAULT_USER_PERMISSIONS = frozenset({
     "workspace.read", "documents.list", "documents.content.read",
     "search.execute", "chat.read", "chat.generate",
+    # Every member may always see their OWN usage/cost (reports.view.self is
+    # the scoped-reporting floor; wider scopes require an explicit grant).
+    "reports.view.self",
 })

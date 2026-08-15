@@ -31,6 +31,7 @@ from ragz.api.routes.health import router as health_router
 from ragz.api.routes.me import router as me_router
 from ragz.api.routes.models import router as models_router
 from ragz.api.routes.oidc import router as oidc_router
+from ragz.api.routes.reports import router as reports_router
 from ragz.api.routes.search import router as search_router
 from ragz.api.routes.settings import router as settings_router
 from ragz.api.routes.superadmin_ops import router as superadmin_ops_router
@@ -191,6 +192,7 @@ def create_app(
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(chats_router, prefix="/api/v1")
     app.include_router(usage_router, prefix="/api/v1")
+    app.include_router(reports_router, prefix="/api/v1")
     app.include_router(client_errors_router, prefix="/api/v1")
     app.include_router(superadmin_ops_router, prefix="/api/v1")
     app.include_router(external_router, prefix="/external/v1")
