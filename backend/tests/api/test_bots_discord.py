@@ -13,6 +13,7 @@ httpx client call returns (see api/routes/models.py's background-sync
 tests), so the deferred followup send is observable synchronously here."""
 
 import json
+import time
 from uuid import uuid4
 
 import httpx
@@ -42,9 +43,15 @@ _PRIVATE_KEY = Ed25519PrivateKey.generate()
 DISCORD_PUBLIC_KEY_HEX = _PRIVATE_KEY.public_key().public_bytes_raw().hex()
 
 
-def _discord_headers(body: bytes, timestamp: str = "1700000000") -> dict[str, str]:
-    signature = _PRIVATE_KEY.sign(timestamp.encode() + body).hex()
-    return {"x-signature-ed25519": signature, "x-signature-timestamp": timestamp}
+def _discord_headers(body: bytes, timestamp: str | None = None) -> dict[str, str]:
+    # RAGZ-PUB-10: verify_discord now rejects a stale X-Signature-Timestamp,
+    # so the default here must be "now" (was a fixed 2023 epoch value, which
+    # every existing test in this file implicitly relied on being accepted
+    # forever) -- individual tests still pass an explicit stale `timestamp`
+    # to exercise that rejection path.
+    ts = timestamp if timestamp is not None else str(int(time.time()))
+    signature = _PRIVATE_KEY.sign(ts.encode() + body).hex()
+    return {"x-signature-ed25519": signature, "x-signature-timestamp": ts}
 
 
 @pytest.fixture
@@ -142,6 +149,126 @@ async def test_valid_command_acks_deferred_and_sends_followup(
     assert r.json() == {"type": 5}
     assert len(outbound.calls) == 1
     assert outbound.calls[0].url.path == "/api/v10/webhooks/app1/interaction-tok/messages/@original"
+
+
+async def test_replayed_interaction_id_is_ignored_no_second_outbound_call(
+    discord_client: httpx.AsyncClient, discord_env, outbound: OutboundRecorder
+) -> None:
+    """RAGZ-PUB-10: Discord's signature stays valid for the whole freshness
+    window verify_discord now enforces -- a replay inside that window must
+    still be caught by the interaction `id` dedup claim. The replay still
+    acks the same deferred response (so Discord doesn't retry) but triggers
+    no second relay/followup."""
+    body = json.dumps(
+        {
+            "type": 2, "id": "interaction-replay-1", "channel_id": "C1",
+            "application_id": "app1", "token": "interaction-tok",
+            "data": {
+                "name": "ask",
+                "options": [{"name": "question", "type": 3, "value": "what was revenue?"}],
+            },
+        }
+    ).encode()
+    headers = _discord_headers(body)
+    r1 = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body, headers=headers,
+    )
+    r2 = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body, headers=headers,
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == {"type": 5}
+    assert len(outbound.calls) == 1
+
+
+async def test_new_interaction_id_after_replay_still_processes(
+    discord_client: httpx.AsyncClient, discord_env, outbound: OutboundRecorder
+) -> None:
+    def _command(interaction_id: str) -> bytes:
+        return json.dumps(
+            {
+                "type": 2, "id": interaction_id, "channel_id": "C1",
+                "application_id": "app1", "token": "interaction-tok",
+                "data": {
+                    "name": "ask",
+                    "options": [{"name": "question", "type": 3, "value": "q"}],
+                },
+            }
+        ).encode()
+
+    first = _command("interaction-a")
+    second = _command("interaction-b")
+    r1 = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=first,
+        headers=_discord_headers(first),
+    )
+    r2 = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=second,
+        headers=_discord_headers(second),
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert len(outbound.calls) == 2
+
+
+async def test_ping_repeats_without_dedup(discord_client: httpx.AsyncClient, discord_env) -> None:
+    """PING/PONG (the handshake) carries no interaction dedup concern and
+    must keep working every time Discord re-probes it during setup."""
+    body = json.dumps({"type": 1}).encode()
+    r1 = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body,
+        headers=_discord_headers(body),
+    )
+    r2 = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body,
+        headers=_discord_headers(body),
+    )
+    assert r1.status_code == 200 and r1.json() == {"type": 1}
+    assert r2.status_code == 200 and r2.json() == {"type": 1}
+
+
+async def test_stale_timestamp_returns_401_with_no_relay_or_outbound(
+    discord_client: httpx.AsyncClient, discord_env, outbound: OutboundRecorder,
+    retriever: FakeRetriever, streamer: FakeStreamer,
+) -> None:
+    body = json.dumps({"type": 1}).encode()
+    stale_ts = str(int(time.time()) - 400)  # > 5 min old
+    r = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body,
+        headers=_discord_headers(body, timestamp=stale_ts),
+    )
+    assert r.status_code == 401
+    assert retriever.calls == []
+    assert streamer.calls == []
+    assert outbound.calls == []
+
+
+async def test_failed_signature_does_not_claim_dedup_key(
+    discord_client: httpx.AsyncClient, discord_env, outbound: OutboundRecorder
+) -> None:
+    body = json.dumps(
+        {
+            "type": 2, "id": "interaction-badsig", "channel_id": "C1",
+            "application_id": "app1", "token": "interaction-tok",
+            "data": {
+                "name": "ask",
+                "options": [{"name": "question", "type": 3, "value": "q"}],
+            },
+        }
+    ).encode()
+    bad_headers = _discord_headers(body)
+    bad_headers["x-signature-ed25519"] = "00" * 64
+    bad = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body, headers=bad_headers,
+    )
+    assert bad.status_code == 401
+    good = await discord_client.post(
+        f"/external/bots/discord/{discord_env.webhook_id}", content=body,
+        headers=_discord_headers(body),
+    )
+    assert good.status_code == 200, good.text
+    assert len(outbound.calls) == 1  # the earlier 401 never claimed the interaction id
 
 
 async def test_tampered_signature_returns_401_with_no_relay_or_outbound(

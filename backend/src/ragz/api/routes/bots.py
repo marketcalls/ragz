@@ -17,6 +17,7 @@ from ragz.api.bots_relay import answer_for_integration
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import AuthenticationError, BadRequestError, PayloadTooLarge, UpstreamError
+from ragz.core.idempotency import claim_once
 from ragz.core.ratelimit import check_rate_limit, rate_limit
 from ragz.modules.bots import platforms
 from ragz.modules.bots import service as bots_service
@@ -61,12 +62,29 @@ _bot_webhook_ip_limit = Depends(rate_limit("bot_webhook_probe", limit=120, windo
 # platforms via `_read_bounded_body` below.
 _WEBHOOK_BODY_MAX_BYTES = 64 * 1024
 
+# RAGZ-PUB-10: TTL for the replay-claim keys below. A signature-verified
+# delivery is only ever "fresh" (Slack/Discord's own skew tolerance) for
+# _SLACK_MAX_SKEW_SECONDS/_DISCORD_MAX_SKEW_SECONDS = 300s each (verify.py);
+# this window is deliberately 3x that so a claim outlives the longest window
+# a still-validly-signed replay could arrive in, plus headroom for Telegram
+# (which has no signed timestamp at all, so its only replay defense IS this
+# claim) and for ordinary platform retry storms.
+_WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 900
+
 
 async def _rate_limit_bot_webhook(request: Request, integration_id: UUID) -> None:
     await check_rate_limit(
         request.app.state.redis, f"rl:bot_webhook:integration:{integration_id}",
         _INBOUND_LIMIT, _INBOUND_WINDOW_SECONDS,
     )
+
+
+async def _claim_webhook_delivery(request: Request, key: str) -> bool:
+    """Wraps `claim_once` with the shared TTL -- returns True if this is the
+    first time `key` has been seen (caller should do the relay/LLM/outbound
+    work), False if it's a replay/retry (caller must skip that work but
+    still return the platform's expected success response)."""
+    return await claim_once(request.app.state.redis, key, _WEBHOOK_IDEMPOTENCY_TTL_SECONDS)
 
 
 async def _read_bounded_body(request: Request) -> bytes:
@@ -131,6 +149,30 @@ async def telegram_webhook(
         # work. Nothing below this line has executed yet.
         raise AuthenticationError("invalid telegram signature")
     payload = _parse_json(raw_body)
+    # RAGZ-PUB-10: Telegram's secret-token header (verify_telegram) has no
+    # timestamp bound into it -- a captured valid delivery stays replayable
+    # for as long as the secret is unrotated, not just a signature-skew
+    # window -- so `update_id` (unique per update, present on every real
+    # Telegram delivery) is the ONLY replay defense here. Claimed before any
+    # parse/relay work; a losing claim still 200s (Telegram's expected ack)
+    # so Telegram stops retrying, but does no LLM/outbound work.
+    update_id = payload.get("update_id")
+    if isinstance(update_id, int):
+        key = f"webhook_seen:telegram:{integration.webhook_id}:{update_id}"
+        if not await _claim_webhook_delivery(request, key):
+            structlog.get_logger().info(
+                "webhook_replay_ignored", platform="telegram",
+                webhook_id=str(integration.webhook_id), unique_id=update_id,
+            )
+            return {"ok": True}
+    else:
+        # Fail safe rather than fail closed: an update shape with no
+        # update_id (shouldn't happen for real Telegram traffic) skips dedup
+        # rather than crashing the route.
+        structlog.get_logger().info(
+            "webhook_dedup_skipped_no_id", platform="telegram",
+            webhook_id=str(integration.webhook_id),
+        )
     parsed = platforms.parse_telegram_update(payload)
     if parsed is None:
         return {"ok": True}  # non-text update (e.g. /start, a sticker) -- nothing to relay
@@ -206,10 +248,33 @@ async def slack_webhook(
         raise AuthenticationError("invalid slack signature")
     payload = _parse_json(raw_body)
     if payload.get("type") == "url_verification":
+        # Handshake stays exempt from dedup (it's not a chat delivery, and
+        # Slack may legitimately re-probe it during setup) -- but it's still
+        # gated behind the signature check above, unchanged.
         return {"challenge": payload.get("challenge")}
     parsed = platforms.parse_slack_event(payload)
     if parsed is None:
         return {"ok": True}  # non-message event, or our own bot's message (loop guard)
+    # RAGZ-PUB-10: Slack's own 5-minute timestamp-skew check (verify_slack)
+    # bounds how long a captured signature stays valid, but a replay WITHIN
+    # that window still isn't caught by signature verification alone --
+    # `event_id` (unique per Events API delivery) closes that gap. A losing
+    # claim still acks 200 (so Slack's own retry-on-non-200 behavior doesn't
+    # kick in) but skips the background relay/outbound task entirely.
+    event_id = payload.get("event_id")
+    if isinstance(event_id, str) and event_id:
+        key = f"webhook_seen:slack:{integration.webhook_id}:{event_id}"
+        if not await _claim_webhook_delivery(request, key):
+            structlog.get_logger().info(
+                "webhook_replay_ignored", platform="slack",
+                webhook_id=str(integration.webhook_id), unique_id=event_id,
+            )
+            return {"ok": True}
+    else:
+        structlog.get_logger().info(
+            "webhook_dedup_skipped_no_id", platform="slack",
+            webhook_id=str(integration.webhook_id),
+        )
     external_chat_id, text = parsed
     # Ack within Slack's sub-3-second Events API window; the actual RAG
     # relay + outbound send happen in the background after this returns.
@@ -266,10 +331,33 @@ async def discord_webhook(
         raise AuthenticationError("invalid discord signature")
     payload = _parse_json(raw_body)
     if payload.get("type") == 1:  # PING
+        # Handshake stays exempt from dedup (Discord re-PINGs during setup
+        # verification) -- but it's still gated behind the signature check
+        # above, unchanged.
         return {"type": 1}  # PONG
     parsed = platforms.parse_discord_interaction(payload)
     if parsed is None:
         return {"type": 4, "data": {"content": "Sorry, I couldn't understand that command."}}
+    # RAGZ-PUB-10: verify_discord now rejects a stale X-Signature-Timestamp
+    # (see its docstring), but a replay delivered WITHIN that freshness
+    # window still passes signature verification -- `id` (the interaction's
+    # own unique snowflake) closes that gap. A losing claim still acks with
+    # the same deferred response Discord expects (so it doesn't retry) but
+    # skips the background relay/followup task entirely.
+    interaction_id = payload.get("id")
+    if isinstance(interaction_id, str) and interaction_id:
+        key = f"webhook_seen:discord:{integration.webhook_id}:{interaction_id}"
+        if not await _claim_webhook_delivery(request, key):
+            structlog.get_logger().info(
+                "webhook_replay_ignored", platform="discord",
+                webhook_id=str(integration.webhook_id), unique_id=interaction_id,
+            )
+            return {"type": 5}
+    else:
+        structlog.get_logger().info(
+            "webhook_dedup_skipped_no_id", platform="discord",
+            webhook_id=str(integration.webhook_id),
+        )
     external_chat_id, text = parsed
     application_id = str(payload.get("application_id", ""))
     interaction_token = str(payload.get("token", ""))

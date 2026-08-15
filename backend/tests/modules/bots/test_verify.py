@@ -36,15 +36,30 @@ def test_verify_slack_valid_tampered_body_wrong_secret_and_stale() -> None:
 def test_verify_discord_valid_tampered_and_bad_signature() -> None:
     private_key = Ed25519PrivateKey.generate()
     public_key_hex = private_key.public_key().public_bytes_raw().hex()
-    timestamp = "1700000000"
+    now = int(time.time())
+    timestamp = str(now)
     body = b'{"type":1}'
     signature_hex = private_key.sign(timestamp.encode() + body).hex()
     headers = {"x-signature-ed25519": signature_hex, "x-signature-timestamp": timestamp}
-    assert verify.verify_discord(headers, body, public_key_hex)
-    assert not verify.verify_discord(headers, b'{"type":2}', public_key_hex)  # tampered body
+    assert verify.verify_discord(headers, body, public_key_hex, now=now)
+    assert not verify.verify_discord(headers, b'{"type":2}', public_key_hex, now=now)  # tampered
     other_key_hex = Ed25519PrivateKey.generate().public_key().public_bytes_raw().hex()
-    assert not verify.verify_discord(headers, body, other_key_hex)  # wrong public key
+    assert not verify.verify_discord(headers, body, other_key_hex, now=now)  # wrong public key
     missing_sig_headers = {"x-signature-timestamp": timestamp}
-    assert not verify.verify_discord(missing_sig_headers, body, public_key_hex)  # missing sig
+    assert not verify.verify_discord(missing_sig_headers, body, public_key_hex, now=now)  # no sig
     bad_hex_headers = {"x-signature-ed25519": "not-hex!!", "x-signature-timestamp": timestamp}
-    assert not verify.verify_discord(bad_hex_headers, body, public_key_hex)  # not valid hex
+    assert not verify.verify_discord(bad_hex_headers, body, public_key_hex, now=now)  # not hex
+
+
+def test_verify_discord_stale_timestamp_rejected() -> None:
+    """RAGZ-PUB-10: X-Signature-Timestamp is signed (part of the Ed25519
+    message), so unlike Telegram it's a forgery-resistant value worth
+    freshness-checking -- mirrors verify_slack's stale-timestamp guard."""
+    private_key = Ed25519PrivateKey.generate()
+    public_key_hex = private_key.public_key().public_bytes_raw().hex()
+    now = int(time.time())
+    stale_timestamp = str(now - 400)  # > 5 min old
+    body = b'{"type":1}'
+    signature_hex = private_key.sign(stale_timestamp.encode() + body).hex()
+    headers = {"x-signature-ed25519": signature_hex, "x-signature-timestamp": stale_timestamp}
+    assert not verify.verify_discord(headers, body, public_key_hex, now=now)

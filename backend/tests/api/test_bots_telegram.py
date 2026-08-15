@@ -168,6 +168,82 @@ async def test_missing_signature_returns_401(
     assert outbound.calls == []
 
 
+async def test_replayed_update_id_is_ignored_no_second_outbound_call(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+) -> None:
+    """RAGZ-PUB-10: a captured, still-validly-signed delivery replayed with
+    the same update_id must NOT trigger a second relay/LLM/outbound round --
+    only the first delivery of a given update_id does real work; the replay
+    still gets a 200 (Telegram's expected ack) so it stops retrying."""
+    integration, _doc = telegram_env
+    body = _update_body("what was revenue?")
+    headers = {
+        "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET, "content-type": "application/json",
+    }
+    r1 = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=body, headers=headers,
+    )
+    r2 = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=body, headers=headers,
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == {"ok": True}
+    assert len(outbound.calls) == 1  # only the first delivery relayed/sent
+
+
+async def test_new_update_id_after_replay_still_processes(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+) -> None:
+    """A different update_id from the same integration is NOT deduped against
+    a prior one -- dedup is per-id, not a blanket per-integration lockout."""
+    integration, _doc = telegram_env
+    headers = {
+        "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET, "content-type": "application/json",
+    }
+    first = json.dumps(
+        {"update_id": 100, "message": {"chat": {"id": 555}, "text": "first question"}}
+    ).encode()
+    second = json.dumps(
+        {"update_id": 101, "message": {"chat": {"id": 555}, "text": "second question"}}
+    ).encode()
+    r1 = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=first, headers=headers,
+    )
+    r2 = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=second, headers=headers,
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert len(outbound.calls) == 2  # both distinct update_ids relayed
+
+
+async def test_failed_signature_does_not_claim_dedup_key(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+) -> None:
+    """RAGZ-PUB-10: the dedup claim happens strictly AFTER signature
+    verification -- a rejected (tampered-signature) delivery must not
+    consume the update_id's claim, so the SAME update_id sent again with the
+    correct signature still processes normally."""
+    integration, _doc = telegram_env
+    body = _update_body("what was revenue?")
+    bad = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=body,
+        headers={
+            "X-Telegram-Bot-Api-Secret-Token": "wrong-secret", "content-type": "application/json",
+        },
+    )
+    assert bad.status_code == 401
+    good = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=body,
+        headers={
+            "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET, "content-type": "application/json",
+        },
+    )
+    assert good.status_code == 200, good.text
+    assert len(outbound.calls) == 1  # the earlier 401 never claimed update_id=1
+
+
 async def test_unknown_webhook_id_returns_404(telegram_client: httpx.AsyncClient) -> None:
     r = await telegram_client.post(
         f"/external/bots/telegram/{uuid4()}", content=_update_body("x"),

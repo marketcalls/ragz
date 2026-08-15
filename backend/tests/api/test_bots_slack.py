@@ -130,7 +130,7 @@ async def test_valid_message_event_acks_and_calls_outbound_via_background_task(
 ) -> None:
     body = json.dumps(
         {
-            "type": "event_callback",
+            "type": "event_callback", "event_id": "Ev-unique-1",
             "event": {"type": "message", "channel": "C1", "text": "hi there"},
         }
     ).encode()
@@ -142,6 +142,76 @@ async def test_valid_message_event_acks_and_calls_outbound_via_background_task(
     assert outbound.calls[0].url.path == "/api/chat.postMessage"
     sent = json.loads(outbound.calls[0].content)
     assert sent["channel"] == "C1"
+
+
+async def test_replayed_event_id_is_ignored_no_second_outbound_call(
+    slack_client: httpx.AsyncClient, slack_env, outbound: OutboundRecorder
+) -> None:
+    """RAGZ-PUB-10: Slack's own 5-minute timestamp-skew tolerance means a
+    captured signature stays valid for a window a naive replay could exploit
+    -- event_id dedup closes that gap. The replay still acks 200 (so Slack's
+    retry-on-non-200 behavior doesn't kick in) but does no second relay."""
+    body = json.dumps(
+        {
+            "type": "event_callback", "event_id": "Ev-replay-1",
+            "event": {"type": "message", "channel": "C1", "text": "hi there"},
+        }
+    ).encode()
+    headers = _slack_headers(body)
+    r1 = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}", content=body, headers=headers,
+    )
+    r2 = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}", content=body, headers=headers,
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == {"ok": True}
+    assert len(outbound.calls) == 1
+
+
+async def test_new_event_id_after_replay_still_processes(
+    slack_client: httpx.AsyncClient, slack_env, outbound: OutboundRecorder
+) -> None:
+    first = json.dumps(
+        {
+            "type": "event_callback", "event_id": "Ev-a",
+            "event": {"type": "message", "channel": "C1", "text": "first"},
+        }
+    ).encode()
+    second = json.dumps(
+        {
+            "type": "event_callback", "event_id": "Ev-b",
+            "event": {"type": "message", "channel": "C1", "text": "second"},
+        }
+    ).encode()
+    r1 = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}",
+        content=first, headers=_slack_headers(first),
+    )
+    r2 = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}",
+        content=second, headers=_slack_headers(second),
+    )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert len(outbound.calls) == 2
+
+
+async def test_url_verification_handshake_repeats_without_dedup(
+    slack_client: httpx.AsyncClient, slack_env
+) -> None:
+    """The handshake carries no event_id and must never be deduped away --
+    Slack may legitimately re-probe it during app setup."""
+    body = json.dumps({"type": "url_verification", "challenge": "abc123"}).encode()
+    r1 = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}", content=body, headers=_slack_headers(body),
+    )
+    r2 = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}", content=body, headers=_slack_headers(body),
+    )
+    assert r1.status_code == 200 and r1.json() == {"challenge": "abc123"}
+    assert r2.status_code == 200 and r2.json() == {"challenge": "abc123"}
 
 
 async def test_tampered_signature_returns_401_with_no_relay_or_outbound(
@@ -175,6 +245,28 @@ async def test_stale_timestamp_returns_401(
     assert retriever.calls == []
     assert streamer.calls == []
     assert outbound.calls == []
+
+
+async def test_failed_signature_does_not_claim_dedup_key(
+    slack_client: httpx.AsyncClient, slack_env, outbound: OutboundRecorder
+) -> None:
+    body = json.dumps(
+        {
+            "type": "event_callback", "event_id": "Ev-badsig",
+            "event": {"type": "message", "channel": "C1", "text": "hi"},
+        }
+    ).encode()
+    bad_headers = _slack_headers(body)
+    bad_headers["x-slack-signature"] = "v0=deadbeef"
+    bad = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}", content=body, headers=bad_headers,
+    )
+    assert bad.status_code == 401
+    good = await slack_client.post(
+        f"/external/bots/slack/{slack_env.webhook_id}", content=body, headers=_slack_headers(body),
+    )
+    assert good.status_code == 200, good.text
+    assert len(outbound.calls) == 1  # the earlier 401 never claimed event_id
 
 
 async def test_unknown_webhook_id_returns_404(slack_client: httpx.AsyncClient) -> None:
