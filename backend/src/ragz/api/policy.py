@@ -124,6 +124,12 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/api/v1/auth/sessions"),
     ("DELETE", "/api/v1/auth/sessions/{family_id}"),
     ("POST", "/api/v1/auth/sessions/revoke-others"),
+    # openui-parity Task 7: capability URL -- the signed, time-limited
+    # `image_ref` itself is the sole authorization gate (mirrors a signed
+    # S3 URL). No TenantContext: `<img src>` can't carry a Bearer header, so
+    # this route must be reachable unauthenticated. See
+    # modules/chat/media.py's module docstring.
+    ("GET", "/api/v1/media/image/{ref}"),
 })
 
 # (method, path-with-{param}-placeholders) -> declared action. `path` matches
