@@ -211,6 +211,23 @@ async def create_attachment(
     return attachment
 
 
+async def get_attachment_for_chat(
+    session: AsyncSession, ctx: TenantContext, chat_id: UUID, attachment_id: UUID
+) -> ChatAttachment:
+    """Load a chat attachment for content read, gated by chat ownership.
+
+    get_chat enforces org_id + user_id (a chat belongs to exactly one user),
+    so this is not cross-user readable. The attachment must also belong to
+    THIS chat -- an attachment_id from another (even same-user) chat is a
+    non-leaking NotFound, same as an unknown id. Mirrors the documents
+    file-read gate (get_document_checked) in intent."""
+    await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
+    attachment = await session.get(ChatAttachment, attachment_id)
+    if attachment is None or attachment.chat_id != chat_id:
+        raise NotFoundError("attachment not found")
+    return attachment
+
+
 async def mark_attachment_processing(session: AsyncSession, attachment_id: UUID) -> None:
     attachment = await session.get(ChatAttachment, attachment_id)
     if attachment is not None:

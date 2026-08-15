@@ -195,6 +195,7 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("PUT", "/api/v1/messages/{message_id}/feedback"): "chat.feedback",
     ("DELETE", "/api/v1/messages/{message_id}/feedback"): "chat.feedback",
     ("POST", "/api/v1/chats/{chat_id}/attachments"): "chat.attachments.create",
+    ("GET", "/api/v1/chats/{chat_id}/attachments/{attachment_id}/content"): "chat.read",
     # admin: roles / audit / sso / secrets / feedback / bots / api-keys / models / settings
     ("GET", "/api/v1/admin/roles"): "roles.read",
     ("POST", "/api/v1/admin/roles"): "roles.author",

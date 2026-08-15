@@ -101,6 +101,52 @@ async def test_upload_attachment_rejects_other_chats_chat(
     assert r.status_code == 404
 
 
+async def test_get_attachment_content_streams_bytes_inline(
+    chat_client: httpx.AsyncClient, chat_env: dict, seeded_user: User, stack_env: None,
+) -> None:
+    """The content endpoint streams the stored bytes back inline with the
+    right mime -- powers image thumbnails/previews in the conversation."""
+    h = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, h)
+    png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("photo.png", png, "image/png")}, headers=h,
+    )
+    assert r.status_code == 201
+    attachment_id = r.json()["id"]
+
+    r2 = await chat_client.get(
+        f"/api/v1/chats/{chat_id}/attachments/{attachment_id}/content", headers=h
+    )
+    assert r2.status_code == 200
+    assert r2.content == png
+    assert r2.headers["content-type"].startswith("image/png")
+    assert "inline" in r2.headers["content-disposition"]
+
+
+async def test_get_attachment_content_rejects_other_users_chat(
+    chat_client: httpx.AsyncClient, chat_env: dict, seeded_user: User,
+    org_b_user: User, stack_env: None,
+) -> None:
+    """iron rule 1/2: a chat (and its attachment bytes) is scoped org_id+user_id.
+    Another user must get the same non-leaking 404 as an unknown attachment,
+    never the image bytes."""
+    h_a = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, h_a)
+    r = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("photo.png", b"\x89PNG\r\n\x1a\nsecret", "image/png")}, headers=h_a,
+    )
+    attachment_id = r.json()["id"]
+
+    h_b = await auth(chat_client, "b@rival.com")
+    r2 = await chat_client.get(
+        f"/api/v1/chats/{chat_id}/attachments/{attachment_id}/content", headers=h_b
+    )
+    assert r2.status_code == 404
+
+
 async def test_small_attachment_routes_inline_and_appears_in_answer_context(
     chat_client: httpx.AsyncClient, chat_env: dict, session: AsyncSession,
     seeded_user: User, seeded_superadmin: User, fake_streamer: FakeStreamer,

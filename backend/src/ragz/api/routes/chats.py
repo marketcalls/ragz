@@ -4,13 +4,14 @@ from uuid import UUID
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import ConflictError, NotFoundError, PayloadTooLarge
+from ragz.core.storage import build_storage
 from ragz.modules.chat import service
 from ragz.modules.chat.events import SSEEvent
 from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMStreamer
@@ -367,3 +368,32 @@ async def upload_attachment(
     )
     enqueue_attachment_processing(attachment.id)
     return AttachmentOut.model_validate(attachment)
+
+
+@router.get(
+    "/chats/{chat_id}/attachments/{attachment_id}/content", dependencies=[_ChatReadDep],
+)
+async def get_attachment_content(
+    chat_id: UUID, attachment_id: UUID, session: SessionDep, ctx: CtxDep
+) -> Response:
+    """Streams a chat attachment's bytes inline (image thumbnails / previews in
+    the conversation). Chat-ownership scoped: get_attachment_for_chat ->
+    get_chat enforces org_id + user_id, so no cross-user access; the attachment
+    must also belong to THIS chat. Mirrors GET /documents/{id}/file -- the read
+    path history otherwise exposes attachment METADATA only (no bytes)."""
+    attachment = await service.get_attachment_for_chat(session, ctx, chat_id, attachment_id)
+    storage = build_storage(get_settings())
+    try:
+        data = await storage.get(attachment.storage_key)
+    except NotFoundError as exc:
+        structlog.get_logger("ragz.chat").warning(
+            "attachment_missing_in_storage",
+            chat_id=str(chat_id), attachment_id=str(attachment_id),
+            storage_key=attachment.storage_key,
+        )
+        raise NotFoundError("The attachment file is not available in storage.") from exc
+    return Response(
+        content=data,
+        media_type=attachment.mime or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{attachment.filename}"'},
+    )
