@@ -73,7 +73,8 @@ _MAX_FORM_PLACEHOLDER = 120
 _MAX_FORM_SUBMIT_LABEL = 40
 
 FormFieldKind = Literal[
-    "text", "number", "select", "multiselect", "date", "daterange", "card_select"
+    "text", "number", "select", "multiselect", "date", "daterange", "card_select",
+    "slider", "radio",
 ]
 
 # Whitelisted icon names for InfoCardBlock -- an unrecognized value is a
@@ -85,6 +86,8 @@ IconName = Literal[
 
 ChartKind = Literal[
     "bar", "line", "area", "stacked_area", "donut", "radar", "radial_gauge", "grouped_bar",
+    "scatter", "horizontal_bar", "sparkline", "stacked_bars", "single_stacked_bar", "pie",
+    "semi_gauge",
 ]
 
 TagTone = Literal["neutral", "info", "success", "warning", "danger"]
@@ -348,6 +351,10 @@ class FormField(BaseModel):
     option_details: list[str] | None = Field(default=None, max_length=_MAX_FORM_OPTIONS)
     required: bool = False
     placeholder: str | None = Field(default=None, max_length=_MAX_FORM_PLACEHOLDER)
+    # slider-only bounds (openui-parity T-A); ignored by every other kind.
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
 
     @field_validator("options")
     @classmethod
@@ -382,10 +389,11 @@ class FormBlock(BaseModel):
     @field_validator("fields")
     @classmethod
     def _require_options_for_choice_fields(cls, fields: list[FormField]) -> list[FormField]:
+        choice_kinds = ("select", "multiselect", "card_select", "radio")
         for field in fields:
-            if field.kind in ("select", "multiselect", "card_select") and not field.options:
+            if field.kind in choice_kinds and not field.options:
                 raise ValueError(
-                    "select/multiselect/card_select form fields require non-empty options"
+                    "select/multiselect/card_select/radio form fields require non-empty options"
                 )
         return fields
 
@@ -403,6 +411,37 @@ class FollowUpsBlock(BaseModel):
             if len(item) > _MAX_TITLE:
                 raise ValueError("follow-up item too long")
         return items
+
+
+class StepItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(max_length=_MAX_TITLE)
+    details: str | None = Field(default=None, max_length=_MAX_BODY)
+
+
+class StepsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["steps"]
+    items: list[StepItem] = Field(max_length=_MAX_LIST_ITEMS)
+
+
+class ActionButton(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(max_length=_MAX_TITLE)
+    # The chat message this button sends (as a follow-up question) when
+    # clicked -- rendered/sent by the frontend, never executed here.
+    message: str = Field(max_length=_MAX_TITLE)
+    variant: Literal["primary", "secondary"] = "primary"
+
+
+class ButtonsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["buttons"]
+    items: list[ActionButton] = Field(max_length=_MAX_LIST_ITEMS)
 
 
 # --- Tabs: depth is bounded STATICALLY, not by a runtime counter ----------
@@ -424,7 +463,9 @@ InnerBlock = Annotated[
     | CalloutBlock
     | TableBlock
     | FormBlock
-    | FollowUpsBlock,
+    | FollowUpsBlock
+    | StepsBlock
+    | ButtonsBlock,
     Field(discriminator="type"),
 ]
 
@@ -465,6 +506,29 @@ class AccordionBlock(BaseModel):
     items: list[AccordionItem] = Field(max_length=_MAX_TABS)
 
 
+# --- Carousel: top-level only, same static-depth pattern as Tabs/Accordion -
+#
+# `CarouselItem.blocks` uses `InnerBlock`, which excludes TabsBlock,
+# AccordionBlock, AND CarouselBlock itself -- a carousel slide can never
+# contain another carousel/tabs/accordion, so nesting depth is capped at
+# exactly 1 by the type definition itself. CarouselBlock is added to `Block`
+# ONLY (not `InnerBlock`), so it is a top-level block, like TabsBlock and
+# AccordionBlock.
+
+
+class CarouselItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    blocks: list[InnerBlock] = Field(max_length=_MAX_BLOCKS_PER_TAB)
+
+
+class CarouselBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["carousel"]
+    items: list[CarouselItem] = Field(max_length=_MAX_TABS)
+
+
 # --- Top-level union -------------------------------------------------------
 
 Block = Annotated[
@@ -481,7 +545,10 @@ Block = Annotated[
     | TabsBlock
     | FormBlock
     | FollowUpsBlock
-    | AccordionBlock,
+    | AccordionBlock
+    | StepsBlock
+    | ButtonsBlock
+    | CarouselBlock,
     Field(discriminator="type"),
 ]
 

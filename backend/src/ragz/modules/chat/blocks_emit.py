@@ -72,9 +72,12 @@ _SYSTEM_PROMPT = (
     "sending it null):\n"
     '- {"type":"text","markdown":string}\n'
     '- {"type":"chart","chart":"bar"|"line"|"area"|"stacked_area"|"donut"|'
-    '"radar"|"radial_gauge"|"grouped_bar","title"?:string,"subtitle"?:string,'
+    '"radar"|"radial_gauge"|"grouped_bar"|"scatter"|"horizontal_bar"|'
+    '"sparkline"|"stacked_bars"|"single_stacked_bar"|"pie"|"semi_gauge",'
+    '"title"?:string,"subtitle"?:string,'
     '"data":[{...numeric/string fields per row...}],"x_key"?:string,'
-    '"category_key"?:string,"keys"?:[string]}\n'
+    '"category_key"?:string,"keys"?:[string]} (scatter uses x_key for X and '
+    "keys[0] for Y, optional keys[1] for bubble size)\n"
     '- {"type":"info_card","title":string,"subtitle"?:string,"body"?:string,'
     '"icon"?:"info"|"chart"|"dollar"|"trophy"|"warning"|"doc"|"spark"|'
     '"users"|"clock"|"check"|"star"|"target"|"globe"|"shield"|"calendar",'
@@ -95,22 +98,34 @@ _SYSTEM_PROMPT = (
     "(each item has EITHER url OR document_id+page)\n"
     '- {"type":"tag_badges","tags":[{"label":string,'
     '"tone"?:"neutral"|"info"|"success"|"warning"|"danger"}]}\n'
+    '- {"type":"steps","items":[{"title":string,"details"?:string}]} -- for '
+    "procedural/how-to answers\n"
+    '- {"type":"buttons","items":[{"label":string,"message":string,'
+    '"variant"?:"primary"|"secondary"}]} -- clickable buttons that send '
+    "message as a follow-up question\n"
     '- {"type":"tabs","tabs":[{"label":string,"blocks":[<any block above '
     'except tabs>]}]}\n'
+    '- {"type":"carousel","items":[{"blocks":[<any block above except '
+    'tabs/accordion/carousel>]}]} -- a swipeable set of slides\n'
     '- {"type":"callout","tone":"info"|"success"|"warning"|"danger",'
     '"title"?:string,"body":string}\n'
     '- {"type":"table","columns":[string],"rows":[[string or number, ...]]}\n'
     '- {"type":"form","title"?:string,"description"?:string,"submit_label"?:'
     'string,"fields":[{"name":string,"label":string,"kind":"text"|"number"|'
-    '"select"|"multiselect","options"?:[string],"required"?:boolean,'
-    '"placeholder"?:string}]} (select/multiselect fields MUST carry '
-    "non-empty options)\n"
+    '"select"|"multiselect"|"date"|"daterange"|"card_select"|"slider"|'
+    '"radio","options"?:[string],"min"?:number,"max"?:number,"step"?:number,'
+    '"required"?:boolean,"placeholder"?:string}]} (select/multiselect/radio '
+    "fields MUST carry non-empty options; slider MAY carry min/max/step, no "
+    "options needed)\n"
     "Only emit a chart/table when the answer/context actually contains "
     "comparable numeric or tabular data; only emit an image_card when the "
     "context names a specific document image (image_ref is an internal id, "
     "never a URL); emit a form block ONLY when you genuinely need "
     "structured input from the user before you can proceed; otherwise "
-    "prefer text/info_card/callout, or emit []. For news/results-style "
+    "prefer text/info_card/callout, or emit []. Use steps for ordered "
+    "procedures, buttons to offer follow-up actions, scatter for "
+    "correlation/distribution data, and horizontal_bar for long category "
+    "labels. For news/results-style "
     "answers (multiple distinct items, each with its own source), prefer an "
     "article_card grid over a single text block. When an 'Available "
     "sources' list is provided below, ALWAYS end the array with a "

@@ -22,7 +22,9 @@ from ragz.modules.chat.blocks import (
     MAX_BLOCKS,
     AccordionBlock,
     ArticleCardBlock,
+    ButtonsBlock,
     CalloutBlock,
+    CarouselBlock,
     ChartBlock,
     FollowUpsBlock,
     FormBlock,
@@ -30,6 +32,7 @@ from ragz.modules.chat.blocks import (
     InfoCardBlock,
     RankedListBlock,
     SourceRefsBlock,
+    StepsBlock,
     TableBlock,
     TabsBlock,
     TagBadgesBlock,
@@ -308,16 +311,65 @@ def test_form_option_details_too_many_items_dropped() -> None:
     assert out == []
 
 
-def test_form_unknown_field_kind_slider_dropped() -> None:
+def test_form_slider_field_valid() -> None:
     out = validate_blocks(
         [
             {
                 "type": "form",
-                "fields": [{"name": "volume", "label": "Volume", "kind": "slider"}],
+                "fields": [
+                    {
+                        "name": "volume",
+                        "label": "Volume",
+                        "kind": "slider",
+                        "min": 0,
+                        "max": 100,
+                        "step": 5,
+                    }
+                ],
             }
         ]
     )
+    assert len(out) == 1
+    block = out[0]
+    assert isinstance(block, FormBlock)
+    assert block.fields[0].kind == "slider"
+    assert block.fields[0].min == 0
+    assert block.fields[0].max == 100
+    assert block.fields[0].step == 5
+
+
+def test_form_slider_field_without_bounds_valid() -> None:
+    out = validate_blocks(
+        [{"type": "form", "fields": [{"name": "volume", "label": "Volume", "kind": "slider"}]}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], FormBlock)
+    assert out[0].fields[0].min is None
+
+
+def test_form_radio_without_options_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "form", "fields": [{"name": "style", "label": "Style", "kind": "radio"}]}]
+    )
     assert out == []
+
+
+def test_form_radio_with_options_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "form",
+                "fields": [
+                    {"name": "style", "label": "Style", "kind": "radio", "options": ["A", "B"]}
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    block = out[0]
+    assert isinstance(block, FormBlock)
+    assert block.fields[0].kind == "radio"
+    assert block.fields[0].options == ["A", "B"]
 
 
 def test_mixed_list_of_valid_blocks() -> None:
@@ -1229,5 +1281,262 @@ def test_accordion_too_many_items_dropped() -> None:
 def test_accordion_extra_field_dropped() -> None:
     out = validate_blocks(
         [{"type": "accordion", "items": [{"label": "t", "blocks": []}], "onclick": "evil()"}]
+    )
+    assert out == []
+
+
+# --- New chart kinds: openui-parity T-A ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "chart_kind",
+    [
+        "scatter",
+        "horizontal_bar",
+        "sparkline",
+        "stacked_bars",
+        "single_stacked_bar",
+        "pie",
+        "semi_gauge",
+    ],
+)
+def test_new_chart_kinds_valid(chart_kind: str) -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "chart",
+                "chart": chart_kind,
+                "title": "Chart",
+                "data": [{"x": 1.0, "y": 2.0}, {"x": 2.0, "y": 3.0}],
+                "x_key": "x",
+                "keys": ["y"],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], ChartBlock)
+    assert out[0].chart == chart_kind
+
+
+def test_scatter_chart_with_bubble_size_key_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "chart",
+                "chart": "scatter",
+                "data": [{"x": 1.0, "y": 2.0, "size": 5.0}],
+                "x_key": "x",
+                "keys": ["y", "size"],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], ChartBlock)
+    assert out[0].keys == ["y", "size"]
+
+
+@pytest.mark.parametrize("chart_kind", ["scatter", "pie", "semi_gauge"])
+def test_new_chart_kind_nan_value_dropped(chart_kind: str) -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "chart",
+                "chart": chart_kind,
+                "data": [{"x": math.nan, "y": 1.0}],
+                "x_key": "x",
+                "keys": ["y"],
+            }
+        ]
+    )
+    assert out == []
+
+
+# --- StepsBlock: openui-parity T-A ------------------------------------------
+
+
+def test_steps_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "steps",
+                "items": [
+                    {"title": "Sign up", "details": "Create an account"},
+                    {"title": "Verify email"},
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], StepsBlock)
+    assert len(out[0].items) == 2
+    assert out[0].items[1].details is None
+
+
+def test_steps_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "steps", "items": [{"title": "x"} for _ in range(_MAX_LIST_ITEMS + 1)]}]
+    )
+    assert out == []
+
+
+def test_steps_extra_field_dropped() -> None:
+    out = validate_blocks([{"type": "steps", "items": [{"title": "x", "onclick": "evil()"}]}])
+    assert out == []
+
+
+def test_steps_missing_title_dropped() -> None:
+    out = validate_blocks([{"type": "steps", "items": [{"details": "no title"}]}])
+    assert out == []
+
+
+def test_steps_nested_inside_tab_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "How-to",
+                        "blocks": [{"type": "steps", "items": [{"title": "Step 1"}]}],
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TabsBlock)
+    assert isinstance(out[0].tabs[0].blocks[0], StepsBlock)
+
+
+# --- ButtonsBlock: openui-parity T-A ----------------------------------------
+
+
+def test_buttons_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "buttons",
+                "items": [
+                    {"label": "Yes", "message": "Yes, continue"},
+                    {"label": "No", "message": "No, cancel", "variant": "secondary"},
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], ButtonsBlock)
+    assert out[0].items[0].variant == "primary"
+    assert out[0].items[1].variant == "secondary"
+
+
+def test_buttons_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "buttons",
+                "items": [{"label": "x", "message": "y"} for _ in range(_MAX_LIST_ITEMS + 1)],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_buttons_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "buttons", "items": [{"label": "x", "message": "y", "onclick": "evil()"}]}]
+    )
+    assert out == []
+
+
+def test_buttons_invalid_variant_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "buttons", "items": [{"label": "x", "message": "y", "variant": "danger"}]}]
+    )
+    assert out == []
+
+
+def test_buttons_nested_inside_tab_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "Actions",
+                        "blocks": [{"type": "buttons", "items": [{"label": "x", "message": "y"}]}],
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TabsBlock)
+    assert isinstance(out[0].tabs[0].blocks[0], ButtonsBlock)
+
+
+# --- CarouselBlock: top-level only, openui-parity T-A -----------------------
+
+
+def test_carousel_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "carousel",
+                "items": [
+                    {"blocks": [{"type": "text", "markdown": "slide 1"}]},
+                    {"blocks": [{"type": "info_card", "title": "Slide 2"}]},
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], CarouselBlock)
+    assert len(out[0].items) == 2
+    assert isinstance(out[0].items[0].blocks[0], TextBlock)
+
+
+def test_carousel_item_nested_carousel_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "carousel", "items": [{"blocks": [{"type": "carousel", "items": []}]}]}]
+    )
+    assert out == []
+
+
+def test_carousel_item_nested_tabs_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "carousel", "items": [{"blocks": [{"type": "tabs", "tabs": []}]}]}]
+    )
+    assert out == []
+
+
+def test_carousel_item_nested_accordion_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "carousel", "items": [{"blocks": [{"type": "accordion", "items": []}]}]}]
+    )
+    assert out == []
+
+
+def test_carousel_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "carousel", "items": [{"blocks": []} for _ in range(_MAX_TABS + 1)]}]
+    )
+    assert out == []
+
+
+def test_carousel_extra_field_dropped() -> None:
+    out = validate_blocks([{"type": "carousel", "items": [{"blocks": []}], "onclick": "evil()"}])
+    assert out == []
+
+
+def test_carousel_not_allowed_inside_tab_dropped() -> None:
+    """CarouselBlock is top-level only -- InnerBlock excludes it, same
+    pattern as tabs/accordion, so nesting depth stays statically capped."""
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [{"label": "t", "blocks": [{"type": "carousel", "items": []}]}],
+            }
+        ]
     )
     assert out == []
