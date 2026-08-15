@@ -198,7 +198,10 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
     retrieval/rerank.py: Cohere reranker key — decrypt-in-memory, use-immediately
     outbound rerank call.
     documents/parsers.py: LlamaParse key — decrypt-in-memory for one outbound
-    parse call."""
+    parse call.
+    email/service.py: SMTP password / SES secret key (email + password-reset
+    feature, Task 4) — decrypt-in-memory, use-immediately for one outbound
+    send; decryption stays strictly inside this module."""
     src_root = Path(ragz.__file__).parent
     allowed = {
         src_root / "modules" / "secrets" / "service.py",
@@ -209,6 +212,7 @@ def test_decryption_callers_are_exactly_the_gateway_allowlist() -> None:
         src_root / "modules" / "retrieval" / "rerank.py",
         src_root / "modules" / "documents" / "parsers.py",
         src_root / "modules" / "bots" / "service.py",
+        src_root / "modules" / "email" / "service.py",
     }
     offenders = [
         str(p)
