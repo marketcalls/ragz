@@ -10,6 +10,7 @@ from ragz.modules.tenancy.context import (
     TenantContext,
     get_tenant_context,
     rate_limit_user,
+    require_action,
     require_role,
 )
 
@@ -36,7 +37,13 @@ class ClientErrorOut(ClientErrorIn):
     user_id: str
 
 
-@router.post("/client-errors", status_code=204)
+@router.post(
+    "/client-errors",
+    status_code=204,
+    # sec RAGZ-PUB-01b: enforce the declared client_errors.report action (was
+    # only rate-limited + authenticated, so a role denying it couldn't deny it).
+    dependencies=[Depends(require_action("client_errors.report"))],
+)
 async def report_client_error(
     body: ClientErrorIn, request: Request, ctx: ReportCtxDep
 ) -> None:

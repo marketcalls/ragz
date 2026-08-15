@@ -62,7 +62,18 @@ def trusted_hosts_for(environment: str, public_api_base_url: str) -> list[str]:
     if environment != "production":
         return ["*"]
     host = urlsplit(public_api_base_url).hostname
-    return [host] if host else ["*"]
+    if not host:
+        # RAGZ-PUB-09 review (Imp1): NEVER fall open to ["*"] in production.
+        # A host-less public_api_base_url would silently disable Host-header
+        # protection -- fail closed loudly instead. Settings._production_fails_closed
+        # also rejects this at config load, so reaching here means an
+        # out-of-band construction; refuse rather than run unprotected.
+        raise ValueError(
+            "cannot derive a trusted host from public_api_base_url "
+            f"{public_api_base_url!r} in production -- refusing to run with "
+            "an open Host allowlist"
+        )
+    return [host]
 
 
 def _problem_body(status: int, title: str, detail: str) -> bytes:

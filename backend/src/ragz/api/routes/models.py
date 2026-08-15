@@ -15,7 +15,12 @@ from ragz.modules.models.catalog import ModelCatalogEntry, refresh_catalog
 from ragz.modules.models.models import Model
 from ragz.modules.models.schemas import ModelCreate, ModelOut, ModelPatch, ModelPublic
 from ragz.modules.models.sync import sync_models_to_litellm
-from ragz.modules.tenancy.context import TenantContext, get_tenant_context, require_role
+from ragz.modules.tenancy.context import (
+    TenantContext,
+    get_tenant_context,
+    require_action,
+    require_role,
+)
 
 router = APIRouter(tags=["models"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -169,7 +174,12 @@ async def force_refresh_catalog(
 
 
 @router.get("/models", response_model=list[ModelPublic])
-async def list_public_models(session: SessionDep, ctx: CtxDep) -> list[ModelPublic]:
+async def list_public_models(
+    session: SessionDep,
+    # sec RAGZ-PUB-01b: enforce the declared models.read action (was bare auth,
+    # so a custom role denying models.read could still list them).
+    ctx: Annotated[TenantContext, Depends(require_action("models.read"))],
+) -> list[ModelPublic]:
     return [
         ModelPublic.model_validate(m)
         for m in await service.list_enabled_models(session, modality="chat")

@@ -208,3 +208,56 @@ async def test_chunked_body_within_limit_passes_through(
     r = await size_limited_client.post("/anything", content=chunks())
     assert r.status_code == 200
     assert r.text == "received 15"
+
+
+async def test_oversized_body_rejected_through_real_create_app_stack(
+    test_settings: Settings,
+) -> None:
+    """RAGZ-PUB-09 review (Imp2): the 413 must survive the REAL create_app
+    middleware/exception stack (TrustedHost -> BodySizeLimit -> SecurityHeaders
+    -> RequestID -> ExceptionMiddleware -> routes), not just the isolated
+    BodySizeLimitMiddleware harness. Drives the app as an ASGI callable with a
+    spoofed oversized Content-Length so the guard short-circuits before the
+    body (or auth) is ever read -- proving _BodyTooLarge is not swallowed by
+    the app's global exception handler into a 500."""
+    app = create_app(settings=test_settings)
+    ceiling = body_size_ceiling_bytes(test_settings.max_upload_mb)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "raw_path": b"/api/v1/auth/login",
+        "query_string": b"",
+        "root_path": "",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 12345),
+        "headers": [
+            (b"host", b"testserver"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(ceiling + 1).encode()),
+        ],
+    }
+
+    async def receive() -> dict[str, Any]:
+        # Should never be awaited: the guard rejects on the declared
+        # Content-Length before pulling any body.
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    messages: list[dict[str, Any]] = []
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    await app(scope, receive, send)
+
+    start = next(m for m in messages if m["type"] == "http.response.start")
+    # 413 survives the full stack as a 413 problem+json -- NOT swallowed into a
+    # 500 by the app's global exception handler (the crux of Imp2). Body-size
+    # rejection happens outside SecurityHeaders in the stack, so the security
+    # headers themselves are asserted by the header tests above, not here.
+    assert start["status"] == 413
+    header_map = {k.decode(): v.decode() for k, v in start["headers"]}
+    assert header_map.get("content-type") == "application/problem+json"

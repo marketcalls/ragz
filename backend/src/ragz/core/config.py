@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -122,6 +123,14 @@ class Settings(BaseSettings):
             )
         if self.public_api_base_url.startswith("http://"):
             errors.append("public_api_base_url uses http:// -- production requires https")
+        elif not urlsplit(self.public_api_base_url).hostname:
+            # RAGZ-PUB-09 review (Imp1): a host-less public_api_base_url (e.g.
+            # "https://" or empty) would make trusted_hosts_for fall open to
+            # ["*"], silently disabling the Host allowlist. Reject at load.
+            errors.append(
+                "public_api_base_url has no parseable host -- set a full "
+                "https://<host> origin (the Host allowlist derives from it)"
+            )
         if self.frontend_base_url.startswith("http://"):
             errors.append("frontend_base_url uses http:// -- production requires https")
         if not self.kek_file.strip():

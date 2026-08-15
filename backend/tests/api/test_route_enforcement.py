@@ -11,26 +11,41 @@ Scope note: this task (PUB-01b) finishes PUB-01's own cleanup in
 documents.py/workspaces.py (the modules PUB-01 already converted, minus four
 stragglers still on require_role: PUT .../acl, PUT .../approved,
 POST /workspaces, POST .../members) and adds the gate itself. It does NOT
-sweep the rest of the app: audit_route_enforcement(app) currently reports
-~49 further gaps in unrelated route modules (admin_roles.py, admin_secrets.py,
+sweep the rest of the app: audit_route_enforcement(app) still reports ~46
+further gaps in unrelated route modules (admin_roles.py, admin_secrets.py,
 admin_sso.py, admin_bots.py, admin_feedback.py, users.py, groups.py, auth.py,
-models.py, settings.py, superadmin_ops.py, usage.py, client_errors.py) that
-were never wired through require_action in the first place -- pre-existing,
-tracked debt predating PUB-01, not a regression introduced or hidden here.
-Unlike PUB-01's original finding, that debt is fail-SAFE (under- not
-over-permissive: a role-template grant of e.g. "roles.author" is currently
-just silently ineffective against the literal require_role("admin") check,
-never a privilege escalation), so it is left for a follow-up task rather than
-folded into this one. `test_documents_and_workspaces_routes_are_enforced`
-below asserts full coverage for the modules this task actually owns; it
-intentionally does not assert `audit_route_enforcement(app) == []` for the
-whole app."""
+settings.py, superadmin_ops.py, usage.py, quota routes) that declare a granular
+action but are gated by require_role(...) instead -- pre-existing, tracked debt
+predating PUB-01, not a regression introduced or hidden here.
+
+That remaining debt is fail-SAFE (under- not over-permissive: a role-template
+grant of e.g. "roles.author" is currently just silently ineffective against the
+literal require_role("admin") check, never a privilege escalation). The review
+that surfaced this found that claim was NOT yet true for three routes that were
+actually BARE auth (only get_tenant_context, no require_role AND no
+require_action) despite declaring a granular action -- GET /api/v1/models
+(models.read), GET /api/v1/usage/me (quota.read), POST /api/v1/client-errors
+(client_errors.report). Those are the same bypassable-deny class as PUB-01's
+original finding, so they were fixed here (wired to require_action). What is
+left is now uniformly require_role-gated, and
+`test_every_route_policy_route_has_authz_enforcement` below PINS that invariant:
+no ROUTE_POLICY route may be bare auth. `test_documents_and_workspaces_routes_are_enforced`
+asserts full require_action coverage for the modules this task owns; the whole
+app is intentionally not yet at `audit_route_enforcement(app) == []`."""
 from typing import Annotated
 
 from fastapi import Depends
 
 from ragz.api.app import create_app
-from ragz.api.policy import _ENFORCEMENT_EXCEPTIONS, ROUTE_POLICY, audit_route_enforcement
+from ragz.api.policy import (
+    _ENFORCEMENT_EXCEPTIONS,
+    _HTTP_METHODS_UPPER,
+    ROUTE_POLICY,
+    _iter_api_routes,
+    _iter_dependant_calls,
+    _normalize_path,
+    audit_route_enforcement,
+)
 from ragz.modules.tenancy.context import TenantContext, require_action, require_role
 
 # Every ROUTE_POLICY entry documents.py/workspaces.py own -- includes the four
@@ -143,3 +158,62 @@ def test_route_missing_from_route_policy_but_declared_is_reported():
         ROUTE_POLICY.clear()
         ROUTE_POLICY.update(original)
     assert any("GET /api/v1/_does_not_exist_anywhere" in gap for gap in gaps), gaps
+
+
+def _route_index(app):
+    idx = {}
+    for full_path, route in _iter_api_routes(app.router.routes):
+        path = _normalize_path(full_path)
+        for method in route.methods or ():
+            if method in _HTTP_METHODS_UPPER:
+                idx[(method, path)] = route
+    return idx
+
+
+def _enforcement_tags(route):
+    action_tags, has_role = set(), False
+    for call in _iter_dependant_calls(route.dependant):
+        act = getattr(call, "__ragz_required_action__", None)
+        if act is not None:
+            action_tags.add(act)
+        if getattr(call, "__ragz_required_roles__", None) is not None:
+            has_role = True
+    return action_tags, has_role
+
+
+def test_every_route_policy_route_has_authz_enforcement():
+    """sec RAGZ-PUB-01b invariant: no ROUTE_POLICY route may be BARE auth.
+    Every route (outside the documented API-key _ENFORCEMENT_EXCEPTIONS) must
+    carry EITHER require_action(...) OR require_role(...) in its dependency
+    graph. This pins the 'remaining debt is fail-safe require_role' claim: a
+    bare-auth route declaring a granular action (the original PUB-01 bypass
+    class) fails this test loudly instead of hiding among the require_role
+    debt."""
+    app = create_app()
+    idx = _route_index(app)
+    bare = []
+    for (method, path), _action in ROUTE_POLICY.items():
+        if (method, path) in _ENFORCEMENT_EXCEPTIONS:
+            continue
+        route = idx.get((method, path))
+        if route is None:
+            continue  # covered by test_route_missing_from_route_policy_...
+        action_tags, has_role = _enforcement_tags(route)
+        if not action_tags and not has_role:
+            bare.append((method, path))
+    assert bare == [], f"ROUTE_POLICY routes with no authz guard (bare auth): {bare}"
+
+
+def test_pub01b_review_fix_routes_enforce_their_action():
+    """The three routes the PUB-01b review caught as bare auth now enforce
+    their declared action via require_action (not merely require_role)."""
+    app = create_app()
+    idx = _route_index(app)
+    for method, path, action in [
+        ("GET", "/api/v1/models", "models.read"),
+        ("GET", "/api/v1/usage/me", "quota.read"),
+        ("POST", "/api/v1/client-errors", "client_errors.report"),
+    ]:
+        route = idx[(method, path)]
+        action_tags, _ = _enforcement_tags(route)
+        assert action in action_tags, f"{method} {path} must enforce {action!r}, got {action_tags}"

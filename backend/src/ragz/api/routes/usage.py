@@ -37,6 +37,9 @@ SuperDep = Annotated[TenantContext, Depends(require_role("superadmin"))]
 # Task 13 (RBAC-2): org-scoped analytics dashboard narrows/widens independently
 # of admin role; GET .../orgs (platform-wide, superadmin) is unchanged.
 AnalyticsDep = Annotated[TenantContext, Depends(require_action("analytics.view"))]
+# sec RAGZ-PUB-01b: /usage/me was bare auth despite declaring quota.read, so a
+# custom role denying quota.read could still read its own usage meter.
+QuotaReadDep = Annotated[TenantContext, Depends(require_action("quota.read"))]
 
 
 @router.get("/admin/orgs/{org_id}/quota", response_model=OrgQuotaOut | None)
@@ -95,7 +98,7 @@ async def put_user_quota(
 
 
 @router.get("/usage/me", response_model=UsageMeterOut)
-async def usage_me(request: Request, session: SessionDep, ctx: CtxDep) -> UsageMeterOut:
+async def usage_me(request: Request, session: SessionDep, ctx: QuotaReadDep) -> UsageMeterOut:
     status = await service.get_usage_status(
         session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
     )
