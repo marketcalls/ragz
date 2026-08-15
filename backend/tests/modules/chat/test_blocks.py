@@ -1,0 +1,416 @@
+"""In-chat generative-UI block schema tests (design doc
+docs/superpowers/specs/2026-08-15-in-chat-generative-ui-design.md).
+
+Iron Rule 5: LLM-authored block payloads are hostile input. These tests are
+adversarial-heavy: unknown types/fields, oversized payloads, nested-tabs
+escape attempts, non-finite numerics, and malformed top-level shapes must
+all be dropped/bounded, never raised. Rendering-time HTML/markdown
+sanitization is explicitly the FRONTEND's job -- validate_blocks only
+bounds and type-checks; a hostile `markdown` string that VALIDATES (because
+it's a normal short string) is expected to survive as-is here.
+"""
+
+import math
+
+import pytest
+
+from ragz.modules.chat.blocks import (
+    MAX_BLOCKS,
+    CalloutBlock,
+    ChartBlock,
+    ImageCardBlock,
+    InfoCardBlock,
+    RankedListBlock,
+    TableBlock,
+    TabsBlock,
+    TagBadgesBlock,
+    TextBlock,
+    validate_blocks,
+)
+
+# --- Valid payloads ---------------------------------------------------------
+
+
+def test_text_block_valid() -> None:
+    out = validate_blocks([{"type": "text", "markdown": "**hello**"}])
+    assert len(out) == 1
+    assert isinstance(out[0], TextBlock)
+    assert out[0].markdown == "**hello**"
+
+
+def test_chart_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "chart",
+                "chart": "bar",
+                "title": "Revenue",
+                "data": [{"month": "Jan", "value": 10.5}, {"month": "Feb", "value": 20}],
+                "x_key": "month",
+                "keys": ["value"],
+            }
+        ]
+    )
+    assert len(out) == 1
+    block = out[0]
+    assert isinstance(block, ChartBlock)
+    assert block.chart == "bar"
+    assert block.data[0]["month"] == "Jan"
+
+
+def test_info_card_block_valid() -> None:
+    out = validate_blocks(
+        [{"type": "info_card", "title": "Total docs", "body": "42 indexed", "icon": "doc"}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], InfoCardBlock)
+
+
+def test_image_card_block_valid() -> None:
+    out = validate_blocks(
+        [{"type": "image_card", "title": "Site A", "badge": "New", "image_ref": "doc-img-123"}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], ImageCardBlock)
+    assert out[0].image_ref == "doc-img-123"
+
+
+def test_ranked_list_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "ranked_list",
+                "title": "Top vendors",
+                "items": [{"title": "Acme"}, {"title": "Globex", "subtitle": "Runner-up"}],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], RankedListBlock)
+    assert len(out[0].items) == 2
+
+
+def test_tag_badges_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tag_badges",
+                "tags": [{"label": "urgent", "tone": "danger"}, {"label": "info only"}],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TagBadgesBlock)
+    # default tone applied when omitted
+    assert out[0].tags[1].tone == "neutral"
+
+
+def test_callout_block_valid() -> None:
+    out = validate_blocks(
+        [{"type": "callout", "tone": "warning", "title": "Heads up", "body": "Check this."}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], CalloutBlock)
+
+
+def test_table_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "table",
+                "columns": ["Name", "Score"],
+                "rows": [["Alice", 9.5], ["Bob", 7]],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TableBlock)
+
+
+def test_tabs_block_valid() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "Overview",
+                        "blocks": [{"type": "text", "markdown": "hi"}],
+                    },
+                    {
+                        "label": "Details",
+                        "blocks": [{"type": "callout", "tone": "info", "body": "detail"}],
+                    },
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], TabsBlock)
+    assert len(out[0].tabs) == 2
+
+
+def test_mixed_list_of_valid_blocks() -> None:
+    out = validate_blocks(
+        [
+            {"type": "text", "markdown": "intro"},
+            {"type": "callout", "tone": "success", "body": "done"},
+            {"type": "tag_badges", "tags": [{"label": "x"}]},
+        ]
+    )
+    assert len(out) == 3
+    assert [type(b) for b in out] == [TextBlock, CalloutBlock, TagBadgesBlock]
+
+
+# --- Dropped, not raised -----------------------------------------------------
+
+
+def test_unknown_type_dropped() -> None:
+    out = validate_blocks([{"type": "iframe", "src": "evil"}])
+    assert out == []
+
+
+def test_unknown_chart_kind_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "chart", "chart": "pie3d_explode", "data": [{"a": 1.0}]}]
+    )
+    assert out == []
+
+
+def test_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "text", "markdown": "hi", "onclick": "alert(1)"}]
+    )
+    assert out == []
+
+
+def test_extra_field_dropped_nested_tag() -> None:
+    out = validate_blocks(
+        [{"type": "tag_badges", "tags": [{"label": "x", "href": "javascript:alert(1)"}]}]
+    )
+    assert out == []
+
+
+def test_missing_required_field_dropped() -> None:
+    out = validate_blocks([{"type": "callout", "tone": "info"}])  # body is required
+    assert out == []
+
+
+def test_one_bad_block_does_not_poison_the_rest() -> None:
+    out = validate_blocks(
+        [
+            {"type": "text", "markdown": "ok"},
+            {"type": "nonsense"},
+            {"type": "callout", "tone": "info", "body": "ok too"},
+        ]
+    )
+    assert len(out) == 2
+    assert isinstance(out[0], TextBlock)
+    assert isinstance(out[1], CalloutBlock)
+
+
+# --- Oversized / bounded -----------------------------------------------------
+
+
+def test_over_max_blocks_truncated() -> None:
+    payload = [{"type": "text", "markdown": "x"} for _ in range(MAX_BLOCKS + 50)]
+    out = validate_blocks(payload)
+    assert len(out) == MAX_BLOCKS
+
+
+def test_table_with_10000_rows_dropped() -> None:
+    huge_rows = [["a", 1.0] for _ in range(10_000)]
+    out = validate_blocks([{"type": "table", "columns": ["a", "b"], "rows": huge_rows}])
+    assert out == []
+
+
+def test_table_row_wider_than_columns_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "table", "columns": ["a"], "rows": [["x"] * 50]}]
+    )
+    assert out == []
+
+
+def test_tabs_in_tabs_dropped() -> None:
+    """Nesting depth is bounded STATICALLY (InnerBlock excludes TabsBlock),
+    so a tabs-inside-tabs payload fails validation of the outer tab's
+    `blocks` list -- the whole tabs block is dropped, never partially
+    rendered with runaway nesting."""
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "outer",
+                        "blocks": [
+                            {
+                                "type": "tabs",
+                                "tabs": [{"label": "inner", "blocks": []}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_1000_tags_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "tag_badges", "tags": [{"label": "x"} for _ in range(1000)]}]
+    )
+    assert out == []
+
+
+def test_1000_ranked_list_items_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "ranked_list",
+                "items": [{"title": "x"} for _ in range(1000)],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_too_many_tabs_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "tabs", "tabs": [{"label": "t", "blocks": []} for _ in range(50)]}]
+    )
+    assert out == []
+
+
+def test_too_many_blocks_in_one_tab_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "tabs",
+                "tabs": [
+                    {
+                        "label": "t",
+                        "blocks": [{"type": "text", "markdown": "x"} for _ in range(50)],
+                    }
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+@pytest.mark.parametrize("bad_value", [math.nan, math.inf, -math.inf])
+def test_nan_inf_chart_value_dropped(bad_value: float) -> None:
+    out = validate_blocks([{"type": "chart", "chart": "line", "data": [{"x": bad_value}]}])
+    assert out == []
+
+
+def test_nan_inf_table_cell_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "table", "columns": ["a"], "rows": [[math.nan]]}]
+    )
+    assert out == []
+
+
+def test_giant_markdown_string_dropped() -> None:
+    giant = "a" * (1024 * 1024)  # 1MB
+    out = validate_blocks([{"type": "text", "markdown": giant}])
+    assert out == []
+
+
+def test_short_markdown_under_limit_kept() -> None:
+    out = validate_blocks([{"type": "text", "markdown": "a" * 8000}])
+    assert len(out) == 1
+
+
+# --- Hostile content that VALIDATES (frontend sanitizes on render) ---------
+
+
+def test_hostile_markdown_validates_and_is_kept_verbatim() -> None:
+    """Iron Rule 5: this module does NOT sanitize/execute anything -- it only
+    bounds and type-checks. An XSS payload embedded in `markdown` is a
+    syntactically valid short string, so it VALIDATES and is kept as-is;
+    neutralizing it is the FRONTEND's job (sanitized-markdown renderer +
+    BlockRenderer type whitelist), not this validator's."""
+    payload = "<img src=x onerror=alert(1)>"
+    out = validate_blocks([{"type": "text", "markdown": payload}])
+    assert len(out) == 1
+    assert isinstance(out[0], TextBlock)
+    assert out[0].markdown == payload
+
+
+@pytest.mark.parametrize(
+    "image_ref",
+    ["javascript:alert(1)", "http://evil.example.com/x.png", "data:text/html,<script>1</script>"],
+)
+def test_image_ref_accepted_as_opaque_bounded_string(image_ref: str) -> None:
+    """image_ref is validated here ONLY as a short opaque string id -- this
+    module never interprets it as a URL. A `javascript:`/external/`data:`
+    value is accepted at this layer because nothing here loads it; the
+    renderer (a later task) resolves image_ref server-side to a proxied,
+    ACL-checked URL and must never treat this field as a directly-loadable
+    URL."""
+    out = validate_blocks([{"type": "image_card", "title": "x", "image_ref": image_ref}])
+    assert len(out) == 1
+    assert isinstance(out[0], ImageCardBlock)
+    assert out[0].image_ref == image_ref
+
+
+def test_image_ref_over_length_dropped() -> None:
+    out = validate_blocks([{"type": "image_card", "title": "x", "image_ref": "y" * 5000}])
+    assert out == []
+
+
+# --- Malformed top-level shapes: never raise, always [] --------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"type": "text", "markdown": "not a list"},
+        None,
+        "just a string",
+        12345,
+        12.5,
+        True,
+        b"bytes",
+        (),
+        {"blocks": []},
+    ],
+)
+def test_non_list_top_level_returns_empty(raw: object) -> None:
+    assert validate_blocks(raw) == []
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [],
+        [None],
+        ["a string block"],
+        [123],
+        [[]],
+        [True, False],
+        [{}],
+        [{"no_type_field": True}],
+        [{"type": None}],
+        [{"type": 123}],
+        [{"type": "text"}],  # missing required markdown
+        [{"type": "text", "markdown": None}],
+        [{"type": "text", "markdown": 123}],
+        [{"type": "chart", "chart": "bar", "data": "not-a-list"}],
+        [{"type": "chart", "chart": "bar", "data": [{"a": "fine"}, {"b": [1, 2, 3]}]}],
+        [{"type": "table", "columns": "not-a-list", "rows": []}],
+        [{"type": "tabs", "tabs": "not-a-list"}],
+        [{}, {"type": "text", "markdown": "ok"}, None, 42, {"type": "unknown"}],
+        [{"type": "text", "markdown": "ok"}] * 1000,
+        {"type": "text"},
+        [{"type": "text", "markdown": "ok", "nested": {"a": {"b": {"c": "d" * 100000}}}}],
+    ],
+)
+def test_validate_blocks_never_raises(raw: object) -> None:
+    """Property-style: validate_blocks must never raise for any malformed
+    shape thrown at it -- it always returns a (possibly empty) list."""
+    result = validate_blocks(raw)
+    assert isinstance(result, list)
