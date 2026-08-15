@@ -1,14 +1,30 @@
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Known dev-only default credentials (RAGZ-PUB-05): a production deployment
+# that still carries one of these literal values almost certainly means an
+# operator forgot to override it, not that they deliberately chose it -- so
+# the fail-closed validator below rejects each one by exact match.
+_DEV_DEFAULT_DATABASE_URL = "postgresql+asyncpg://ragz:ragz@localhost:55432/ragz"
+_DEV_DEFAULT_MINIO_SECRET_KEY = "ragz-dev-123"  # noqa: S105 (dev-only default literal, compared not used)
+_DEV_DEFAULT_LITELLM_MASTER_KEY = "sk-ragz-dev-master"  # noqa: S105 (dev-only default literal, compared not used)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RAGZ_", env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://ragz:ragz@localhost:55432/ragz"
+    database_url: str = _DEV_DEFAULT_DATABASE_URL
     redis_url: str = "redis://localhost:56379/0"
-    environment: str = "dev"
+    # "dev" = local/dev defaults allowed; "test" = pytest/httpx harness (also
+    # relaxes the refresh-cookie Secure flag so the ASGI test client's
+    # plain-http requests can carry it); "staging"/"production" are real
+    # deployments -- "production" additionally triggers the fail-closed
+    # validator below. An unrecognized value (e.g. a typo'd "prod") now fails
+    # validation instead of silently behaving like a truthy non-dev string.
+    environment: Literal["dev", "test", "staging", "production"] = "dev"
     kek_file: str = "./data/ragz_kek"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
@@ -30,7 +46,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:56333"
     minio_endpoint: str = "http://localhost:59000"
     minio_access_key: str = "ragz"
-    minio_secret_key: str = "ragz-dev-123"  # noqa: S105 (dev-only default; prod overrides via env)
+    minio_secret_key: str = _DEV_DEFAULT_MINIO_SECRET_KEY  # noqa: S105 (dev-only default; prod overrides via env)
     minio_bucket: str = "ragz-documents"
     tei_url: str = "http://localhost:58080"
     embedding_backend: str = "tei"  # "tei" | "hash" (hash = deterministic, test/dev only)
@@ -45,7 +61,7 @@ class Settings(BaseSettings):
     litellm_url: str = "http://localhost:54000"
     # Dev-only default; override in any real deployment. This is the proxy's own
     # admin credential (bootstrap-class config), NOT a provider key (iron rule 3).
-    litellm_master_key: str = "sk-ragz-dev-master"  # noqa: S105
+    litellm_master_key: str = _DEV_DEFAULT_LITELLM_MASTER_KEY  # noqa: S105
     chat_context_token_budget: int = 8000
 
     # Phase 2 Plan F: OIDC SSO (AUTH-2)
@@ -81,6 +97,41 @@ class Settings(BaseSettings):
     # Phase 3 Plan I (D7): Tavily web search. The API KEY is a stored secret
     # ("tavily", iron rule 3) — only the endpoint URL lives in config.
     tavily_url: str = "https://api.tavily.com"
+
+    @model_validator(mode="after")
+    def _production_fails_closed(self) -> "Settings":
+        """RAGZ-PUB-05: production must not silently run with dev defaults.
+        dev/test/staging stay permissive; environment == "production" rejects
+        each known-insecure condition below with a clear message."""
+        if self.environment != "production":
+            return self
+
+        errors: list[str] = []
+        if not self.api_key_pepper.strip():
+            errors.append(
+                "api_key_pepper is empty -- production must set RAGZ_API_KEY_PEPPER "
+                "(the plain-SHA256 fallback is not acceptable outside dev/test)"
+            )
+        if self.database_url == _DEV_DEFAULT_DATABASE_URL:
+            errors.append("database_url is still the dev default -- set RAGZ_DATABASE_URL")
+        if self.minio_secret_key == _DEV_DEFAULT_MINIO_SECRET_KEY:
+            errors.append("minio_secret_key is still the dev default -- set RAGZ_MINIO_SECRET_KEY")
+        if self.litellm_master_key == _DEV_DEFAULT_LITELLM_MASTER_KEY:
+            errors.append(
+                "litellm_master_key is still the dev default -- set RAGZ_LITELLM_MASTER_KEY"
+            )
+        if self.public_api_base_url.startswith("http://"):
+            errors.append("public_api_base_url uses http:// -- production requires https")
+        if self.frontend_base_url.startswith("http://"):
+            errors.append("frontend_base_url uses http:// -- production requires https")
+        if not self.kek_file.strip():
+            errors.append(
+                "kek_file is empty -- production must point RAGZ_KEK_FILE at a real KEK source"
+            )
+
+        if errors:
+            raise ValueError("insecure production configuration: " + "; ".join(errors))
+        return self
 
 
 @lru_cache

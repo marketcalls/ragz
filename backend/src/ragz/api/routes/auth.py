@@ -26,9 +26,13 @@ AdminDep = Annotated[TenantContext, Depends(require_role("admin"))]
 
 
 def _set_refresh(response: Response, raw: str, settings: Settings) -> None:
+    # RAGZ-PUB-05: Secure is unconditional outside the pytest/httpx test
+    # harness -- dev and staging/production all get Secure cookies now. Only
+    # environment == "test" relaxes it, since the ASGI test client talks
+    # plain http and a Secure cookie would silently vanish from its jar.
     response.set_cookie(
         "refresh_token", raw, httponly=True, samesite="strict",
-        secure=settings.environment != "dev",
+        secure=settings.environment != "test",
         max_age=settings.refresh_token_ttl_seconds, path="/api/v1/auth",
     )
 

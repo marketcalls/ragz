@@ -219,7 +219,10 @@ def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 @pytest.fixture
 def test_settings(kek_file: str) -> Settings:
-    return Settings(_env_file=None, kek_file=kek_file)
+    # RAGZ-PUB-05: refresh-cookie Secure is now unconditional outside
+    # environment == "test" -- the ASGI test client talks plain http, so a
+    # Secure cookie would silently drop from its jar without this.
+    return Settings(_env_file=None, kek_file=kek_file, environment="test")
 
 
 def _stub_litellm_handler(request: httpx.Request) -> httpx.Response:
