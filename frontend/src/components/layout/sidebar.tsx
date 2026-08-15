@@ -1,20 +1,4 @@
-import {
-  Activity,
-  BarChart3,
-  Bot,
-  FileText,
-  Fingerprint,
-  Gauge,
-  KeyRound,
-  LayoutDashboard,
-  Mail,
-  MessageSquare,
-  ScrollText,
-  Settings,
-  Settings2,
-  ShieldCheck,
-  Users,
-} from 'lucide-react';
+import { BarChart3, FileText, Gauge, ShieldCheck } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
 import { cn } from '@/lib/cn';
@@ -47,6 +31,13 @@ export function Sidebar() {
   const { data: auth } = useAuthorization();
   const can = (action: string) => auth?.role === 'superadmin' || auth?.permissions.has(action) === true;
   const isSuperadmin = claims?.role === 'superadmin';
+  const canSeeAdmin =
+    isSuperadmin ||
+    can('analytics.view') ||
+    can('users.read') ||
+    can('feedback.review') ||
+    can('roles.read') ||
+    can('audit.read');
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex items-center gap-2 px-3 pb-1 pt-3">
@@ -61,57 +52,8 @@ export function Sidebar() {
         <SideLink to="/documents" label="Documents" icon={<FileText className="h-4 w-4" aria-hidden />} />
         <SideLink to="/usage" label="My Usage" icon={<Gauge className="h-4 w-4" aria-hidden />} />
         <SideLink to="/reports" label="Reports" icon={<BarChart3 className="h-4 w-4" aria-hidden />} />
-        {can('analytics.view') ? (
-          <SideLink
-            to="/admin/dashboard"
-            label="Dashboard"
-            icon={<LayoutDashboard className="h-4 w-4" aria-hidden />}
-          />
-        ) : null}
-        {can('users.read') ? (
-          <SideLink to="/admin/users" label="Users" icon={<Users className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {can('feedback.review') ? (
-          <SideLink
-            to="/admin/feedback"
-            label="Feedback"
-            icon={<MessageSquare className="h-4 w-4" aria-hidden />}
-          />
-        ) : null}
-        {can('roles.read') ? (
-          <SideLink to="/admin/roles" label="Roles" icon={<ShieldCheck className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink to="/admin/models" label="Models" icon={<Settings2 className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink to="/admin/settings" label="Settings" icon={<Settings className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink
-            to="/admin/api-keys"
-            label="API Keys"
-            icon={<KeyRound className="h-4 w-4" aria-hidden />}
-          />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink to="/admin/bots" label="Bots" icon={<Bot className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink to="/admin/email" label="Email" icon={<Mail className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink
-            to="/admin/sso"
-            label="SSO"
-            icon={<Fingerprint className="h-4 w-4" aria-hidden />}
-          />
-        ) : null}
-        {can('audit.read') ? (
-          <SideLink to="/admin/audit" label="Audit" icon={<ScrollText className="h-4 w-4" aria-hidden />} />
-        ) : null}
-        {isSuperadmin ? (
-          <SideLink to="/admin/health" label="Health" icon={<Activity className="h-4 w-4" aria-hidden />} />
+        {canSeeAdmin ? (
+          <SideLink to="/admin" label="Admin" icon={<ShieldCheck className="h-4 w-4" aria-hidden />} />
         ) : null}
       </nav>
       <UserFooter />

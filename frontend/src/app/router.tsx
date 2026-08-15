@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { AccountPage } from '@/features/account/account-page';
+import { AdminHubPage } from '@/features/admin/admin-hub-page';
 import { ApiKeysPage } from '@/features/admin/api-keys/api-keys-page';
 import { AuditPage } from '@/features/admin/audit/audit-page';
 import { BotsPage } from '@/features/admin/bots/bots-page';
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
           { path: '/usage', element: <UsagePage /> },
           { path: '/reports', element: <ReportsPage /> },
           { path: '/account', element: <AccountPage /> },
+          { path: '/admin', element: <AdminHubPage /> },
           {
             element: <RequireRole role="admin" />,
             children: [

@@ -57,50 +57,30 @@ afterEach(() => {
   localStorage.clear();
 });
 
-test('a Viewer-permission user sees no admin links', async () => {
+test('a Viewer-permission user sees no Admin link', async () => {
   setAccessToken(tokenFor('user'));
   renderSidebar({ role: 'user', permissions: ['search.execute', 'chat.generate'] });
   expect(await screen.findByText('Finance')).toBeInTheDocument();
-  expect(screen.queryByText('Users')).not.toBeInTheDocument();
-  expect(screen.queryByText('Audit')).not.toBeInTheDocument();
-  expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
-  expect(screen.queryByText('Feedback')).not.toBeInTheDocument();
-  expect(screen.queryByText('Roles')).not.toBeInTheDocument();
-  expect(screen.queryByText('Models')).not.toBeInTheDocument();
+  expect(screen.queryByText('Admin')).not.toBeInTheDocument();
 });
 
-test('a user granted only audit.read sees the Audit link but not Users', async () => {
+test('a user granted only audit.read sees the single Admin link', async () => {
   setAccessToken(tokenFor('user'));
   renderSidebar({ role: 'user', permissions: ['audit.read'] });
-  expect(await screen.findByText('Audit')).toBeInTheDocument();
-  expect(screen.queryByText('Users')).not.toBeInTheDocument();
-  expect(screen.queryByText('Roles')).not.toBeInTheDocument();
+  expect(await screen.findByText('Admin')).toBeInTheDocument();
 });
 
-test('superadmin sees every admin link, including platform-only ones', async () => {
+test('superadmin sees the single Admin link', async () => {
   setAccessToken(tokenFor('superadmin'));
   renderSidebar({ role: 'superadmin', permissions: [] });
-  expect(await screen.findByText('Users')).toBeInTheDocument();
-  expect(screen.getByText('Roles')).toBeInTheDocument();
-  expect(screen.getByText('Models')).toBeInTheDocument();
-  expect(screen.getByText('Settings')).toBeInTheDocument();
-  expect(screen.getByText('API Keys')).toBeInTheDocument();
-  expect(screen.getByText('Bots')).toBeInTheDocument();
-  expect(screen.getByText('Email')).toBeInTheDocument();
-  expect(screen.getByText('Audit')).toBeInTheDocument();
-  expect(screen.getByText('Health')).toBeInTheDocument();
+  expect(await screen.findByText('Admin')).toBeInTheDocument();
 });
 
-test('a non-superadmin admin with delegated org permissions sees Users/Feedback but not Roles or platform-only links', async () => {
+test('a non-superadmin admin with delegated org permissions sees the single Admin link', async () => {
   setAccessToken(tokenFor('admin'));
   renderSidebar({
     role: 'admin',
     permissions: ['users.read', 'feedback.review', 'analytics.view'],
   });
-  expect(await screen.findByText('Users')).toBeInTheDocument();
-  expect(screen.getByText('Feedback')).toBeInTheDocument();
-  expect(screen.getByText('Dashboard')).toBeInTheDocument();
-  expect(screen.queryByText('Roles')).not.toBeInTheDocument();
-  expect(screen.queryByText('Models')).not.toBeInTheDocument();
-  expect(screen.queryByText('API Keys')).not.toBeInTheDocument();
+  expect(await screen.findByText('Admin')).toBeInTheDocument();
 });
