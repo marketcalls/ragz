@@ -7,18 +7,18 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 Platform = Literal["telegram", "discord", "slack"]
 
 
 class BotIntegrationCreate(BaseModel):
     platform: Platform
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     workspace_id: UUID
     user_id: UUID
-    token: str
-    signing_secret: str
+    token: str = Field(min_length=1, max_length=8192)
+    signing_secret: str = Field(min_length=1, max_length=8192)
 
 
 class BotIntegrationPatch(BaseModel):

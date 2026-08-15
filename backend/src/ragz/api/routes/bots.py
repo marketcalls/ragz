@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.api.bots_relay import answer_for_integration
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
-from ragz.core.errors import AuthenticationError, BadRequestError, UpstreamError
+from ragz.core.errors import AuthenticationError, BadRequestError, PayloadTooLarge, UpstreamError
 from ragz.core.ratelimit import check_rate_limit, rate_limit
 from ragz.modules.bots import platforms
 from ragz.modules.bots import service as bots_service
@@ -51,12 +51,45 @@ _INBOUND_WINDOW_SECONDS = 60
 # platform's outbound-webhook IP range is shared across all its customers).
 _bot_webhook_ip_limit = Depends(rate_limit("bot_webhook_probe", limit=120, window_seconds=60))
 
+# RAGZ-PUB-03: the global BodySizeLimitMiddleware (security_middleware.py)
+# caps every request body on the app at ~35MB+ -- a backstop sized for
+# document uploads, not chat-platform webhook events. Telegram/Slack/
+# Discord inbound payloads are small JSON (a message + metadata); 64KB is
+# generous headroom over any real delivery while keeping a probing/
+# compromised webhook_id from forcing this route to buffer anywhere close
+# to the global ceiling. One constant, enforced identically for all three
+# platforms via `_read_bounded_body` below.
+_WEBHOOK_BODY_MAX_BYTES = 64 * 1024
+
 
 async def _rate_limit_bot_webhook(request: Request, integration_id: UUID) -> None:
     await check_rate_limit(
         request.app.state.redis, f"rl:bot_webhook:integration:{integration_id}",
         _INBOUND_LIMIT, _INBOUND_WINDOW_SECONDS,
     )
+
+
+async def _read_bounded_body(request: Request) -> bytes:
+    """Reads the request body capped at `_WEBHOOK_BODY_MAX_BYTES`, raising
+    PayloadTooLarge (413) before any signature-verification/parse/relay
+    work runs. Two enforcement paths, mirroring documents.py::
+    upload_document's pattern: a declared Content-Length over the cap is
+    rejected before reading any bytes; an absent/understating/lying
+    Content-Length is caught by checking the actual bytes read (bounded in
+    the worst case by the global body-size middleware, so this never
+    buffers past that outer ceiling)."""
+    if content_length := request.headers.get("content-length"):
+        try:
+            if int(content_length) > _WEBHOOK_BODY_MAX_BYTES:
+                raise PayloadTooLarge(
+                    f"webhook body exceeds {_WEBHOOK_BODY_MAX_BYTES} byte limit"
+                )
+        except ValueError:
+            pass  # invalid Content-Length -- fall through to the actual-bytes check below
+    raw_body = await request.body()
+    if len(raw_body) > _WEBHOOK_BODY_MAX_BYTES:
+        raise PayloadTooLarge(f"webhook body exceeds {_WEBHOOK_BODY_MAX_BYTES} byte limit")
+    return raw_body
 
 
 def _parse_json(raw_body: bytes) -> dict[str, object]:
@@ -84,8 +117,9 @@ async def telegram_webhook(
     # Raw bytes read ONCE and reused for both verify and json-parse below --
     # verifying over a re-serialized parsed body would let a byte-for-byte
     # different (but semantically equal) payload slip past a signature
-    # computed over the ORIGINAL bytes Telegram sent.
-    raw_body = await request.body()
+    # computed over the ORIGINAL bytes Telegram sent. Bounded to
+    # _WEBHOOK_BODY_MAX_BYTES (413 if exceeded) before any of that runs.
+    raw_body = await _read_bounded_body(request)
     secret = await bots_service.get_signing_secret(session, settings, integration_id=integration.id)
     if not verify_telegram(request.headers, raw_body, secret):
         # Iron rule: a tampered/absent signature must do NO relay/LLM/outbound
@@ -157,8 +191,8 @@ async def slack_webhook(
     )
     await _rate_limit_bot_webhook(request, integration.id)
     # Raw bytes read ONCE and reused for verify + json-parse below -- see
-    # telegram_webhook's identical rationale.
-    raw_body = await request.body()
+    # telegram_webhook's identical rationale (including the body-size cap).
+    raw_body = await _read_bounded_body(request)
     secret = await bots_service.get_signing_secret(session, settings, integration_id=integration.id)
     if not verify_slack(request.headers, raw_body, secret):
         # Iron rule: a tampered/absent/stale signature must do NO relay/LLM/
@@ -217,7 +251,9 @@ async def discord_webhook(
         session, platform="discord", webhook_id=webhook_id
     )
     await _rate_limit_bot_webhook(request, integration.id)
-    raw_body = await request.body()
+    # Bounded to _WEBHOOK_BODY_MAX_BYTES (413 if exceeded) before Ed25519
+    # verification -- see telegram_webhook's identical rationale.
+    raw_body = await _read_bounded_body(request)
     secret = await bots_service.get_signing_secret(session, settings, integration_id=integration.id)
     if not verify_discord(request.headers, raw_body, secret):
         # Iron rule: verify Ed25519 FIRST -- not even PING/PONG runs before

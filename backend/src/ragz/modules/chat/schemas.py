@@ -23,7 +23,7 @@ class MessageSend(BaseModel):
     parent_message_id: UUID | None = None
     model_id: UUID | None = None
     reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
-    attachment_ids: list[UUID] | None = None
+    attachment_ids: list[UUID] | None = Field(default=None, max_length=50)
     # RAGZ-PUB-08 item 2: explicit per-turn user consent to let the agent run
     # an EXTERNAL web search (the redacted, user-question-derived query leaves
     # Ragz to a third-party provider). Fail-closed: absent/False => the planner
@@ -45,7 +45,7 @@ class RegenerateRequest(BaseModel):
 
 class ChatCreate(BaseModel):
     workspace_id: UUID
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=200)
 
 
 class ChatOut(BaseModel):
@@ -88,7 +88,7 @@ class FeedbackOut(BaseModel):
 
 class MessageFeedbackIn(BaseModel):
     rating: Literal["up", "down"]
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=4000)
 
 
 class MessageNode(BaseModel):

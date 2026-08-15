@@ -209,8 +209,12 @@ async def external_chat(
 
 
 class OpenAIMessage(BaseModel):
-    role: str
-    content: str
+    # RAGZ-PUB-03: this route is API-key-authenticated + rate-limited, but
+    # still cheap to hit repeatedly -- bound both fields so an oversized
+    # history can't force unbounded work before `_last_user_message` even
+    # picks the one message that's actually used.
+    role: str = Field(max_length=40)
+    content: str = Field(max_length=32000)
 
 
 class OpenAIChatCompletionsRequest(BaseModel):
@@ -222,8 +226,8 @@ class OpenAIChatCompletionsRequest(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    model: str | None = None
-    messages: list[OpenAIMessage]
+    model: str | None = Field(default=None, max_length=200)
+    messages: list[OpenAIMessage] = Field(max_length=500)
     stream: bool = False
 
 

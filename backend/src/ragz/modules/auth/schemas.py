@@ -6,8 +6,14 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
+    # RAGZ-PUB-03: /auth/login is public + rate-limited but still cheap to
+    # hit repeatedly -- bound both fields so an oversized body can't force
+    # unnecessary work (email-validator parsing, Argon2id verification over
+    # an attacker-chosen huge password) before the rate limiter even helps.
+    # 320 mirrors RFC 5321's max mailbox length; 4096 is generous headroom
+    # over any real password while still bounding Argon2's per-request cost.
+    email: EmailStr = Field(max_length=320)
+    password: str = Field(max_length=4096)
 
 
 class AccessTokenResponse(BaseModel):
@@ -16,7 +22,7 @@ class AccessTokenResponse(BaseModel):
 
 
 class InvitationCreate(BaseModel):
-    email: EmailStr
+    email: EmailStr = Field(max_length=320)
     role: Literal["admin", "user"] = "user"
 
 
@@ -25,8 +31,11 @@ class InvitationOut(BaseModel):
 
 
 class InvitationAccept(BaseModel):
-    token: str
-    password: str = Field(min_length=12)
+    # RAGZ-PUB-03: /auth/invitations/accept is public + rate-limited. The
+    # raw token is `secrets.token_urlsafe(32)` (service.py, ~43 chars) --
+    # 512 is generous headroom over that; password max mirrors LoginRequest.
+    token: str = Field(max_length=512)
+    password: str = Field(min_length=12, max_length=4096)
 
 
 class UserOut(BaseModel):
@@ -45,7 +54,7 @@ class UserPatch(BaseModel):
 
 
 class ApiKeyCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     user_id: UUID
     workspace_id: UUID
     expires_at: datetime | None = None

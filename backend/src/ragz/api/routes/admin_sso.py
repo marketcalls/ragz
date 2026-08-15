@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
@@ -24,9 +24,10 @@ class SsoConfigOut(BaseModel):
 
 
 class SsoConfigIn(BaseModel):
-    issuer: str
-    client_id: str
-    client_secret: str | None = None  # write-only; omit to keep the stored one
+    issuer: str = Field(min_length=1, max_length=2000)
+    client_id: str = Field(min_length=1, max_length=2000)
+    # write-only; omit to keep the stored one
+    client_secret: str | None = Field(default=None, max_length=8192)
 
 
 class OrgOut(BaseModel):
@@ -38,7 +39,7 @@ class OrgOut(BaseModel):
 
 
 class SsoDomainsIn(BaseModel):
-    domains: list[str]
+    domains: list[str] = Field(max_length=200)
 
 
 @router.get("/sso", response_model=SsoConfigOut)

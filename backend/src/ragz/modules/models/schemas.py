@@ -20,10 +20,10 @@ class ModelCreate(BaseModel):
     litellm_model_name: str = Field(min_length=1, max_length=200)
     display_name: str = Field(min_length=1, max_length=200)
     provider_kind: ProviderKind
-    base_url: str | None = None
-    api_key: str | None = None  # write-only: stored via the secrets module, never returned
+    base_url: str | None = Field(default=None, max_length=2000)
+    api_key: str | None = Field(default=None, max_length=8192)
     # Superadmin-only fake-LLM passthrough (D2) - never exposed on ModelPublic.
-    mock_response: str | None = None
+    mock_response: str | None = Field(default=None, max_length=32000)
     # Phase 3 Plan I (MODEL-3): superadmin can flag a model as unreliable at
     # native tool calling from creation time.
     tools_unreliable: bool = False
@@ -56,11 +56,11 @@ class ModelCreate(BaseModel):
 
 
 class ModelPatch(BaseModel):
-    display_name: str | None = None
-    base_url: str | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    base_url: str | None = Field(default=None, max_length=2000)
     enabled: bool | None = None
-    api_key: str | None = None  # write-only
-    mock_response: str | None = None
+    api_key: str | None = Field(default=None, max_length=8192)  # write-only
+    mock_response: str | None = Field(default=None, max_length=32000)
     # Phase 3 Plan I (MODEL-3): superadmin toggle for the JSON-planner fallback.
     tools_unreliable: bool | None = None
     supports_reasoning: bool | None = None
@@ -130,5 +130,5 @@ class ProviderSettingsUpdate(BaseModel):
     cohere_rerank_model: Literal["rerank-v4.0-fast", "rerank-v4.0-pro"] | None = None
     # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has
     # no key fields, only *_key_set booleans).
-    llamaparse_api_key: str | None = None
-    cohere_api_key: str | None = None
+    llamaparse_api_key: str | None = Field(default=None, max_length=8192)
+    cohere_api_key: str | None = Field(default=None, max_length=8192)

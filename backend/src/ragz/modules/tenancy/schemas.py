@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class WorkspaceCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
 
 
 class WorkspaceOut(BaseModel):
@@ -80,7 +80,7 @@ class MemberRolePatch(BaseModel):
 
 
 class GroupCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
 
 
 class GroupOut(BaseModel):
@@ -90,15 +90,15 @@ class GroupOut(BaseModel):
 
 
 class RoleTemplateCreate(BaseModel):
-    name: str
-    description: str = ""
-    permissions: list[str]
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    permissions: list[str] = Field(max_length=500)
 
 
 class RoleTemplatePatch(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    permissions: list[str] | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    permissions: list[str] | None = Field(default=None, max_length=500)
 
 
 class RoleTemplateOut(BaseModel):

@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ragz.api.app import create_app
+from ragz.api.routes.bots import _WEBHOOK_BODY_MAX_BYTES
 from ragz.core.config import Settings, get_settings
 from ragz.core.db import build_session_factory
 from ragz.modules.auth.models import User
@@ -202,3 +203,52 @@ async def test_non_message_update_returns_200_no_op(
     )
     assert r.status_code == 200, r.text
     assert outbound.calls == []
+
+
+async def test_oversized_body_rejected_413_before_signature_check(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+    retriever: FakeRetriever, streamer: FakeStreamer,
+) -> None:
+    """RAGZ-PUB-03: the webhook byte cap is enforced BEFORE signature
+    verification/parse/relay -- proven here with a deliberately WRONG
+    secret: if the cap weren't checked first, this would 401 (wrong
+    signature) rather than 413 (body too large), and the relay/LLM/outbound
+    assertions below would still hold either way (iron rule: no work below
+    an unverified/oversized request)."""
+    integration, _doc = telegram_env
+    oversized = _update_body("x" * (_WEBHOOK_BODY_MAX_BYTES + 1))
+    r = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}",
+        content=oversized,
+        headers={
+            "X-Telegram-Bot-Api-Secret-Token": "wrong-secret",
+            "content-type": "application/json",
+        },
+    )
+    assert r.status_code == 413, r.text
+    assert retriever.calls == []
+    assert streamer.calls == []
+    assert outbound.calls == []
+
+
+async def test_body_at_cap_is_accepted(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder
+) -> None:
+    """A body comfortably under the cap is unaffected -- still verifies and
+    relays normally (mirrors test_valid_signature_returns_200_and_calls_
+    outbound, just with a large-but-in-bounds text field)."""
+    integration, _doc = telegram_env
+    # Leaves headroom under _WEBHOOK_BODY_MAX_BYTES for the update's JSON
+    # scaffolding (update_id/chat/id keys) added by _update_body.
+    body = _update_body("what was revenue? " + "x" * (_WEBHOOK_BODY_MAX_BYTES // 2))
+    assert len(body) <= _WEBHOOK_BODY_MAX_BYTES
+    r = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}",
+        content=body,
+        headers={
+            "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET,
+            "content-type": "application/json",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert len(outbound.calls) == 1

@@ -61,7 +61,7 @@ class AclUpdate(BaseModel):
     null`, never `[]`.
     """
 
-    acl_group_ids: list[UUID] | None = Field(min_length=1)
+    acl_group_ids: list[UUID] | None = Field(min_length=1, max_length=500)
 
 
 class FolderCreate(BaseModel):
@@ -101,9 +101,9 @@ class MetadataFieldCreate(BaseModel):
     """POST /workspaces/{id}/metadata-fields body (DOC-6)."""
 
     name: str = Field(pattern=r"^[a-z0-9_]{1,40}$")
-    label: str
-    field_type: str
-    options: list[str] | None = None
+    label: str = Field(min_length=1, max_length=200)
+    field_type: str = Field(min_length=1, max_length=40)
+    options: list[str] | None = Field(default=None, max_length=200)
 
 
 class MetadataFieldOut(BaseModel):
@@ -120,4 +120,4 @@ class MetadataFieldOut(BaseModel):
 class MetadataValuesIn(BaseModel):
     """PUT /documents/{id}/metadata body — full replacement of doc.meta."""
 
-    values: dict[str, str]
+    values: dict[str, str] = Field(max_length=200)
