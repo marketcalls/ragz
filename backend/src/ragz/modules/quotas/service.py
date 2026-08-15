@@ -11,6 +11,7 @@ rollup table until Plan G's load tests demand one.
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import NamedTuple
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -261,6 +262,47 @@ async def get_user_quota_with_usage(
         used_tokens=status.used_tokens, allocated_tokens=status.allocated_tokens,
         resets_at=status.resets_at,
     )
+
+
+class DailyUsagePoint(NamedTuple):
+    date: str  # YYYY-MM-DD
+    prompt_tokens: int
+    completion_tokens: int
+
+
+async def daily_usage(
+    session: AsyncSession, *, user_id: UUID, days: int
+) -> list[DailyUsagePoint]:
+    """Per-day token totals for a user over the last `days` days (zero-filled,
+    ascending). Aggregates usage_records by calendar day. Same indexed-ledger
+    group-by as org_usage_summary -- no rollup table (see module docstring)."""
+    today = naive_utc().date()
+    start_date = today - timedelta(days=days - 1)
+    start = datetime(start_date.year, start_date.month, start_date.day)
+    day_col = func.date_trunc("day", UsageRecord.created_at).label("day")
+    rows = (
+        await session.execute(
+            select(
+                day_col,
+                func.coalesce(func.sum(UsageRecord.prompt_tokens), 0),
+                func.coalesce(func.sum(UsageRecord.completion_tokens), 0),
+            )
+            .where(UsageRecord.user_id == user_id, UsageRecord.created_at >= start)
+            .group_by(day_col)
+            .order_by(day_col)
+        )
+    ).all()
+    by_day = {d.date(): (int(p), int(c)) for d, p, c in rows}
+    out: list[DailyUsagePoint] = []
+    for i in range(days):
+        day = start_date + timedelta(days=i)
+        prompt, completion = by_day.get(day, (0, 0))
+        out.append(
+            DailyUsagePoint(
+                date=day.isoformat(), prompt_tokens=prompt, completion_tokens=completion
+            )
+        )
+    return out
 
 
 async def org_usage_summary(

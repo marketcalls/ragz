@@ -40,6 +40,12 @@ class UsageMeterOut(BaseModel):
     warning: bool
 
 
+class DailyUsagePointOut(BaseModel):
+    date: str  # YYYY-MM-DD
+    prompt_tokens: int
+    completion_tokens: int
+
+
 class DayUsage(BaseModel):
     day: date
     tokens: int

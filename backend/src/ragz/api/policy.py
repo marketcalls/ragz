@@ -244,6 +244,7 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/users/{user_id}/quota"): "quota.read",
     ("PUT", "/api/v1/users/{user_id}/quota"): "quota.manage",
     ("GET", "/api/v1/usage/me"): "quota.read",
+    ("GET", "/api/v1/usage/me/daily"): "quota.read",
     ("GET", "/api/v1/admin/usage/summary"): "analytics.view",
     ("GET", "/api/v1/admin/usage/orgs"): "analytics.view",
     # ops

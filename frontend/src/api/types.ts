@@ -72,6 +72,10 @@ export type OrgQuotaIn = components['schemas']['OrgQuotaIn'];
 // see features/chat/usage-meter.tsx (the existing chat-header widget) and
 // features/usage/usage-page.tsx (the "My Usage" page) for the two consumers.
 export type UsageMeterOut = components['schemas']['UsageMeterOut'];
+// GET /api/v1/usage/me/daily: per-day token totals (prompt vs completion) for
+// the current user over a 7/30/90-day window, zero-filled + ascending. Powers
+// the "Usage over time" stacked-area chart on the "My Usage" page.
+export type DailyUsagePointOut = components['schemas']['DailyUsagePointOut'];
 // GET /api/v1/users/{user_id}/quota (Task 15): the target user's override
 // (null = using the org default) plus their current-period usage, in one call.
 export type UserQuotaOut = components['schemas']['UserQuotaOut'];

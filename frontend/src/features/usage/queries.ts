@@ -16,3 +16,18 @@ export function useUsageMe() {
     refetchInterval: 60_000, // matches the backend's 60s usage cache
   });
 }
+
+// Per-day token totals for the current user over the last `days` days
+// (zero-filled, ascending). Powers the "Usage over time" chart.
+export function useUsageDaily(days: number) {
+  return useQuery({
+    queryKey: ['usage-daily', days],
+    queryFn: async () => {
+      const { data, error } = await api.GET('/api/v1/usage/me/daily', {
+        params: { query: { days } },
+      });
+      if (error) throw new Error('failed to load daily usage');
+      return data;
+    },
+  });
+}

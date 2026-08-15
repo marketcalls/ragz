@@ -1,13 +1,17 @@
+import { useState } from 'react';
 import { TriangleAlert } from 'lucide-react';
 
 import { ChartCard } from '@/components/charts/chart-card';
 import { RadialGauge } from '@/components/charts/radial-gauge';
+import { StackedArea } from '@/components/charts/stacked-area';
 import { TopBar } from '@/components/layout/top-bar';
 import { QueryError } from '@/components/ui/query-error';
 import { Spinner } from '@/components/ui/spinner';
 import { StatTile } from '@/components/ui/stat-tile';
 
-import { useUsageMe } from './queries';
+import { useUsageDaily, useUsageMe } from './queries';
+
+const RANGES = [7, 30, 90] as const;
 
 function formatResetDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -19,6 +23,8 @@ function formatResetDate(iso: string): string {
 
 export function UsagePage() {
   const query = useUsageMe();
+  const [days, setDays] = useState<number>(30);
+  const dailyQuery = useUsageDaily(days);
   const data = query.data;
   // allocated_tokens is null when no allocation is configured (unlimited/
   // local deployments -- see UsageMeterOut) and RadialGauge itself refuses
@@ -28,7 +34,25 @@ export function UsagePage() {
 
   return (
     <>
-      <TopBar title="My Usage" />
+      <TopBar
+        title="My Usage"
+        actions={
+          <div className="flex gap-1">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setDays(r)}
+                className={`rounded-md px-2 py-1 text-xs transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink ${
+                  days === r ? 'bg-subtle text-ink' : 'text-secondary'
+                }`}
+              >
+                {r}d
+              </button>
+            ))}
+          </div>
+        }
+      />
       <div className="flex-1 overflow-y-auto p-6">
         {query.isPending ? <Spinner label="Loading usage…" /> : null}
         {query.isError ? (
@@ -71,6 +95,20 @@ export function UsagePage() {
               />
               <StatTile label="Resets" value={formatResetDate(data.resets_at)} />
             </div>
+
+            <ChartCard title="Usage over time">
+              {dailyQuery.isPending ? (
+                <Spinner label="Loading usage…" />
+              ) : dailyQuery.isError ? (
+                <QueryError error={dailyQuery.error} onRetry={() => dailyQuery.refetch()} />
+              ) : (
+                <StackedArea
+                  data={dailyQuery.data ?? []}
+                  xKey="date"
+                  keys={['prompt_tokens', 'completion_tokens']}
+                />
+              )}
+            </ChartCard>
           </div>
         ) : null}
       </div>

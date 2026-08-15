@@ -1572,6 +1572,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/usage/me/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Usage Me Daily */
+        get: operations["usage_me_daily_api_v1_usage_me_daily_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/usage/summary": {
         parameters: {
             query?: never;
@@ -2286,6 +2303,15 @@ export interface components {
         CustomRoleAssign: {
             /** Role Template Id */
             role_template_id: string | null;
+        };
+        /** DailyUsagePointOut */
+        DailyUsagePointOut: {
+            /** Date */
+            date: string;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Completion Tokens */
+            completion_tokens: number;
         };
         /** DashboardSummaryOut */
         DashboardSummaryOut: {
@@ -7291,6 +7317,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageMeterOut"];
+                };
+            };
+        };
+    };
+    usage_me_daily_api_v1_usage_me_daily_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyUsagePointOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

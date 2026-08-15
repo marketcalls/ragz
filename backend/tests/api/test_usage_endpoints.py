@@ -12,7 +12,7 @@ from ragz.modules.auth.models import User
 from ragz.modules.auth.passwords import hash_password
 from ragz.modules.chat.models import Chat, Message
 from ragz.modules.models.models import Model
-from ragz.modules.quotas.models import UserQuota
+from ragz.modules.quotas.models import UsageRecord, UserQuota
 from ragz.modules.quotas.service import record_usage
 from ragz.modules.secrets import service as secrets_service
 from ragz.modules.tenancy.models import Organization, Workspace
@@ -40,6 +40,56 @@ async def test_usage_me(
     assert body["allocated_tokens"] == 1_000
     assert body["warning"] is True
     assert body["resets_at"]
+
+
+async def test_usage_me_daily_zero_filled_and_user_scoped(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    """days=7 returns exactly 7 ascending, zero-filled points; seeded days carry
+    their prompt/completion sums, others zero, and another user's rows are absent."""
+    now = naive_utc()
+    today = now.date()
+    # two records today (same day -> summed), one record 3 days ago
+    await record_usage(session, org_id=seeded_user.org_id, user_id=seeded_user.id,
+                       model_id=None, feature="chat", prompt_tokens=100, completion_tokens=20)
+    await record_usage(session, org_id=seeded_user.org_id, user_id=seeded_user.id,
+                       model_id=None, feature="chat", prompt_tokens=50, completion_tokens=5)
+    three_days_ago = UsageRecord(
+        org_id=seeded_user.org_id, user_id=seeded_user.id, model_id=None,
+        feature="chat", prompt_tokens=7, completion_tokens=3,
+        created_at=now - timedelta(days=3),
+    )
+    session.add(three_days_ago)
+    # another user's usage today must NOT appear in this user's series
+    other_user = User(org_id=seeded_user.org_id, email="other-daily@acme.com",
+                      password_hash=hash_password("pw123456"), role="user")
+    session.add(other_user)
+    await session.flush()
+    await record_usage(session, org_id=seeded_user.org_id, user_id=other_user.id,
+                       model_id=None, feature="chat", prompt_tokens=9999, completion_tokens=9999)
+    await session.commit()
+
+    h = await auth(client, "a@acme.com")
+    r = await client.get("/api/v1/usage/me/daily?days=7", headers=h)
+    assert r.status_code == 200
+    series = r.json()
+    assert len(series) == 7
+    dates = [p["date"] for p in series]
+    assert dates == sorted(dates)  # ascending
+    assert dates[-1] == today.isoformat()
+    by_date = {p["date"]: p for p in series}
+    assert by_date[today.isoformat()] == {
+        "date": today.isoformat(), "prompt_tokens": 150, "completion_tokens": 25,
+    }
+    three_ago = (today - timedelta(days=3)).isoformat()
+    assert by_date[three_ago] == {
+        "date": three_ago, "prompt_tokens": 7, "completion_tokens": 3,
+    }
+    # every other day zero-filled, and the foreign user's 9999s never leak in
+    seeded = {today.isoformat(), three_ago}
+    for p in series:
+        if p["date"] not in seeded:
+            assert p["prompt_tokens"] == 0 and p["completion_tokens"] == 0
 
 
 async def test_admin_summary_org_scoped(

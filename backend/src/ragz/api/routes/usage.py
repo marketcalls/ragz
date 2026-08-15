@@ -13,6 +13,7 @@ from ragz.modules.evals import service as evals_service
 from ragz.modules.models import keys
 from ragz.modules.quotas import service
 from ragz.modules.quotas.schemas import (
+    DailyUsagePointOut,
     OrgQuotaIn,
     OrgQuotaOut,
     OrgUsage,
@@ -106,6 +107,20 @@ async def usage_me(request: Request, session: SessionDep, ctx: QuotaReadDep) -> 
         used_tokens=status.used_tokens, allocated_tokens=status.allocated_tokens,
         resets_at=status.resets_at, warning=status.warning,
     )
+
+
+@router.get("/usage/me/daily", response_model=list[DailyUsagePointOut])
+async def usage_me_daily(
+    session: SessionDep, ctx: QuotaReadDep,
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> list[DailyUsagePointOut]:
+    rows = await service.daily_usage(session, user_id=ctx.user_id, days=days)
+    return [
+        DailyUsagePointOut(
+            date=r.date, prompt_tokens=r.prompt_tokens, completion_tokens=r.completion_tokens
+        )
+        for r in rows
+    ]
 
 
 # Task 4 (Plan J, SAFE-2): route-local composed response, not a change to
