@@ -5,6 +5,7 @@ import type { MessageNode } from '@/api/types';
 import { TopBar } from '@/components/layout/top-bar';
 import { Spinner } from '@/components/ui/spinner';
 
+import { DocumentViewerDrawer } from '@/features/documents/document-viewer-drawer';
 import { useDocuments } from '@/features/documents/queries';
 import { useModels } from '@/features/models/queries';
 import { useWorkspaces } from '@/features/workspaces/queries';
@@ -50,6 +51,25 @@ export function ChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
   const uploadAttachment = useUploadAttachment(chatId);
+
+  // Citation -> source-document drawer (Task: click a citation to open the
+  // source document). One drawer for the whole page -- every AssistantMessage
+  // routes chip/marker clicks through this single open-state.
+  const [viewerTarget, setViewerTarget] = useState<{
+    documentId: string;
+    page: number;
+    filename: string;
+    version?: number;
+  } | null>(null);
+  const openDocument = (source: SourceChipData): void => {
+    if (!source.document_id) return;
+    setViewerTarget({
+      documentId: source.document_id,
+      page: source.page,
+      filename: source.filename,
+      version: source.version,
+    });
+  };
 
   // Persisted citations (MessageNode.citations) → source chips; filenames
   // resolved from the workspace's document list (shared query cache).
@@ -213,6 +233,7 @@ export function ChatPage() {
                 stopped={m.stopped}
                 grounding={m.grounding}
                 validationFailed={m.validation_failed}
+                onOpenDocument={openDocument}
                 footer={
                   <MessageActions
                     entry={entry}
@@ -253,6 +274,15 @@ export function ChatPage() {
         busy={busy}
         onStop={stream.stop}
       />
+      {viewerTarget ? (
+        <DocumentViewerDrawer
+          documentId={viewerTarget.documentId}
+          page={viewerTarget.page}
+          filename={viewerTarget.filename}
+          version={viewerTarget.version}
+          onClose={() => setViewerTarget(null)}
+        />
+      ) : null}
     </>
   );
 }

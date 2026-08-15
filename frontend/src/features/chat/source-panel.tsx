@@ -29,10 +29,15 @@ export function SourcePanel({
   sources,
   highlightedN,
   onSelect,
+  onOpenDocument,
 }: {
   sources: SourceChipData[];
   highlightedN?: number | null;
   onSelect?: (n: number) => void;
+  // Document citations only (Task: citation -> source-document drawer) --
+  // web citations (source.url set) keep their separate "open" external link
+  // below and never open the in-app viewer.
+  onOpenDocument?: (source: SourceChipData) => void;
 }) {
   if (sources.length === 0) return null;
   return (
@@ -41,7 +46,10 @@ export function SourcePanel({
         <div key={source.marker} role="listitem" className="inline-flex items-center">
           <button
             type="button"
-            onClick={() => onSelect?.(source.marker)}
+            onClick={() => {
+              onSelect?.(source.marker);
+              if (!source.url) onOpenDocument?.(source);
+            }}
             title={source.snippet}
             aria-label={`Source ${source.marker}: ${source.filename}, page ${source.page}`}
             className={cn(

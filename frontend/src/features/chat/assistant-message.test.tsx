@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { AssistantMessage } from './assistant-message';
+import type { SourceChipData } from './source-panel';
 
 const BANNER_TEXT = 'General knowledge — not from your documents';
 
@@ -34,4 +36,40 @@ test('validationFailed=true renders the "not re-verified" badge', () => {
 test('validationFailed=false (the default) does not render the badge', () => {
   render(<AssistantMessage content="Revenue was 12M [1]." sources={[]} />);
   expect(screen.queryByText('Not re-verified after revision')).not.toBeInTheDocument();
+});
+
+test('clicking an inline [n] marker for a document citation also opens the drawer at that document_id + page', async () => {
+  const sources: SourceChipData[] = [
+    { marker: 1, document_id: 'd1', filename: 'evac.pdf', page: 5 },
+  ];
+  const onOpenDocument = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <AssistantMessage
+      content="The muster point is the north carpark [1]."
+      sources={sources}
+      onOpenDocument={onOpenDocument}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Citation 1' }));
+  expect(onOpenDocument).toHaveBeenCalledWith(
+    expect.objectContaining({ document_id: 'd1', page: 5 }),
+  );
+});
+
+test('clicking an inline [n] marker for a web citation does not open the drawer', async () => {
+  const sources: SourceChipData[] = [
+    { marker: 1, document_id: '', filename: 'ISO overview', page: 0, url: 'https://example.test/iso' },
+  ];
+  const onOpenDocument = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <AssistantMessage
+      content="Per ISO 45001 [1]."
+      sources={sources}
+      onOpenDocument={onOpenDocument}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Citation 1' }));
+  expect(onOpenDocument).not.toHaveBeenCalled();
 });

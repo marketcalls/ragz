@@ -14,6 +14,7 @@ export function AssistantMessage({
   grounding = 'documents',
   validationFailed = false,
   footer,
+  onOpenDocument,
 }: {
   content: string;
   sources: SourceChipData[];
@@ -22,8 +23,22 @@ export function AssistantMessage({
   grounding?: string;
   validationFailed?: boolean;
   footer?: ReactNode;
+  // Citation -> source-document drawer (chip click and inline [n] marker
+  // click both route through here; web citations are excluded below).
+  onOpenDocument?: (source: SourceChipData) => void;
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
+
+  // Inline `[n]` markers only carry the marker number (CitationChip has no
+  // access to the full source list) -- resolve back to the source here and
+  // reuse the same open-drawer path the chip buttons use, so both entry
+  // points behave identically.
+  const handleCitationClick = (n: number): void => {
+    setHighlightedN(n);
+    const source = sources.find((s) => s.marker === n);
+    if (source && !source.url) onOpenDocument?.(source);
+  };
+
   return (
     <div>
       {grounding === 'general' ? (
@@ -31,18 +46,28 @@ export function AssistantMessage({
           General knowledge — not from your documents
         </span>
       ) : null}
-      <CitationProvider onCitationClick={setHighlightedN} sources={sources}>
+      <CitationProvider onCitationClick={handleCitationClick} sources={sources}>
         <Markdown content={content} />
       </CitationProvider>
       {noAnswer ? (
         <NoAnswerNotice />
       ) : (
-        <SourcePanel sources={sources} highlightedN={highlightedN} onSelect={setHighlightedN} />
+        <SourcePanel
+          sources={sources}
+          highlightedN={highlightedN}
+          onSelect={setHighlightedN}
+          onOpenDocument={onOpenDocument}
+        />
       )}
       {noAnswer && sources.length > 0 ? (
         <div className="mt-2">
           <p className="mb-1 text-[12px] text-muted">Nearest sources</p>
-          <SourcePanel sources={sources} highlightedN={highlightedN} onSelect={setHighlightedN} />
+          <SourcePanel
+            sources={sources}
+            highlightedN={highlightedN}
+            onSelect={setHighlightedN}
+            onOpenDocument={onOpenDocument}
+          />
         </div>
       ) : null}
       {stopped ? (

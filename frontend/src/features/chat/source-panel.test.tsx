@@ -73,3 +73,34 @@ test('a doc chip (no url) is rendered unchanged', () => {
   expect(screen.queryByRole('link', { name: 'open' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Source 1: intro.pdf, page 1' })).toBeInTheDocument();
 });
+
+test('clicking a document citation chip opens the drawer with the right document_id + page', async () => {
+  const onOpenDocument = vi.fn();
+  const user = userEvent.setup();
+  render(<SourcePanel sources={sources} onOpenDocument={onOpenDocument} />);
+  await user.click(screen.getByRole('button', { name: 'Source 2: report.pdf, page 4' }));
+  expect(onOpenDocument).toHaveBeenCalledWith(
+    expect.objectContaining({ document_id: 'd2', page: 4 }),
+  );
+});
+
+test('a web citation chip does not open the drawer (its "open" link stays external)', async () => {
+  const withUrl: SourceChipData[] = [
+    { marker: 1, document_id: '', filename: 'ISO 45001 overview', page: 0, url: 'https://example.test/iso' },
+  ];
+  const onOpenDocument = vi.fn();
+  const user = userEvent.setup();
+  render(<SourcePanel sources={withUrl} onOpenDocument={onOpenDocument} />);
+  await user.click(screen.getByRole('button', { name: /ISO 45001 overview/ }));
+  expect(onOpenDocument).not.toHaveBeenCalled();
+});
+
+test('a document chip click still highlights via onSelect alongside onOpenDocument', async () => {
+  const onSelect = vi.fn();
+  const onOpenDocument = vi.fn();
+  const user = userEvent.setup();
+  render(<SourcePanel sources={sources} onSelect={onSelect} onOpenDocument={onOpenDocument} />);
+  await user.click(screen.getByRole('button', { name: 'Source 1: intro.pdf, page 1' }));
+  expect(onSelect).toHaveBeenCalledWith(1);
+  expect(onOpenDocument).toHaveBeenCalledWith(expect.objectContaining({ marker: 1 }));
+});
