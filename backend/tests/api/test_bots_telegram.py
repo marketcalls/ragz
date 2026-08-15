@@ -244,6 +244,50 @@ async def test_failed_signature_does_not_claim_dedup_key(
     assert len(outbound.calls) == 1  # the earlier 401 never claimed update_id=1
 
 
+async def test_lower_or_equal_update_id_ignored_even_after_ttl_window(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+) -> None:
+    """RAGZ-PUB-10 follow-up: Telegram has no signed timestamp, so the old
+    900s TTL dedup key would eventually expire and let a captured delivery
+    replay successfully. The high-water-mark replacement has no such
+    expiry: update_id=5 is processed, then a replay of the SAME id (5) and a
+    LOWER id (3) are both ignored -- there is no TTL here to wait out, so
+    this holds indefinitely, not just within the old 900s window. A
+    strictly HIGHER id (6) still processes normally."""
+    integration, _doc = telegram_env
+    headers = {
+        "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET, "content-type": "application/json",
+    }
+
+    def _body(update_id: int) -> bytes:
+        return json.dumps(
+            {"update_id": update_id, "message": {"chat": {"id": 555}, "text": "hi"}}
+        ).encode()
+
+    r_first = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=_body(5), headers=headers,
+    )
+    r_replay_equal = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=_body(5), headers=headers,
+    )
+    r_replay_lower = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=_body(3), headers=headers,
+    )
+    r_higher = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}", content=_body(6), headers=headers,
+    )
+
+    assert r_first.status_code == 200, r_first.text
+    assert r_replay_equal.status_code == 200, r_replay_equal.text
+    assert r_replay_equal.json() == {"ok": True}
+    assert r_replay_lower.status_code == 200, r_replay_lower.text
+    assert r_replay_lower.json() == {"ok": True}
+    assert r_higher.status_code == 200, r_higher.text
+    # Only update_id=5 (first) and update_id=6 (higher) did real work --
+    # the equal and lower replays were both dropped before any relay.
+    assert len(outbound.calls) == 2
+
+
 async def test_unknown_webhook_id_returns_404(telegram_client: httpx.AsyncClient) -> None:
     r = await telegram_client.post(
         f"/external/bots/telegram/{uuid4()}", content=_update_body("x"),

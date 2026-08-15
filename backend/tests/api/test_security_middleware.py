@@ -31,7 +31,7 @@ _SAFE_PRODUCTION_KWARGS: dict[str, object] = {
     "_env_file": None,
     "environment": "production",
     "api_key_pepper": "a-real-random-pepper-value",
-    "database_url": "postgresql+asyncpg://ragz_prod:s3cret-pw@db.internal:5432/ragz",
+    "database_url": "postgresql+asyncpg://ragz_prod:s3cret-prod-pw-2026@db.internal:5432/ragz",
     "minio_secret_key": "a-real-minio-secret",
     "litellm_master_key": "sk-a-real-litellm-master-key",
     "public_api_base_url": "https://api.example.com",

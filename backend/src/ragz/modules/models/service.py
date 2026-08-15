@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import Settings
 from ragz.core.errors import ConflictError, NotFoundError
+from ragz.core.net import assert_public_url
 from ragz.modules.audit.service import record_audit
 from ragz.modules.models.models import Model
 from ragz.modules.models.schemas import ModelOut
@@ -110,6 +111,14 @@ async def create_model(
     modality: str = "chat",
     dimension: int | None = None,
 ) -> Model:
+    # sec RAGZ-PUB-11: base_url is superadmin-settable but Ragz never dials
+    # it directly (it's forwarded to the LiteLLM proxy, see sync.py) -- that
+    # earlier omission left it unchecked, so a superadmin (or a compromised
+    # superadmin session) could register a model pointing the proxy at an
+    # internal/metadata address. No-op outside production/staging (assert_
+    # public_url's own env gate); skipped entirely when base_url is empty.
+    if base_url:
+        await assert_public_url(base_url, settings)
     model = Model(
         litellm_model_name=litellm_model_name, display_name=display_name,
         provider_kind=provider_kind, base_url=base_url, mock_response=mock_response,
@@ -153,6 +162,11 @@ async def update_model(
     if display_name is not None:
         model.display_name = display_name
     if base_url is not None:
+        # sec RAGZ-PUB-11: same guard as create_model -- see its comment.
+        # An update to a non-empty base_url is checked; clearing it back to
+        # "" needs no check (nothing to dial).
+        if base_url:
+            await assert_public_url(base_url, settings)
         model.base_url = base_url
     if enabled is not None:
         model.enabled = enabled

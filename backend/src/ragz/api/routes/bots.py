@@ -17,7 +17,7 @@ from ragz.api.bots_relay import answer_for_integration
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import AuthenticationError, BadRequestError, PayloadTooLarge, UpstreamError
-from ragz.core.idempotency import claim_once
+from ragz.core.idempotency import claim_monotonic, claim_once
 from ragz.core.ratelimit import check_rate_limit, rate_limit
 from ragz.modules.bots import platforms
 from ragz.modules.bots import service as bots_service
@@ -66,10 +66,23 @@ _WEBHOOK_BODY_MAX_BYTES = 64 * 1024
 # delivery is only ever "fresh" (Slack/Discord's own skew tolerance) for
 # _SLACK_MAX_SKEW_SECONDS/_DISCORD_MAX_SKEW_SECONDS = 300s each (verify.py);
 # this window is deliberately 3x that so a claim outlives the longest window
-# a still-validly-signed replay could arrive in, plus headroom for Telegram
-# (which has no signed timestamp at all, so its only replay defense IS this
-# claim) and for ordinary platform retry storms.
+# a still-validly-signed replay could arrive in, plus headroom for ordinary
+# platform retry storms. Slack/Discord ONLY -- see _TELEGRAM_HWM_TTL_SECONDS
+# below for why Telegram uses a different mechanism entirely.
 _WEBHOOK_IDEMPOTENCY_TTL_SECONDS = 900
+
+# RAGZ-PUB-10 follow-up: Telegram's secret-token header (verify_telegram) has
+# NO signed timestamp bound into it at all -- unlike Slack/Discord, a
+# captured valid delivery stays replayable for as long as the secret is
+# unrotated, so the short _WEBHOOK_IDEMPOTENCY_TTL_SECONDS claim above only
+# delayed a Telegram replay past 900s, it never closed the gap. Telegram's
+# `update_id` is monotonically increasing per bot, so telegram_webhook uses
+# `claim_monotonic` (core/idempotency.py) instead: a persistent high-water
+# mark that rejects any update_id at or below the highest ever seen, with no
+# short expiry for a replay to outlive. 30 days is "effectively forever" for
+# an active integration while still bounding unbounded Redis growth for one
+# that's been abandoned/disabled.
+_TELEGRAM_HWM_TTL_SECONDS = 60 * 60 * 24 * 30
 
 
 async def _rate_limit_bot_webhook(request: Request, integration_id: UUID) -> None:
@@ -152,14 +165,23 @@ async def telegram_webhook(
     # RAGZ-PUB-10: Telegram's secret-token header (verify_telegram) has no
     # timestamp bound into it -- a captured valid delivery stays replayable
     # for as long as the secret is unrotated, not just a signature-skew
-    # window -- so `update_id` (unique per update, present on every real
-    # Telegram delivery) is the ONLY replay defense here. Claimed before any
-    # parse/relay work; a losing claim still 200s (Telegram's expected ack)
-    # so Telegram stops retrying, but does no LLM/outbound work.
+    # window -- so a TTL-bounded claim (like Slack/Discord's below) would
+    # only delay a replay, not stop it. `update_id` is monotonically
+    # increasing per bot, so a persistent high-water mark (claim_monotonic)
+    # is used instead: any update_id at or below the highest ever seen for
+    # this integration is rejected, with no expiry for a replay to outlive.
+    # Tradeoff (documented, accepted): this also drops a legitimately
+    # out-of-order-but-lower update_id arriving after a higher one -- rare
+    # for Telegram's own delivery order, and preferable to being replayable
+    # forever. Claimed before any parse/relay work; a losing claim still
+    # 200s (Telegram's expected ack) so Telegram stops retrying, but does no
+    # LLM/outbound work.
     update_id = payload.get("update_id")
     if isinstance(update_id, int):
-        key = f"webhook_seen:telegram:{integration.webhook_id}:{update_id}"
-        if not await _claim_webhook_delivery(request, key):
+        key = f"webhook_hwm:telegram:{integration.webhook_id}"
+        if not await claim_monotonic(
+            request.app.state.redis, key, update_id, _TELEGRAM_HWM_TTL_SECONDS
+        ):
             structlog.get_logger().info(
                 "webhook_replay_ignored", platform="telegram",
                 webhook_id=str(integration.webhook_id), unique_id=update_id,

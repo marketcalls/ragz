@@ -37,7 +37,7 @@ def safe_kwargs(valid_kek_file: str) -> dict[str, object]:
         "_env_file": None,
         "environment": "production",
         "api_key_pepper": "a-real-random-pepper-value",
-        "database_url": "postgresql+asyncpg://ragz_prod:s3cret-pw@db.internal:5432/ragz",
+        "database_url": "postgresql+asyncpg://ragz_prod:s3cret-prod-pw-2026@db.internal:5432/ragz",
         "minio_secret_key": "a-real-minio-secret",
         "litellm_master_key": "sk-a-real-litellm-master-key",
         "public_api_base_url": "https://api.example.com",
@@ -112,6 +112,54 @@ def test_default_db_credentials_different_port_and_db_raises(
     )
     with pytest.raises(ValueError, match="database_url"):
         Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_short_database_password_raises(safe_kwargs: dict[str, object]) -> None:
+    # RAGZ-PUB-05 follow-up: a unique (non-default) username paired with a
+    # trivially short password previously slipped past the default-
+    # credentials check entirely.
+    kwargs = dict(
+        safe_kwargs,
+        database_url="postgresql+asyncpg://ragz_prod:x@db.internal:5432/ragz",
+    )
+    with pytest.raises(ValueError, match="database_url password"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_missing_database_password_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(
+        safe_kwargs,
+        database_url="postgresql+asyncpg://ragz_prod@db.internal:5432/ragz",
+    )
+    with pytest.raises(ValueError, match="database_url password"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_missing_database_username_raises(safe_kwargs: dict[str, object]) -> None:
+    kwargs = dict(
+        safe_kwargs,
+        database_url="postgresql+asyncpg://:a-strong-16-char-pw@db.internal:5432/ragz",
+    )
+    with pytest.raises(ValueError, match="database_url has no username"):
+        Settings(**kwargs)  # type: ignore[arg-type]
+
+
+def test_strong_database_password_with_non_default_creds_constructs(
+    safe_kwargs: dict[str, object],
+) -> None:
+    kwargs = dict(
+        safe_kwargs,
+        database_url="postgresql+asyncpg://ragz_prod:a-strong-16-char-pw@db.internal:5432/ragz",
+    )
+    s = Settings(**kwargs)  # type: ignore[arg-type]
+    assert s.database_url.endswith("db.internal:5432/ragz")
+
+
+def test_dev_default_db_password_still_permitted_in_dev() -> None:
+    # No regression: local dev's "ragz:ragz@localhost" URL is unaffected --
+    # the whole validator is a no-op outside production/staging.
+    s = Settings(_env_file=None)
+    assert s.environment == "dev"
 
 
 def test_http_public_api_base_url_raises(safe_kwargs: dict[str, object]) -> None:

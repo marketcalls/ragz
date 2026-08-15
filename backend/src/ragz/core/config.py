@@ -189,6 +189,26 @@ class Settings(BaseSettings):
                     "username/password, independent of host/port/db name) -- set "
                     "RAGZ_DATABASE_URL with unique production credentials"
                 )
+            # RAGZ-PUB-05 follow-up: the default-credentials check above only
+            # catches the literal "ragz:ragz" pair -- a re-hosted URL with a
+            # unique username but a trivially short (or entirely absent)
+            # password, e.g. postgresql+asyncpg://user:x@host/db, previously
+            # sailed through unnoticed. Enforced independent of the
+            # default-credentials check (both can fire together). Reuses
+            # _MIN_SECRET_LENGTH (16) -- the same floor as every other
+            # machine-generated secret in this validator; a length check
+            # only, not complexity, for the same reasons documented above.
+            if not db_parsed.username:
+                errors.append(
+                    "database_url has no username -- production/staging must set a "
+                    "real database username"
+                )
+            _db_password_len = len(db_parsed.password) if db_parsed.password else 0
+            if _db_password_len < _MIN_SECRET_LENGTH:
+                errors.append(
+                    f"database_url password is missing or only {_db_password_len} chars -- "
+                    f"production/staging require at least {_MIN_SECRET_LENGTH}"
+                )
         # Belt-and-suspenders: still reject the exact literal default too (covers
         # any future default whose credentials aren't a clean userinfo pair).
         if self.database_url == _DEV_DEFAULT_DATABASE_URL:

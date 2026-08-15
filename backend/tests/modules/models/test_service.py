@@ -5,8 +5,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core import net
 from ragz.core.config import Settings
-from ragz.core.errors import ConflictError, NotFoundError
+from ragz.core.errors import ConflictError, NotFoundError, SsrfBlocked
 from ragz.modules.audit.models import AuditEvent
 from ragz.modules.auth.models import User
 from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
@@ -29,6 +30,50 @@ def settings(tmp_path: Path) -> Settings:
     kek = tmp_path / "kek"
     ensure_kek(str(kek))
     return Settings(_env_file=None, kek_file=str(kek))
+
+
+@pytest.fixture
+def production_settings(tmp_path: Path) -> Settings:
+    # sec RAGZ-PUB-11: mirrors tests/core/test_net.py's `production_settings`
+    # fixture -- every field core/config.py's fail-closed validator checks
+    # must be overridden so constructing this doesn't itself raise.
+    kek = tmp_path / "kek_prod"
+    ensure_kek(str(kek))
+    kwargs: dict[str, object] = {
+        "_env_file": None,
+        "environment": "production",
+        "api_key_pepper": "a-real-random-pepper-value",
+        "database_url": "postgresql+asyncpg://ragz_prod:a-strong-16-char-pw@db.internal:5432/ragz",
+        "minio_secret_key": "a-real-minio-secret",
+        "litellm_master_key": "sk-a-real-litellm-master-key",
+        "public_api_base_url": "https://api.example.com",
+        "frontend_base_url": "https://app.example.com",
+        "kek_file": str(kek),
+    }
+    return Settings(**kwargs)  # type: ignore[arg-type]
+
+
+class _FakeLoop:
+    """Stand-in for the running event loop -- see tests/core/test_net.py's
+    identical helper; only `getaddrinfo` is used by `core/net.py`."""
+
+    def __init__(self, result: list[tuple[object, ...]] | Exception) -> None:
+        self._result = result
+
+    async def getaddrinfo(self, host: str, port: object) -> list[tuple[object, ...]]:
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def _dns_answers(*ips: str) -> list[tuple[object, ...]]:
+    return [(None, None, None, "", (ip, 0)) for ip in ips]
+
+
+def _patch_dns(
+    monkeypatch: pytest.MonkeyPatch, result: list[tuple[object, ...]] | Exception
+) -> None:
+    monkeypatch.setattr(net.asyncio, "get_running_loop", lambda: _FakeLoop(result))
 
 
 def super_ctx(user: User) -> TenantContext:
@@ -172,3 +217,95 @@ async def test_resolve_model_order(
     # Nothing resolves -> typed conflict.
     with pytest.raises(ConflictError):
         await resolve_model(session, requested_model_id=None, default_model_id=None)
+
+
+async def test_create_model_blocks_ssrf_base_url_in_production(
+    session: AsyncSession, seeded_user: User, production_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sec RAGZ-PUB-11: the superadmin-settable base_url is forwarded to the
+    LiteLLM proxy rather than dialed directly by Ragz, which is why the
+    original SSRF guard skipped it -- defense in depth closes that gap: a
+    base_url resolving to a blocked (private/loopback/metadata) address must
+    be rejected in production/staging, with NO model row committed."""
+    ctx = super_ctx(seeded_user)
+    _patch_dns(monkeypatch, _dns_answers("169.254.169.254"))
+    with pytest.raises(SsrfBlocked):
+        await create_model(
+            session, ctx, litellm_model_name="local", display_name="Local",
+            provider_kind="openai_compatible", base_url="https://internal.example.com",
+            api_key=None, settings=production_settings,
+        )
+    remaining = await list_models(session)
+    assert [m.id for m in remaining] == [LOCAL_EMBEDDING_MODEL_ID]
+
+
+async def test_create_model_allows_public_base_url_in_production(
+    session: AsyncSession, seeded_user: User, production_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = super_ctx(seeded_user)
+    _patch_dns(monkeypatch, _dns_answers("93.184.216.34"))
+    model = await create_model(
+        session, ctx, litellm_model_name="oai-compat", display_name="OAI Compat",
+        provider_kind="openai_compatible", base_url="https://api.example.com",
+        api_key=None, settings=production_settings,
+    )
+    assert model.base_url == "https://api.example.com"
+
+
+async def test_create_model_skips_ssrf_check_when_base_url_empty(
+    session: AsyncSession, seeded_user: User, production_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom() -> object:
+        raise AssertionError("assert_public_url must not resolve DNS for an empty base_url")
+
+    monkeypatch.setattr(net.asyncio, "get_running_loop", _boom)
+    model = await create_model(
+        session, ctx=super_ctx(seeded_user), litellm_model_name="gpt-4o-mini",
+        display_name="GPT-4o mini", provider_kind="openai", base_url=None,
+        api_key="sk-live-xyz", settings=production_settings,
+    )
+    assert model.base_url is None
+
+
+async def test_update_model_blocks_ssrf_base_url_in_production(
+    session: AsyncSession, seeded_user: User, settings: Settings,
+    production_settings: Settings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = super_ctx(seeded_user)
+    model = await create_model(
+        session, ctx, litellm_model_name="llama3", display_name="Llama",
+        provider_kind="ollama", base_url="http://ollama:11434", api_key=None,
+        settings=settings,  # dev settings -- guard is a no-op at creation time
+    )
+    _patch_dns(monkeypatch, _dns_answers("10.0.0.5"))
+    with pytest.raises(SsrfBlocked):
+        await update_model(
+            session, ctx, model.id, display_name=None,
+            base_url="https://internal.example.com", enabled=None, api_key=None,
+            settings=production_settings,
+        )
+    # The blocked base_url must not have been persisted onto the row.
+    await session.refresh(model)
+    assert model.base_url == "http://ollama:11434"
+
+
+async def test_update_model_allows_public_base_url_in_production(
+    session: AsyncSession, seeded_user: User, settings: Settings,
+    production_settings: Settings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = super_ctx(seeded_user)
+    model = await create_model(
+        session, ctx, litellm_model_name="llama3", display_name="Llama",
+        provider_kind="ollama", base_url="http://ollama:11434", api_key=None,
+        settings=settings,
+    )
+    _patch_dns(monkeypatch, _dns_answers("93.184.216.34"))
+    updated = await update_model(
+        session, ctx, model.id, display_name=None,
+        base_url="https://api.example.com", enabled=None, api_key=None,
+        settings=production_settings,
+    )
+    assert updated.base_url == "https://api.example.com"
