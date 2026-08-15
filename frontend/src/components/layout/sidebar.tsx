@@ -4,6 +4,7 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
+  Mail,
   MessageSquare,
   ScrollText,
   Settings,
@@ -90,6 +91,9 @@ export function Sidebar() {
         ) : null}
         {isSuperadmin ? (
           <SideLink to="/admin/bots" label="Bots" icon={<Bot className="h-4 w-4" aria-hidden />} />
+        ) : null}
+        {isSuperadmin ? (
+          <SideLink to="/admin/email" label="Email" icon={<Mail className="h-4 w-4" aria-hidden />} />
         ) : null}
         {can('audit.read') ? (
           <SideLink to="/admin/audit" label="Audit" icon={<ScrollText className="h-4 w-4" aria-hidden />} />

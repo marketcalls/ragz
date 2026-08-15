@@ -5,6 +5,7 @@ import { ApiKeysPage } from '@/features/admin/api-keys/api-keys-page';
 import { AuditPage } from '@/features/admin/audit/audit-page';
 import { BotsPage } from '@/features/admin/bots/bots-page';
 import { DashboardPage } from '@/features/admin/dashboard/dashboard-page';
+import { EmailSettingsPage } from '@/features/admin/email/email-settings-page';
 import { FeedbackPage } from '@/features/admin/feedback/feedback-page';
 import { HealthPage } from '@/features/admin/health/health-page';
 import { ModelsPage } from '@/features/admin/models/models-page';
@@ -49,6 +50,7 @@ export const router = createBrowserRouter([
               { path: '/admin/settings', element: <SettingsPage /> },
               { path: '/admin/api-keys', element: <ApiKeysPage /> },
               { path: '/admin/bots', element: <BotsPage /> },
+              { path: '/admin/email', element: <EmailSettingsPage /> },
               { path: '/admin/health', element: <HealthPage /> },
             ],
           },

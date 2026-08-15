@@ -86,6 +86,7 @@ test('superadmin sees every admin link, including platform-only ones', async () 
   expect(screen.getByText('Settings')).toBeInTheDocument();
   expect(screen.getByText('API Keys')).toBeInTheDocument();
   expect(screen.getByText('Bots')).toBeInTheDocument();
+  expect(screen.getByText('Email')).toBeInTheDocument();
   expect(screen.getByText('Audit')).toBeInTheDocument();
   expect(screen.getByText('Health')).toBeInTheDocument();
 });
