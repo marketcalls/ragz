@@ -66,6 +66,23 @@ test('a retrieving state with no agentSteps shows the spinner but no progress li
   expect(screen.getByText('Searching documents…')).toBeInTheDocument();
 });
 
+test('a web_search step retitles the spinner to "Searching the web…", not "documents"', () => {
+  render(
+    <StreamingMessage
+      stream={{
+        ...base,
+        status: 'retrieving',
+        agentSteps: [{ n: 1, tool: 'web_search', query: 'bangalore startup news' }],
+      }}
+    />,
+  );
+  // The headline follows the current step's tool -- a forced-first web search
+  // must not sit under a "Searching documents…" spinner.
+  expect(screen.getByText('Searching the web…')).toBeInTheDocument();
+  expect(screen.queryByText('Searching documents…')).not.toBeInTheDocument();
+  expect(screen.getByText('Searching the web: bangalore startup news')).toBeInTheDocument();
+});
+
 test('agentSteps/toolResults captured live flow through to the "Behind the scenes" section once streaming', async () => {
   render(
     <StreamingMessage

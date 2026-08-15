@@ -18,6 +18,22 @@ function stepLabel(step: AgentStepInfo): string {
   return (STEP_LABELS[step.tool] ?? ((q: string) => `Working: ${q}`))(step.query);
 }
 
+// The spinner headline tracks the CURRENT step's tool so a web_search step
+// doesn't sit under a hardcoded "Searching documents…" (which read as
+// docs-first even when the loop was searching the web). No step yet -> the
+// initial retrieval, so "Searching documents…" is still right.
+const STEP_HEADLINES: Record<string, string> = {
+  search: 'Searching documents…',
+  search_by_metadata: 'Searching documents…',
+  get_document: 'Reading a document…',
+  web_search: 'Searching the web…',
+};
+
+function spinnerLabel(step: AgentStepInfo | undefined): string {
+  if (!step) return 'Searching documents…';
+  return STEP_HEADLINES[step.tool] ?? 'Working…';
+}
+
 export function StreamingMessage({
   stream,
   onFormSubmit,
@@ -33,7 +49,7 @@ export function StreamingMessage({
       {stream.pendingUserContent ? <UserMessage content={stream.pendingUserContent} /> : null}
       {stream.status === 'retrieving' ? (
         <div>
-          <Spinner label="Searching documents…" />
+          <Spinner label={spinnerLabel(lastStep)} />
           {lastStep ? <p className="mt-1 text-[12px] text-muted">{stepLabel(lastStep)}</p> : null}
         </div>
       ) : null}
