@@ -100,6 +100,14 @@ export function useDeleteChat() {
   });
 }
 
+export interface AttachmentOut {
+  id: string;
+  kind: string;
+  filename: string;
+  mime: string;
+  status: string;
+}
+
 // Bypasses the generated `api.POST` client (JSON-body-typed, not multipart-aware):
 // a plain fetch with FormData is required, same reason
 // `frontend/src/features/documents/upload.ts` hand-rolls its own upload
@@ -108,20 +116,38 @@ export function useDeleteChat() {
 // `authFetch`, which attaches the bearer token from the in-memory auth store
 // and transparently retries once after a refresh on a 401, and set
 // `credentials: 'include'` so the httpOnly refresh cookie travels too.
-export function useUploadAttachment(chatId: string | null) {
-  return useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await authFetch(
-        new Request(new URL(`/api/v1/chats/${chatId}/attachments`, window.location.origin), {
-          method: 'POST',
-          body: formData,
-          credentials: 'include',
-        }),
-      );
-      if (!res.ok) throw new Error('failed to upload attachment');
-      return res.json() as Promise<{ id: string; kind: string; filename: string; mime: string; status: string }>;
-    },
-  });
+//
+// A plain async function, not a hook bound to a chatId at creation time:
+// attachments are now held locally (`use-pending-attachments.ts`) and only
+// uploaded at send time, once a real chat_id is known (fixes the new-chat
+// flow, which previously POSTed to `/chats/null/attachments`).
+export async function uploadAttachment(chatId: string, file: File): Promise<AttachmentOut> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await authFetch(
+    new Request(new URL(`/api/v1/chats/${chatId}/attachments`, window.location.origin), {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    }),
+  );
+  if (!res.ok) throw new Error('failed to upload attachment');
+  return res.json() as Promise<AttachmentOut>;
+}
+
+// Uploads every pending file sequentially against a concrete chat_id,
+// returning the server-assigned attachment ids in order. Stops and throws on
+// the first failure -- the caller (use-send-message.ts) aborts the send
+// rather than sending a message that references a partially-uploaded batch.
+export async function uploadPendingAttachments(chatId: string, files: File[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const file of files) {
+    try {
+      const result = await uploadAttachment(chatId, file);
+      ids.push(result.id);
+    } catch {
+      throw new Error(`Failed to attach "${file.name}". Please try again.`);
+    }
+  }
+  return ids;
 }

@@ -18,19 +18,16 @@ import { EditMessageForm } from './edit-message-form';
 import { EffortSelector, type ReasoningEffort } from './effort-selector';
 import { MessageActions } from './message-actions';
 import { ModelSelector } from './model-selector';
-import {
-  useChat,
-  useClearMessageFeedback,
-  useCreateChat,
-  useSetMessageFeedback,
-  useUploadAttachment,
-} from './queries';
+import { PendingAttachments } from './pending-attachments';
+import { useChat, useClearMessageFeedback, useCreateChat, useSetMessageFeedback } from './queries';
 import type { SourceChipData } from './source-panel';
 import { StreamingMessage } from './streaming-message';
 import { treeContains } from './tree';
 import { UsageMeter } from './usage-meter';
 import { UserMessage } from './user-message';
 import { useChatStream } from './use-chat-stream';
+import { usePendingAttachments } from './use-pending-attachments';
+import { useSendMessage } from './use-send-message';
 import { useTreeSelection } from './use-tree-selection';
 
 export function ChatPage() {
@@ -49,8 +46,7 @@ export function ChatPage() {
   const [modelId, setModelId] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('off');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
-  const uploadAttachment = useUploadAttachment(chatId);
+  const pendingAttachments = usePendingAttachments();
 
   // Citation -> source-document drawer (Task: click a citation to open the
   // source document). One drawer for the whole page -- every AssistantMessage
@@ -125,14 +121,36 @@ export function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- abort/reset are stable; keyed on chatId only
   }, [chatId]);
 
-  // New-chat handoff: /chat → create → navigate with initialMessage → auto-send once.
+  // Attach-before-first-message: files are held locally (no chat exists yet
+  // to upload against) and only uploaded once a real chat_id is known --
+  // either the current chat, or one created on the fly here. See
+  // use-send-message.ts for the create → upload → send orchestration.
+  const sendMessage = useSendMessage({
+    chatId,
+    workspaceId,
+    createChat: (input) => createChat.mutateAsync(input),
+    sendToChat: (content, parentMessageId, attachmentIds) =>
+      stream.send(content, parentMessageId, effectiveModelId, reasoningEffort, attachmentIds),
+    onNewChat: (newChatId, content, attachmentIds) =>
+      navigate(`/chat/${newChatId}`, {
+        state: { initialMessage: content, initialAttachmentIds: attachmentIds },
+      }),
+    pendingFiles: pendingAttachments.files,
+    clearPending: pendingAttachments.clear,
+  });
+
+  // New-chat handoff: /chat → create (+ upload) → navigate with
+  // initialMessage/initialAttachmentIds → auto-send once.
   const initialSentRef = useRef(false);
-  const initialMessage = (location.state as { initialMessage?: string } | null)?.initialMessage;
+  const handoffState = location.state as
+    | { initialMessage?: string; initialAttachmentIds?: string[] }
+    | null;
+  const initialMessage = handoffState?.initialMessage;
+  const initialAttachmentIds = handoffState?.initialAttachmentIds ?? [];
   useEffect(() => {
     if (chatId && initialMessage && !initialSentRef.current) {
       initialSentRef.current = true;
-      stream.send(initialMessage, undefined, effectiveModelId, reasoningEffort, pendingAttachmentIds); // omit parent → append to leaf
-      setPendingAttachmentIds([]);
+      stream.send(initialMessage, undefined, effectiveModelId, reasoningEffort, initialAttachmentIds); // omit parent → append to leaf
       navigate(location.pathname, { replace: true, state: null }); // consume the state
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount/handoff
@@ -151,16 +169,7 @@ export function ChatPage() {
   }, [streamedInTree]);
 
   const onSend = (content: string): void => {
-    if (chatId) {
-      stream.send(content, undefined, effectiveModelId, reasoningEffort, pendingAttachmentIds); // omit parent → append to leaf
-      setPendingAttachmentIds([]);
-      return;
-    }
-    if (!workspaceId) return;
-    createChat.mutate(
-      { workspace_id: workspaceId },
-      { onSuccess: (chat) => navigate(`/chat/${chat.id}`, { state: { initialMessage: content } }) },
-    );
+    void sendMessage.send(content);
   };
 
   const busy = stream.status === 'retrieving' || stream.status === 'streaming';
@@ -198,14 +207,7 @@ export function ChatPage() {
                       // Sibling of the edited message: same parent (phase1 spec §2.1).
                       // For a ROOT message this passes explicit null — which the backend
                       // reads as "new root sibling" (presence semantics, chat/schemas.py).
-                      stream.send(
-                        content,
-                        m.parent_message_id ?? null,
-                        effectiveModelId,
-                        reasoningEffort,
-                        pendingAttachmentIds,
-                      );
-                      setPendingAttachmentIds([]);
+                      void sendMessage.send(content, m.parent_message_id ?? null);
                     }}
                   />
                 );
@@ -258,20 +260,18 @@ export function ChatPage() {
           ) : null}
         </div>
       </div>
-      <div className="mx-auto flex w-full max-w-thread items-center justify-between gap-2 px-4">
-        <AttachmentUpload
-          onUpload={(f) => uploadAttachment.mutateAsync(f)}
-          onUploaded={(id) => setPendingAttachmentIds((ids) => [...ids, id])}
-        />
-        {pendingAttachmentIds.length > 0 ? (
-          <span className="text-[12px] text-muted">
-            {pendingAttachmentIds.length} attachment{pendingAttachmentIds.length > 1 ? 's' : ''} ready
-          </span>
-        ) : null}
+      <PendingAttachments files={pendingAttachments.files} onRemove={pendingAttachments.remove} />
+      {pendingAttachments.error || sendMessage.error ? (
+        <p role="alert" className="mx-auto w-full max-w-thread px-4 pb-2 text-[12px] text-danger">
+          {sendMessage.error ?? pendingAttachments.error}
+        </p>
+      ) : null}
+      <div className="mx-auto flex w-full max-w-thread items-center gap-2 px-4">
+        <AttachmentUpload onSelect={pendingAttachments.addFiles} disabled={busy || sendMessage.sending} />
       </div>
       <ChatInput
         onSend={onSend}
-        disabled={busy || (!chatId && createChat.isPending)}
+        disabled={busy || sendMessage.sending || (!chatId && createChat.isPending)}
         busy={busy}
         onStop={stream.stop}
       />
