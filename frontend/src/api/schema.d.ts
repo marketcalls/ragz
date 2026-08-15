@@ -2021,6 +2021,40 @@ export interface components {
             /** Approved */
             approved: boolean;
         };
+        /** ArticleCardBlock */
+        ArticleCardBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "article_card";
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Body */
+            body?: string | null;
+            /** Tags */
+            tags?: components["schemas"]["TagBadge"][] | null;
+            /** Image Ref */
+            image_ref?: string | null;
+            /** Badge */
+            badge?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Document Id */
+            document_id?: string | null;
+            /** Page */
+            page?: number | null;
+            /**
+             * Layout
+             * @default standard
+             * @enum {string}
+             */
+            layout: "standard" | "hero";
+        };
         /** AttachmentOut */
         AttachmentOut: {
             /**
@@ -2982,6 +3016,8 @@ export interface components {
             body?: string | null;
             /** Icon */
             icon?: ("info" | "chart" | "dollar" | "trophy" | "warning" | "doc" | "spark" | "users" | "clock" | "check" | "star" | "target" | "globe" | "shield" | "calendar") | null;
+            /** Url */
+            url?: string | null;
         };
         /** InvitationAccept */
         InvitationAccept: {
@@ -3118,7 +3154,7 @@ export interface components {
             citations: components["schemas"]["CitationOut"][];
             feedback: components["schemas"]["FeedbackOut"] | null;
             /** Blocks */
-            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"])[] | null;
+            blocks?: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["TabsBlock"] | components["schemas"]["FormBlock"])[] | null;
             /** Attachments */
             attachments?: components["schemas"]["AttachmentOut"][] | null;
             /** Children */
@@ -3576,6 +3612,10 @@ export interface components {
             title: string;
             /** Subtitle */
             subtitle?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Image Ref */
+            image_ref?: string | null;
         };
         /** ReembedJobOut */
         ReembedJobOut: {
@@ -3786,6 +3826,33 @@ export interface components {
             /** Current */
             current: boolean;
         };
+        /** SourceRef */
+        SourceRef: {
+            /** Title */
+            title: string;
+            /** Source */
+            source?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Document Id */
+            document_id?: string | null;
+            /** Page */
+            page?: number | null;
+            /** Image Ref */
+            image_ref?: string | null;
+        };
+        /** SourceRefsBlock */
+        SourceRefsBlock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "source_refs";
+            /** Title */
+            title?: string | null;
+            /** Items */
+            items: components["schemas"]["SourceRef"][];
+        };
         /** SsoConfigIn */
         SsoConfigIn: {
             /** Issuer */
@@ -3814,7 +3881,7 @@ export interface components {
             /** Label */
             label: string;
             /** Blocks */
-            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"])[];
+            blocks: (components["schemas"]["TextBlock"] | components["schemas"]["ChartBlock"] | components["schemas"]["InfoCardBlock"] | components["schemas"]["ImageCardBlock"] | components["schemas"]["RankedListBlock"] | components["schemas"]["SourceRefsBlock"] | components["schemas"]["TagBadgesBlock"] | components["schemas"]["ArticleCardBlock"] | components["schemas"]["CalloutBlock"] | components["schemas"]["TableBlock"] | components["schemas"]["FormBlock"])[];
         };
         /** TableBlock */
         TableBlock: {

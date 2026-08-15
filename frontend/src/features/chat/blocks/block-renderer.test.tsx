@@ -196,6 +196,97 @@ test('form routes to FormBlockView and its submit calls onFormSubmit with the co
   expect(onFormSubmit).toHaveBeenCalledWith('Destination: Tokyo');
 });
 
+test('source_refs: a web item renders an external link with headline + hostname', () => {
+  const blocks: Block[] = [
+    {
+      type: 'source_refs',
+      title: 'Sources',
+      items: [
+        { title: 'Kerala tourism guide', source: 'example.com', url: 'https://example.com/kerala' },
+      ],
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Sources')).toBeInTheDocument();
+  const link = screen.getByRole('link', { name: /Kerala tourism guide/ });
+  expect(link).toHaveAttribute('href', 'https://example.com/kerala');
+  expect(link).toHaveAttribute('target', '_blank');
+  expect(link.getAttribute('rel')).toContain('noopener');
+  expect(screen.getByText('example.com')).toBeInTheDocument();
+});
+
+test('source_refs: a doc item renders a button that calls onOpenDocument with the right chip', async () => {
+  const blocks: Block[] = [
+    {
+      type: 'source_refs',
+      items: [{ title: 'Fire safety plan', document_id: 'doc-123', page: 4 }],
+    },
+  ];
+  const onOpenDocument = vi.fn();
+  const user = userEvent.setup();
+  render(<BlockRenderer blocks={blocks} onOpenDocument={onOpenDocument} />);
+  const button = screen.getByRole('button', { name: /Fire safety plan/ });
+  await user.click(button);
+  expect(onOpenDocument).toHaveBeenCalledWith(
+    expect.objectContaining({ document_id: 'doc-123', page: 4, filename: 'Fire safety plan' }),
+  );
+});
+
+test('article_card (standard): renders title, a tag, and a Read Coverage link for a web url', () => {
+  const blocks: Block[] = [
+    {
+      type: 'article_card',
+      title: 'Backwaters guide',
+      tags: [{ label: 'Travel', tone: 'info' }],
+      url: 'https://news.example.com/kerala',
+      layout: 'standard',
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Backwaters guide')).toBeInTheDocument();
+  expect(screen.getByText('Travel')).toBeInTheDocument();
+  const link = screen.getByRole('link', { name: /Read Coverage/ });
+  expect(link).toHaveAttribute('href', 'https://news.example.com/kerala');
+});
+
+test('article_card (standard): a non-http url renders NO link (inert)', () => {
+  const blocks: Block[] = [
+    {
+      type: 'article_card',
+      title: 'Suspicious card',
+      url: 'javascript:alert(1)' as unknown as string,
+      layout: 'standard',
+    },
+  ];
+  const { container } = render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Suspicious card')).toBeInTheDocument();
+  expect(container.querySelector('a')).not.toBeInTheDocument();
+});
+
+test('article_card (hero): renders the badge text', () => {
+  const blocks: Block[] = [
+    {
+      type: 'article_card',
+      title: 'Kerala',
+      badge: 'Featured',
+      layout: 'hero',
+    },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  expect(screen.getByText('Featured')).toBeInTheDocument();
+  expect(screen.getByText('Kerala')).toBeInTheDocument();
+});
+
+test('info_card with a url renders a safe external link', () => {
+  const blocks: Block[] = [
+    { type: 'info_card', title: 'Q3 Summary', url: 'https://example.com/q3' },
+  ];
+  render(<BlockRenderer blocks={blocks} />);
+  const link = screen.getByRole('link', { name: /Q3 Summary/ });
+  expect(link).toHaveAttribute('href', 'https://example.com/q3');
+  expect(link).toHaveAttribute('target', '_blank');
+});
+
 test('an unknown block type renders nothing', () => {
   const blocks = [{ type: 'unknown_future_block', anything: true }] as unknown as Block[];
   const { container } = render(<BlockRenderer blocks={blocks} />);

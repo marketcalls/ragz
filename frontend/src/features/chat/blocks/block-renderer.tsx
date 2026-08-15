@@ -29,7 +29,6 @@ import type {
   TabsBlock as TabsBlockT,
   TagBadgesBlock as TagBadgesBlockT,
 } from '@/api/types';
-import { FormBlockView } from './form-block';
 import { DonutChart } from '@/components/charts/donut-chart';
 import { GroupedBar } from '@/components/charts/grouped-bar';
 import { RadarChart } from '@/components/charts/radar-chart';
@@ -40,6 +39,11 @@ import { TimeSeriesLine } from '@/components/charts/time-series-line';
 import { Markdown } from '@/components/markdown/markdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/cn';
+
+import { ArticleCard } from './article-card';
+import { FormBlockView } from './form-block';
+import { SourceRefsView } from './source-refs';
+import type { SourceChipData } from '../source-panel';
 
 // Iron Rule 5: block payloads come from an LLM (server-validated already,
 // see backend chat/blocks.py) but are still treated as hostile here. This
@@ -85,6 +89,39 @@ const CALLOUT_TONES: Record<string, string> = {
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
+}
+
+// Same http(s)-only guard used across the block renderers (copied from
+// behind-the-scenes.tsx -- see source-refs.tsx/article-card.tsx for the
+// other copies). A `url` field is already validated server-side, but this
+// module never trusts a model-authored field without re-checking here too.
+function isHttpUrl(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// Builds the SourcePanel chip shape for a source_refs item or an
+// article_card block's own document_id/page/title -- both open the same
+// in-app document viewer via onOpenDocument. marker/snippet/section/version
+// carry no meaning for a generative-UI block click (there's no citation
+// marker), so they're set to inert defaults; only document_id/page/filename
+// drive the viewer.
+function toChip(source: { title: string; document_id?: string | null; page?: number | null }): SourceChipData {
+  return {
+    marker: 0,
+    document_id: source.document_id ?? '',
+    filename: source.title,
+    page: source.page ?? 0,
+    snippet: '',
+    section: null,
+    version: 0,
+    url: null,
+  };
 }
 
 // Maps a validated ChartBlock onto one of the Phase-1 chart primitives.
@@ -163,26 +200,40 @@ function ChartBlockView({ block }: { block: ChartBlockT }) {
 
 function InfoCard({ block }: { block: InfoCardBlockT }) {
   const Icon = block.icon ? ICONS[block.icon] : null;
-  return (
-    <div className="rounded-lg border border-line bg-bg p-4">
-      <div className="flex items-start gap-3">
-        {Icon ? (
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-on-soft">
-            <Icon className="h-4 w-4" aria-hidden />
-          </span>
+  const inner = (
+    <div className="flex items-start gap-3">
+      {Icon ? (
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-on-soft">
+          <Icon className="h-4 w-4" aria-hidden />
+        </span>
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <h3 className="text-sm font-semibold text-ink">{block.title}</h3>
+        {block.subtitle ? <p className="mt-0.5 text-[12px] text-secondary">{block.subtitle}</p> : null}
+        {block.body ? (
+          <div className="mt-1">
+            <Markdown content={block.body} />
+          </div>
         ) : null}
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-ink">{block.title}</h3>
-          {block.subtitle ? <p className="mt-0.5 text-[12px] text-secondary">{block.subtitle}</p> : null}
-          {block.body ? (
-            <div className="mt-1">
-              <Markdown content={block.body} />
-            </div>
-          ) : null}
-        </div>
       </div>
     </div>
   );
+  // Design 2026-08-16 (openui parity, §3.1): an optional http(s) `url` makes
+  // the whole card an external link; anything else (absent, non-http) keeps
+  // the card as inert display -- never a javascript:/data: href.
+  if (isHttpUrl(block.url)) {
+    return (
+      <a
+        href={block.url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="block rounded-lg border border-line bg-bg p-4 hover:border-accent"
+      >
+        {inner}
+      </a>
+    );
+  }
+  return <div className="rounded-lg border border-line bg-bg p-4">{inner}</div>;
 }
 
 // DELIBERATELY renders no <img>: image_ref is an opaque, model-supplied id,
@@ -210,17 +261,40 @@ function RankedList({ block }: { block: RankedListBlockT }) {
     <div className="rounded-lg border border-line bg-bg p-4">
       {block.title ? <h3 className="mb-3 text-sm font-semibold text-ink">{block.title}</h3> : null}
       <ol className="flex flex-col gap-2.5">
-        {block.items.map((item, i) => (
-          <li key={i} className="flex items-start gap-3">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-subtle text-[12px] font-medium tabular-nums text-secondary">
-              {i + 1}
-            </span>
-            <div className="min-w-0">
-              <p className="text-[13px] text-ink">{item.title}</p>
-              {item.subtitle ? <p className="text-[12px] text-secondary">{item.subtitle}</p> : null}
-            </div>
-          </li>
-        ))}
+        {block.items.map((item, i) => {
+          const inner = (
+            <>
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-subtle text-[12px] font-medium tabular-nums text-secondary">
+                {i + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="text-[13px] text-ink">{item.title}</p>
+                {item.subtitle ? <p className="text-[12px] text-secondary">{item.subtitle}</p> : null}
+              </div>
+            </>
+          );
+          // Same http(s)-only guard as InfoCard/ArticleCard: an optional
+          // `url` makes the row a clickable external link.
+          if (isHttpUrl(item.url)) {
+            return (
+              <li key={i}>
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="flex items-start gap-3 hover:opacity-80"
+                >
+                  {inner}
+                </a>
+              </li>
+            );
+          }
+          return (
+            <li key={i} className="flex items-start gap-3">
+              {inner}
+            </li>
+          );
+        })}
       </ol>
     </div>
   );
@@ -290,10 +364,12 @@ function TabsView({
   block,
   depth,
   onFormSubmit,
+  onOpenDocument,
 }: {
   block: TabsBlockT;
   depth: number;
   onFormSubmit?: (message: string) => void;
+  onOpenDocument?: (source: SourceChipData) => void;
 }) {
   // Backend types nesting out statically (TabItem.blocks excludes
   // TabsBlock), but this whitelist guards defensively anyway rather than
@@ -312,7 +388,12 @@ function TabsView({
       </TabsList>
       {block.tabs.map((tab, i) => (
         <TabsContent key={i} value={String(i)} className="pt-3">
-          <BlockRenderer blocks={tab.blocks} depth={depth + 1} onFormSubmit={onFormSubmit} />
+          <BlockRenderer
+            blocks={tab.blocks}
+            depth={depth + 1}
+            onFormSubmit={onFormSubmit}
+            onOpenDocument={onOpenDocument}
+          />
         </TabsContent>
       ))}
     </Tabs>
@@ -323,10 +404,12 @@ function RenderBlock({
   block,
   depth,
   onFormSubmit,
+  onOpenDocument,
 }: {
   block: Block;
   depth: number;
   onFormSubmit?: (message: string) => void;
+  onOpenDocument?: (source: SourceChipData) => void;
 }): ReactNode {
   switch (block.type) {
     case 'text':
@@ -339,14 +422,30 @@ function RenderBlock({
       return <ImageCard block={block} />;
     case 'ranked_list':
       return <RankedList block={block} />;
+    case 'source_refs':
+      return (
+        <SourceRefsView
+          block={block}
+          onOpenDocument={onOpenDocument ? (item) => onOpenDocument(toChip(item)) : undefined}
+        />
+      );
     case 'tag_badges':
       return <TagBadges block={block} />;
+    case 'article_card':
+      return (
+        <ArticleCard
+          block={block}
+          onOpenDocument={onOpenDocument ? () => onOpenDocument(toChip(block)) : undefined}
+        />
+      );
     case 'callout':
       return <CalloutView block={block} />;
     case 'table':
       return <TableView block={block} />;
     case 'tabs':
-      return <TabsView block={block} depth={depth} onFormSubmit={onFormSubmit} />;
+      return (
+        <TabsView block={block} depth={depth} onFormSubmit={onFormSubmit} onOpenDocument={onOpenDocument} />
+      );
     case 'form':
       return <FormBlockView block={block} onSubmit={onFormSubmit} />;
     default:
@@ -359,6 +458,7 @@ export function BlockRenderer({
   blocks,
   depth = 0,
   onFormSubmit,
+  onOpenDocument,
 }: {
   blocks: Block[];
   depth?: number;
@@ -367,12 +467,23 @@ export function BlockRenderer({
   // chat-page.tsx down through AssistantMessage). Absent in contexts with
   // no send path -- the form still renders but submit is a disabled no-op.
   onFormSubmit?: (message: string) => void;
+  // openui-parity design (2026-08-16, Task 4): source_refs/article_card doc
+  // items open the SAME in-app document viewer as citation chips
+  // (source-panel.tsx's SourceChipData). Absent in contexts with no viewer
+  // -- the button/card still renders but the click is a no-op.
+  onOpenDocument?: (source: SourceChipData) => void;
 }) {
   if (blocks.length === 0) return null;
   return (
     <div className="mt-3 flex flex-col gap-3">
       {blocks.map((block, i) => (
-        <RenderBlock key={i} block={block} depth={depth} onFormSubmit={onFormSubmit} />
+        <RenderBlock
+          key={i}
+          block={block}
+          depth={depth}
+          onFormSubmit={onFormSubmit}
+          onOpenDocument={onOpenDocument}
+        />
       ))}
     </div>
   );

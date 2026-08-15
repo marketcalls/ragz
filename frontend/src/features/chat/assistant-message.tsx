@@ -72,7 +72,7 @@ export function AssistantMessage({
         <Markdown content={content} />
       </CitationProvider>
       {blocks && blocks.length > 0 ? (
-        <BlockRenderer blocks={blocks} onFormSubmit={onFormSubmit} />
+        <BlockRenderer blocks={blocks} onFormSubmit={onFormSubmit} onOpenDocument={onOpenDocument} />
       ) : null}
       {noAnswer ? (
         <NoAnswerNotice />

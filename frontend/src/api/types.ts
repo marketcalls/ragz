@@ -133,13 +133,22 @@ export type TabItem = components['schemas']['TabItem'];
 // TabItem.blocks.
 export type FormBlock = components['schemas']['FormBlock'];
 export type FormField = components['schemas']['FormField'];
+// Phase 1 (openui-parity design 2026-08-16, Task 4): the "Sources" strip and
+// the article/photo-hero card. Both join InnerBlock (renderable inside a
+// tab) on the backend; SourceRef items carry EITHER url (web) OR
+// document_id/page (local doc), never both -- ArticleCard allows at most one.
+export type SourceRefsBlock = components['schemas']['SourceRefsBlock'];
+export type SourceRefItem = components['schemas']['SourceRef'];
+export type ArticleCardBlock = components['schemas']['ArticleCardBlock'];
 export type Block =
   | TextBlock
   | ChartBlock
   | InfoCardBlock
   | ImageCardBlock
   | RankedListBlock
+  | SourceRefsBlock
   | TagBadgesBlock
+  | ArticleCardBlock
   | CalloutBlock
   | TableBlock
   | TabsBlock
