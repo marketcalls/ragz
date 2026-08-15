@@ -144,6 +144,40 @@ async def test_web_search_enabled_defaults_off_and_round_trips(
     assert r.json()["web_search_enabled"] is True
 
 
+async def test_generative_ui_enabled_defaults_off_and_round_trips(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    """In-chat generative UI (design 2026-08-15, §2): the workspace flag
+    mirrors web_search_enabled exactly -- ADD COLUMN NOT NULL default False,
+    settable via PATCH through both the route and service allowlists."""
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    ws = next(w for w in (await client.get("/api/v1/workspaces", headers=h)).json()
+              if w["id"] == ws_id)
+    assert ws["generative_ui_enabled"] is False
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"generative_ui_enabled": True}, headers=h
+    )
+    assert r.status_code == 200
+    assert r.json()["generative_ui_enabled"] is True
+
+
+async def test_non_admin_cannot_patch_generative_ui_enabled(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    plain = User(org_id=seeded_user.org_id, email="p2@acme.com",
+                 password_hash=seeded_user.password_hash, role="user")
+    session.add(plain)
+    await session.commit()
+    h_admin = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h_admin)
+    h_user = await auth(client, "p2@acme.com")
+    r = await client.patch(
+        f"/api/v1/workspaces/{ws_id}", json={"generative_ui_enabled": True}, headers=h_user
+    )
+    assert r.status_code == 403
+
+
 async def test_patch_strict_mode(client: httpx.AsyncClient, seeded_user: User) -> None:
     h = await auth(client, "a@acme.com")
     ws_id = await make_workspace(client, h)

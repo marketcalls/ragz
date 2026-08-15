@@ -23,11 +23,14 @@ from ragz.core.db import naive_utc
 from ragz.core.errors import ConflictError, NotFoundError, UpstreamError
 from ragz.core.storage import build_storage
 from ragz.modules.chat.agent import AgentGathered, AgentStep, run_agent_gather
+from ragz.modules.chat.blocks import validate_blocks
+from ragz.modules.chat.blocks_emit import generate_blocks
 from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
     SSEEvent,
     agent_step_event,
+    blocks_event,
     citations_event,
     done_event,
     error_event,
@@ -54,6 +57,7 @@ from ragz.modules.chat.prompting import (
     fit_sources,
     fold_summary,
     parse_citation_markers,
+    render_data_blocks,
     split_budget,
 )
 from ragz.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
@@ -382,6 +386,11 @@ def build_tree(
             validation_failed=m.validation_failed,
             citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
             feedback=FeedbackOut.model_validate(fb) if fb is not None else None,
+            # In-chat generative UI (design 2026-08-15, §4): re-validated on
+            # the way OUT too (not just trusted from storage) -- cheap,
+            # never raises, and keeps history GET on the exact same Iron
+            # Rule 5 boundary as the live SSE frame.
+            blocks=validate_blocks(m.blocks_json) if m.blocks_json else None,
             children=[node(k) for k in kids],
         )
 
@@ -1715,6 +1724,21 @@ async def stream_reply(
                 completion_tokens=usage.completion_tokens,
             )
         yield citations_event(citation_refs)
+        # In-chat generative UI (design 2026-08-15, §2): opt-in per-workspace,
+        # AFTER the answer text + citations are already streamed/emitted, so
+        # a slow/failed visualize call can never delay or break the answer
+        # itself. generate_blocks is best-effort (never raises); only a
+        # completer AND the workspace flag together run it at all -- the
+        # default (flag off) is a no-op, byte-identical to pre-Task-2.
+        if workspace.generative_ui_enabled and completer is not None:
+            blocks = await generate_blocks(
+                completer, question=user_message.content, answer=answer,
+                context=render_data_blocks(kept_sources), model=model,
+            )
+            if blocks:
+                msg.blocks_json = [b.model_dump(mode="json") for b in blocks]
+                await session.commit()
+                yield blocks_event(blocks)
         yield done_event(
             message_id=str(msg.id),
             prompt_tokens=usage.prompt_tokens if usage else 0,

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from ragz.modules.chat.blocks import Block
+
 
 class MessageSend(BaseModel):
     """Body of POST /chats/{id}/messages.
@@ -109,6 +111,10 @@ class MessageNode(BaseModel):
     validation_failed: bool = False
     citations: list[CitationOut]
     feedback: FeedbackOut | None
+    # In-chat generative UI (design 2026-08-15, §2/§4): the validated block
+    # array persisted on this message, or None when the visualize step never
+    # ran / emitted nothing (default -- unchanged history shape otherwise).
+    blocks: list[Block] | None = None
     children: list["MessageNode"]
 
 

@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ragz.core.db import Base, UUIDPk, naive_utc
@@ -73,6 +74,13 @@ class Message(UUIDPk, Base):
     # Phase 3 Plan J (design D4/§3): the SECOND Gatekeeper attempt was
     # streamed (win or lose - see validation.synthesize_with_gatekeeper).
     validation_failed: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # In-chat generative UI (design 2026-08-15, §2/§4): the assistant
+    # message's validated (blocks.py::validate_blocks) block array, stored as
+    # plain JSON-able dicts -- null when the visualize step never ran
+    # (workspace.generative_ui_enabled off, or no completer) or emitted
+    # nothing (best-effort: junk/no-op model output degrades to null, same
+    # as "the step never ran").
+    blocks_json: Mapped[list[object] | None] = mapped_column(JSONB, default=None)
 
 
 class Citation(UUIDPk, Base):

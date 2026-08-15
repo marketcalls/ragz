@@ -7,6 +7,10 @@ consumed by the frontend (Plan D).
 
 import json
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ragz.modules.chat.blocks import Block
 
 
 @dataclass(frozen=True)
@@ -88,3 +92,13 @@ def agent_step_event(*, n: int, tool: str, query: str) -> SSEEvent:
     Additive — pre-Plan-I clients never see it (they receive it only on
     escalated turns, and the frontend ships the handler in the same commit)."""
     return SSEEvent("agent_step", {"n": n, "tool": tool, "query": query})
+
+
+def blocks_event(blocks: "list[Block]") -> SSEEvent:
+    """In-chat generative UI (design 2026-08-15, §2): emitted AFTER citations,
+    only when workspace.generative_ui_enabled + a completer are both present
+    AND the visualize step (blocks_emit.generate_blocks) actually returned at
+    least one validated block. Additive — a client that ignores unknown SSE
+    event names sees no behavior change when this frame is absent (the
+    default, flag-off case)."""
+    return SSEEvent("blocks", {"blocks": [b.model_dump(mode="json") for b in blocks]})

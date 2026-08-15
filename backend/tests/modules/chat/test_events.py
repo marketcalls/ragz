@@ -1,10 +1,12 @@
 import json
 from dataclasses import asdict
 
+from ragz.modules.chat.blocks import TextBlock
 from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
     agent_step_event,
+    blocks_event,
     citations_event,
     done_event,
     error_event,
@@ -77,3 +79,14 @@ def test_done_event_carries_validation_failed_true() -> None:
     e = done_event(message_id="m1", prompt_tokens=1, completion_tokens=2,
                    no_answer=False, grounding="documents", validation_failed=True)
     assert e.data["validation_failed"] is True
+
+
+def test_blocks_event_shape() -> None:
+    e = blocks_event([TextBlock(type="text", markdown="**hi**")])
+    assert e.event == "blocks"
+    assert e.data == {"blocks": [{"type": "text", "markdown": "**hi**"}]}
+
+
+def test_blocks_event_empty() -> None:
+    e = blocks_event([])
+    assert e.data == {"blocks": []}

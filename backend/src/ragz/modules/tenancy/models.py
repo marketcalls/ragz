@@ -52,6 +52,12 @@ class Workspace(UUIDPk, Base):
     # Chunk-methods plan Task 2: workspace-default chunking strategy for
     # ingests; a document may opt out via Document.chunk_method_override.
     chunk_method: Mapped[str] = mapped_column(default="heading", server_default="heading")
+    # In-chat generative UI (design 2026-08-15, §2): gates the extra
+    # "visualize" model call in chat/service.py::stream_reply that emits
+    # Message.blocks_json + the `blocks` SSE frame. Default OFF, same
+    # ADD COLUMN NOT NULL + server_default posture as web_search_enabled --
+    # off means today's plain-markdown behavior, byte-identical.
+    generative_ui_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class WorkspaceMember(Base):

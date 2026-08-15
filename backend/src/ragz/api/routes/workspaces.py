@@ -97,6 +97,7 @@ async def remove_member_route(
 _SETTINGS_FIELDS = (
     "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
     "web_search_enabled", "strict_mode", "enrichment_enabled", "chunk_method",
+    "generative_ui_enabled",
 )
 
 

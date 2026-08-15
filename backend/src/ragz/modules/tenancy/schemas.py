@@ -22,6 +22,7 @@ class WorkspaceOut(BaseModel):
     strict_mode: bool
     enrichment_enabled: bool
     chunk_method: str
+    generative_ui_enabled: bool
 
     model_config = {"from_attributes": True}
 
@@ -41,6 +42,7 @@ class WorkspacePatch(BaseModel):
     strict_mode: bool | None = None
     enrichment_enabled: bool | None = None
     chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
+    generative_ui_enabled: bool | None = None
 
 
 class ReembedRequest(BaseModel):

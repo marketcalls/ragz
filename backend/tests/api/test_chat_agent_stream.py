@@ -12,7 +12,7 @@ from ragz.api.app import create_app
 from ragz.core.config import Settings, get_settings
 from ragz.core.db import build_session_factory
 from ragz.modules.chat.llm import LLMCompletion, LLMUsage
-from ragz.modules.chat.models import Citation
+from ragz.modules.chat.models import Citation, Message
 from ragz.modules.chat.service import NO_ANSWER_TEXT
 from ragz.modules.models.models import Model
 from tests.api.test_chat_stream import auth, make_model_and_chat, parse_sse
@@ -414,6 +414,154 @@ async def test_web_search_not_offered_when_disabled_or_decline(
             web_search_enabled=True, fallback_policy="general_knowledge"
         )
         assert "web_search" not in prompt_c
+
+
+# --- In-chat generative UI (design 2026-08-15): emission + persistence -----
+
+
+async def test_generative_ui_disabled_by_default_no_blocks_frame(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """workspace.generative_ui_enabled defaults False: even with a completer
+    present, the visualize step never runs -- no `blocks` SSE frame, no
+    completer calls, message.blocks_json stays null. Same non-regression
+    shape as test_simple_question_never_escalates above."""
+    completer = FakeCompleter()
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What is the muster point?"},
+            headers=h_admin,
+        )
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert "blocks" not in names
+    assert completer.calls == []
+    done = next(d for n, d in frames if n == "done")
+    msg = (
+        await session.execute(select(Message).where(Message.id == UUID(done["message_id"])))
+    ).scalar_one()
+    assert msg.blocks_json is None
+
+
+async def test_generative_ui_enabled_emits_and_persists_blocks(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """workspace.generative_ui_enabled=True + a completer scripted with a
+    valid blocks JSON array: the `blocks` SSE frame is emitted AFTER
+    citations (and before done), message.blocks_json is persisted, and
+    history GET returns the same validated blocks."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text='[{"type": "text", "markdown": "**Revenue grew 20%**"}]',
+            tool_calls=[], usage=LLMUsage(prompt_tokens=8, completion_tokens=4),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"generative_ui_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200 and r_ws.json()["generative_ui_enabled"] is True
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What is the muster point?"},
+            headers=h_admin,
+        )
+        frames = parse_sse(r.text)
+        names = [n for n, _ in frames]
+        assert names.index("citations") < names.index("blocks") < names.index("done")
+        blocks_frame = next(d for n, d in frames if n == "blocks")
+        assert blocks_frame == {"blocks": [{"type": "text", "markdown": "**Revenue grew 20%**"}]}
+        done = next(d for n, d in frames if n == "done")
+
+        msg = (
+            await session.execute(select(Message).where(Message.id == UUID(done["message_id"])))
+        ).scalar_one()
+        assert msg.blocks_json == [{"type": "text", "markdown": "**Revenue grew 20%**"}]
+
+        r_hist = await client.get(f"/api/v1/chats/{chat_id}", headers=h_admin)
+        assistant_node = next(
+            m for m in r_hist.json()["messages"][0]["children"] if m["role"] == "assistant"
+        )
+        assert assistant_node["blocks"] == [{"type": "text", "markdown": "**Revenue grew 20%**"}]
+
+
+async def test_generative_ui_hostile_completer_output_never_breaks_answer(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """generative_ui_enabled=True but the completer returns non-JSON,
+    hostile-looking garbage: no crash, no `blocks` frame, and the answer/
+    citations/done frames stream exactly as they would with the flag off --
+    proving the visualize step is truly best-effort (Iron Rule 5)."""
+    completer = FakeCompleter([
+        LLMCompletion(
+            text="<script>alert(1)</script> not json at all",
+            tool_calls=[], usage=LLMUsage(prompt_tokens=8, completion_tokens=4),
+        ),
+    ])
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"generative_ui_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={"content": "What is the muster point?"},
+            headers=h_admin,
+        )
+    assert r.status_code == 200
+    frames = parse_sse(r.text)
+    names = [n for n, _ in frames]
+    assert "blocks" not in names
+    assert names[-2:] == ["citations", "done"]
+    answer = "".join(d["delta"] for n, d in frames if n == "token")
+    assert answer == "Revenue was 12M [1]."
+    done = next(d for n, d in frames if n == "done")
+    msg = (
+        await session.execute(select(Message).where(Message.id == UUID(done["message_id"])))
+    ).scalar_one()
+    assert msg.blocks_json is None
 
 
 # --- Task 8: utility-model escalation tiebreak (design §1's deferred piece) -
