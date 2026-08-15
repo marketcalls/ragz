@@ -72,12 +72,13 @@ async def _rate_limit_bot_webhook(request: Request, integration_id: UUID) -> Non
 async def _read_bounded_body(request: Request) -> bytes:
     """Reads the request body capped at `_WEBHOOK_BODY_MAX_BYTES`, raising
     PayloadTooLarge (413) before any signature-verification/parse/relay
-    work runs. Two enforcement paths, mirroring documents.py::
-    upload_document's pattern: a declared Content-Length over the cap is
-    rejected before reading any bytes; an absent/understating/lying
-    Content-Length is caught by checking the actual bytes read (bounded in
-    the worst case by the global body-size middleware, so this never
-    buffers past that outer ceiling)."""
+    work runs. Two enforcement paths: a declared Content-Length over the cap
+    is rejected before reading any bytes; then the body is streamed and the
+    running total aborted the instant it exceeds the cap -- so a chunked /
+    absent / understated Content-Length can never force this route to buffer
+    past 64KB (the earlier `request.body()` version fell back to the global
+    ~25-45MB middleware ceiling for the no-Content-Length case; RAGZ-PUB-03
+    review). Mirrors BodySizeLimitMiddleware's incremental-accumulate pattern."""
     if content_length := request.headers.get("content-length"):
         try:
             if int(content_length) > _WEBHOOK_BODY_MAX_BYTES:
@@ -85,11 +86,15 @@ async def _read_bounded_body(request: Request) -> bytes:
                     f"webhook body exceeds {_WEBHOOK_BODY_MAX_BYTES} byte limit"
                 )
         except ValueError:
-            pass  # invalid Content-Length -- fall through to the actual-bytes check below
-    raw_body = await request.body()
-    if len(raw_body) > _WEBHOOK_BODY_MAX_BYTES:
-        raise PayloadTooLarge(f"webhook body exceeds {_WEBHOOK_BODY_MAX_BYTES} byte limit")
-    return raw_body
+            pass  # invalid Content-Length -- the streaming cap below still bounds it
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > _WEBHOOK_BODY_MAX_BYTES:
+            raise PayloadTooLarge(f"webhook body exceeds {_WEBHOOK_BODY_MAX_BYTES} byte limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _parse_json(raw_body: bytes) -> dict[str, object]:

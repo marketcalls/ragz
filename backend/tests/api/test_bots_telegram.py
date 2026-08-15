@@ -6,6 +6,7 @@ assertion that a bad/absent signature does NO relay/LLM/outbound work at
 all (proven here by asserting the outbound MockTransport was never hit)."""
 
 import json
+from collections.abc import AsyncIterator
 from uuid import uuid4
 
 import httpx
@@ -225,6 +226,38 @@ async def test_oversized_body_rejected_413_before_signature_check(
             "content-type": "application/json",
         },
     )
+    assert r.status_code == 413, r.text
+    assert retriever.calls == []
+    assert streamer.calls == []
+    assert outbound.calls == []
+
+
+async def test_oversized_chunked_body_without_content_length_rejected_413(
+    telegram_client: httpx.AsyncClient, telegram_env, outbound: OutboundRecorder,
+    retriever: FakeRetriever, streamer: FakeStreamer,
+) -> None:
+    """RAGZ-PUB-03 review: the streaming cap must fire even with NO
+    Content-Length header (chunked transfer). A generator body makes httpx
+    omit Content-Length, so the declared-length short-circuit is skipped and
+    only the incremental request.stream() accumulation can stop it -- the
+    exact path the earlier request.body() version left buffering to the
+    global ~25-45MB ceiling. Still 413s before any relay/LLM/outbound work."""
+    integration, _doc = telegram_env
+
+    async def _oversized_chunks() -> AsyncIterator[bytes]:
+        # ~256KB total (4x the 64KB cap) streamed in 8KB chunks, no Content-Length.
+        for _ in range((_WEBHOOK_BODY_MAX_BYTES * 4) // (8 * 1024)):
+            yield b"x" * (8 * 1024)
+
+    r = await telegram_client.post(
+        f"/external/bots/telegram/{integration.webhook_id}",
+        content=_oversized_chunks(),
+        headers={
+            "X-Telegram-Bot-Api-Secret-Token": TELEGRAM_SECRET,
+            "content-type": "application/json",
+        },
+    )
+    assert "content-length" not in r.request.headers  # truly chunked
     assert r.status_code == 413, r.text
     assert retriever.calls == []
     assert streamer.calls == []
