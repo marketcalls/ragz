@@ -27,6 +27,7 @@ async def test_defaults_when_nothing_set(session, settings) -> None:
     assert out.llamaparse_key_set is False
     assert out.cohere_key_set is False
     assert out.tavily_key_set is False
+    assert out.generative_ui_images == "off"
 
 
 async def test_web_search_provider_and_tavily_key_roundtrip(
@@ -98,6 +99,14 @@ async def test_omitted_key_leaves_existing_untouched(session, settings, seeded_u
         patch=ProviderSettingsUpdate(rerank_provider="cohere"),
     )
     assert out.cohere_key_set is True
+
+
+async def test_generative_ui_images_roundtrip(session, settings, seeded_user: User) -> None:
+    out = await settings_service.update_provider_settings(
+        session, settings, actor_id=seeded_user.id,
+        patch=ProviderSettingsUpdate(generative_ui_images="web_results"),
+    )
+    assert out.generative_ui_images == "web_results"
 
 
 async def test_empty_key_string_rejected(session, settings, seeded_user: User) -> None:

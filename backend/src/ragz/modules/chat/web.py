@@ -47,6 +47,7 @@ logger = structlog.get_logger()
 TAVILY_SECRET_NAME = "tavily"  # noqa: S105 - a secret NAME, not a secret
 _MAX_RESULTS = 5
 _SNIPPET_CHARS = 500
+_IMAGE_URL_MAX_CHARS = 2048  # mirrors blocks.py's _MAX_URL_LEN
 
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -116,6 +117,20 @@ def redact_query(query: str) -> str:
     return redacted.strip()
 
 
+def _normalize_image_url(raw: object) -> str | None:
+    """Best-effort normalization of one entry of Tavily's top-level `images`
+    array -- either `{"url": ...}` or a bare url string. http(s) only,
+    bounded like every other url the searchers handle; anything else (wrong
+    shape, non-http scheme) is just None (the graceful "no image" case)."""
+    candidate = raw.get("url") if isinstance(raw, dict) else raw
+    if not isinstance(candidate, str):
+        return None
+    candidate = candidate[:_IMAGE_URL_MAX_CHARS]
+    if not candidate.startswith(("http://", "https://")):
+        return None
+    return candidate
+
+
 def has_searchable_content(redacted_query: str) -> bool:
     """True if `redacted_query` still has a real search term left after
     redaction — i.e. something other than whitespace and our own
@@ -130,6 +145,10 @@ class WebResult:
     title: str
     url: str
     snippet: str
+    # Best-effort, provider-supplied preview image (openui-parity Task 8).
+    # Only TavilySearcher ever populates this; every other provider leaves it
+    # None, which is byte-identical to pre-Task-8 behavior.
+    image_url: str | None = None
 
 
 class WebSearcher(Protocol):
@@ -157,7 +176,7 @@ class TavilySearcher:
         key = await secrets_service._get_secret_decrypted(  # noqa: SLF001
             session, name=TAVILY_SECRET_NAME, settings=self._settings
         )
-        payload = {"query": query, "max_results": _MAX_RESULTS}
+        payload = {"query": query, "max_results": _MAX_RESULTS, "include_images": True}
         headers = {"Authorization": f"Bearer {key}"}
         try:
             async with httpx.AsyncClient(
@@ -173,18 +192,23 @@ class TavilySearcher:
             body = response.json()
         except ValueError as exc:
             raise UpstreamError("malformed web search response") from exc
+        raw_images = body.get("images") or []
         results: list[WebResult] = []
-        for item in body.get("results") or []:
+        for idx, item in enumerate(body.get("results") or []):
             if not isinstance(item, dict):
                 continue
             url = str(item.get("url") or "")
             if not url.startswith(("http://", "https://")):
                 continue  # defense: only real links become citable sources
+            image_url = (
+                _normalize_image_url(raw_images[idx]) if idx < len(raw_images) else None
+            )
             results.append(
                 WebResult(
                     title=str(item.get("title") or url)[:200],
                     url=url,
                     snippet=str(item.get("content") or "")[:_SNIPPET_CHARS],
+                    image_url=image_url,
                 )
             )
         return results

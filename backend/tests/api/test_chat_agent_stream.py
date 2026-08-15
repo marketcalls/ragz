@@ -801,6 +801,74 @@ async def test_generative_ui_emits_source_refs_block_from_real_citations(
         }
 
 
+async def test_generative_ui_images_setting_mints_image_ref_for_web_source(
+    engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
+    seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
+) -> None:
+    """openui-parity Task 8: with the superadmin `generative_ui_images`
+    setting on ("web_results") and a web turn whose FakeWebSearcher result
+    carries an image_url, the visualize step's "Available sources" payload
+    (the SourceInput -> _build_messages JSON actually sent to the completer)
+    carries a minted image_ref for that source. off (the default, covered by
+    the other generative-ui tests above) never mentions image_ref at all."""
+    results = [
+        WebResult(
+            title="ISO 45001", url="https://example.test/iso",
+            snippet="occupational health standard",
+            image_url="https://img.example.test/iso.png",
+        ),
+    ]
+    completer = FakeCompleter([_web_search_completion("iso 45001")])
+    web_searcher = FakeWebSearcher(results=results)
+    app = create_app(
+        session_factory=build_session_factory(engine), redis_client=redis_client,
+        litellm_transport=httpx.MockTransport(_stub_litellm_handler),
+        retriever=FakeRetriever(chat_env["document"].id),
+        llm_streamer=FakeStreamer(), chunk_reader=FakeChunkReader(),
+        llm_completer=completer, web_searcher=web_searcher,
+    )
+    app.dependency_overrides[get_settings] = lambda: test_settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        h_admin = await auth(client, seeded_user.email)
+        chat_id = await make_model_and_chat(client, chat_env, session, seeded_superadmin, h_admin)
+        h_super = await auth(client, "root@platform.example")
+        await _flag_tools_unreliable(client, h_super)
+        r_ws = await client.patch(
+            f"/api/v1/workspaces/{chat_env['workspace'].id}",
+            json={"web_search_enabled": True, "generative_ui_enabled": True}, headers=h_admin,
+        )
+        assert r_ws.status_code == 200
+        r_secret = await client.put(
+            "/api/v1/admin/secrets/tavily", json={"value": "tvly-test-key"}, headers=h_super,
+        )
+        assert r_secret.status_code == 200
+        r_settings = await client.put(
+            "/api/v1/admin/settings",
+            json={"generative_ui_images": "web_results"}, headers=h_super,
+        )
+        assert r_settings.status_code == 200
+        assert r_settings.json()["generative_ui_images"] == "web_results"
+        r = await client.post(
+            f"/api/v1/chats/{chat_id}/messages",
+            json={
+                "content": "What is the muster point and when was it approved?",
+                "web_search_consented": True,
+            },
+            headers=h_admin,
+        )
+    assert r.status_code == 200
+    visualize_contents = [
+        m["content"]
+        for call in completer.calls
+        for m in call["messages"]
+        if isinstance(m.get("content"), str) and "Available sources" in m["content"]
+    ]
+    assert visualize_contents, "expected a visualize (generate_blocks) completer call"
+    assert "image_ref" in visualize_contents[-1]
+
+
 async def test_generative_ui_hostile_completer_output_never_breaks_answer(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,

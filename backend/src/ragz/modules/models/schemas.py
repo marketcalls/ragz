@@ -15,6 +15,11 @@ ReasoningEffort = Literal["off", "low", "medium", "high"]
 
 ModelModality = Literal["chat", "embedding"]
 
+# openui-parity Task 8: gates the generative-UI image pipeline (superadmin
+# global, default "off"). "web_results" surfaces images already present in
+# the turn's web-search results (Tavily); off -> no image fetch, no minting.
+GenerativeUiImages = Literal["off", "web_results"]
+
 
 class ModelCreate(BaseModel):
     litellm_model_name: str = Field(min_length=1, max_length=200)
@@ -130,6 +135,7 @@ class ProviderSettingsOut(BaseModel):
     default_chunk_method: str
     llamaparse_key_set: bool
     cohere_key_set: bool
+    generative_ui_images: GenerativeUiImages
 
 
 class ProviderSettingsUpdate(BaseModel):
@@ -138,6 +144,7 @@ class ProviderSettingsUpdate(BaseModel):
     cohere_rerank_model: Literal["rerank-v4.0-fast", "rerank-v4.0-pro"] | None = None
     web_search_provider: Literal["duckduckgo", "tavily"] | None = None
     default_chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
+    generative_ui_images: GenerativeUiImages | None = None
     # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has
     # no key fields, only *_key_set booleans).
     llamaparse_api_key: str | None = Field(default=None, max_length=8192)

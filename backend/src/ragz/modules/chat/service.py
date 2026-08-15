@@ -25,6 +25,7 @@ from ragz.core.db import naive_utc
 from ragz.core.errors import ConflictError, NotFoundError, UpstreamError
 from ragz.core.storage import build_storage
 from ragz.modules.auth.models import User
+from ragz.modules.chat import media
 from ragz.modules.chat.agent import AgentGathered, AgentStep, AgentToolResult, run_agent_gather
 from ragz.modules.chat.blocks import validate_blocks
 from ragz.modules.chat.blocks_emit import SourceInput, generate_blocks
@@ -84,6 +85,7 @@ from ragz.modules.documents import metadata as metadata_service
 from ragz.modules.documents import service as documents_service
 from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch
 from ragz.modules.models import service as models_service
+from ragz.modules.models import settings_service
 from ragz.modules.models.models import (
     LOCAL_EMBEDDING_MODEL_ID,
     Model,  # type only; resolution stays in models service
@@ -1925,19 +1927,36 @@ async def stream_reply(
         # default (flag off) is a no-op, byte-identical to pre-Task-2.
         if workspace.generative_ui_enabled and completer is not None:
             _src_by_marker = {s.marker: s for s in kept_sources}
-            source_inputs = [
-                SourceInput(
-                    title=(
-                        _src_by_marker[c.marker].filename
-                        if c.marker in _src_by_marker
-                        else c.chunk_ref
-                    ),
-                    url=c.url,
-                    document_id=None if c.url else (c.document_id or None),
-                    page=None if c.url else c.page,
+            # openui-parity Task 8: superadmin-gated (default "off" -- see
+            # settings_service._GENERATIVE_UI_IMAGES_KEY). Only touched inside
+            # this already-opt-in block, so the off path (the common case)
+            # never fetches the setting or looks at web_hits' images at all --
+            # byte-identical to pre-Task-8 behavior.
+            provider_settings = await settings_service.get_provider_settings(session)
+            image_by_url: dict[str, str] = {}
+            if provider_settings.generative_ui_images == "web_results":
+                image_by_url = {w.url: w.image_url for w in web_hits if w.image_url}
+            source_inputs = []
+            for c in citation_refs:
+                image_ref = None
+                if c.url and c.url in image_by_url:
+                    image_ref = media.mint_image_ref(
+                        image_by_url[c.url], org_id=ctx.org_id, chat_id=chat.id,
+                        message_id=msg.id, settings=settings, now=media._now(),
+                    )
+                source_inputs.append(
+                    SourceInput(
+                        title=(
+                            _src_by_marker[c.marker].filename
+                            if c.marker in _src_by_marker
+                            else c.chunk_ref
+                        ),
+                        url=c.url,
+                        document_id=None if c.url else (c.document_id or None),
+                        page=None if c.url else c.page,
+                        image_ref=image_ref,
+                    )
                 )
-                for c in citation_refs
-            ]
             blocks = await generate_blocks(
                 completer, question=user_message.content, answer=answer,
                 context=render_data_blocks(kept_sources), model=model,

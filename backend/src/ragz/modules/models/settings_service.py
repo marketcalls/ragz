@@ -16,7 +16,11 @@ from ragz.core.app_settings import get_app_setting, set_app_setting
 from ragz.core.config import Settings
 from ragz.core.errors import ConflictError
 from ragz.modules.email.schemas import EmailConfig
-from ragz.modules.models.schemas import ProviderSettingsOut, ProviderSettingsUpdate
+from ragz.modules.models.schemas import (
+    GenerativeUiImages,
+    ProviderSettingsOut,
+    ProviderSettingsUpdate,
+)
 from ragz.modules.secrets import service as secrets_service
 
 _PARSER_KEY = "document_parser"
@@ -25,6 +29,8 @@ _COHERE_MODEL_KEY = "cohere_rerank_model"
 _COHERE_MODEL_DEFAULT = "rerank-v4.0-fast"
 _WEB_SEARCH_PROVIDER_KEY = "web_search_provider"
 _DEFAULT_CHUNK_METHOD_KEY = "default_chunk_method"
+# openui-parity Task 8: gates the generative-UI image pipeline, default "off".
+_GENERATIVE_UI_IMAGES_KEY = "generative_ui_images"
 _LLAMA_SECRET = "llamaparse_api_key"  # noqa: S105 - a secret NAME, not a secret
 _COHERE_SECRET = "cohere_api_key"  # noqa: S105 - a secret NAME, not a secret
 _TAVILY_SECRET = "tavily"  # noqa: S105 - a secret NAME (matches web.TAVILY_SECRET_NAME)
@@ -50,6 +56,10 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
     cohere_model = await get_app_setting(session, _COHERE_MODEL_KEY) or _COHERE_MODEL_DEFAULT
     web_search = await get_app_setting(session, _WEB_SEARCH_PROVIDER_KEY) or "duckduckgo"
     default_chunk = await get_app_setting(session, _DEFAULT_CHUNK_METHOD_KEY) or "heading"
+    _raw_generative_ui_images = await get_app_setting(session, _GENERATIVE_UI_IMAGES_KEY)
+    generative_ui_images: GenerativeUiImages = (
+        "web_results" if _raw_generative_ui_images == "web_results" else "off"
+    )
     present = await secrets_service.existing_secret_names(
         session, [_LLAMA_SECRET, _COHERE_SECRET, _TAVILY_SECRET]
     )
@@ -62,6 +72,7 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
         llamaparse_key_set=_LLAMA_SECRET in present,
         cohere_key_set=_COHERE_SECRET in present,
         tavily_key_set=_TAVILY_SECRET in present,
+        generative_ui_images=generative_ui_images,
     )
 
 
@@ -85,6 +96,10 @@ async def update_provider_settings(
     if patch.default_chunk_method is not None:
         await set_app_setting(
             session, _DEFAULT_CHUNK_METHOD_KEY, patch.default_chunk_method, commit=False
+        )
+    if patch.generative_ui_images is not None:
+        await set_app_setting(
+            session, _GENERATIVE_UI_IMAGES_KEY, patch.generative_ui_images, commit=False
         )
     for value, name in (
         (patch.llamaparse_api_key, _LLAMA_SECRET),

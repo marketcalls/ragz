@@ -3,6 +3,7 @@ module -- these tests exercise the real encrypt/decrypt path against the test
 KEK) and DuckDuckGoSearcher (DDG-01, the default keyless provider -- the ddgs
 client is monkeypatched so these tests never hit the real network)."""
 
+import json
 from typing import Any
 
 import httpx
@@ -81,6 +82,82 @@ async def test_upstream_failure_raises_upstream_error(
     searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
     with pytest.raises(UpstreamError):
         await searcher(session, "anything")
+
+
+async def test_search_attaches_images_by_index(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    await _store_key(session, test_settings)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "results": [
+                {"title": "First", "url": "https://example.com/1", "content": "one"},
+                {"title": "Second", "url": "https://example.com/2", "content": "two"},
+            ],
+            "images": [
+                {"url": "https://img.example.com/1.png"},
+                "https://img.example.com/2.png",
+            ],
+        })
+
+    searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
+    results = await searcher(session, "anything")
+    assert results[0].image_url == "https://img.example.com/1.png"
+    assert results[1].image_url == "https://img.example.com/2.png"
+
+
+async def test_search_drops_non_http_image_url(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    await _store_key(session, test_settings)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "results": [
+                {"title": "First", "url": "https://example.com/1", "content": "one"},
+            ],
+            "images": ["ftp://img.example.com/1.png"],
+        })
+
+    searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
+    results = await searcher(session, "anything")
+    assert results[0].image_url is None
+
+
+async def test_search_missing_image_leaves_image_url_none(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    await _store_key(session, test_settings)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "results": [
+                {"title": "First", "url": "https://example.com/1", "content": "one"},
+                {"title": "Second", "url": "https://example.com/2", "content": "two"},
+            ],
+            "images": [{"url": "https://img.example.com/1.png"}],
+        })
+
+    searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
+    results = await searcher(session, "anything")
+    assert results[0].image_url == "https://img.example.com/1.png"
+    assert results[1].image_url is None
+
+
+async def test_search_requests_images(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    await _store_key(session, test_settings)
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
+    await searcher(session, "anything")
+    assert json.loads(seen[0].content)["include_images"] is True
 
 
 def test_web_module_is_in_the_decrypt_allowlist() -> None:

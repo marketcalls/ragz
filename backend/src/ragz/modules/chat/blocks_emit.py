@@ -46,6 +46,12 @@ class SourceInput:
     url: str | None = None
     document_id: str | None = None
     page: int | None = None
+    # openui-parity Task 8: a signed image_ref (modules/chat/media.py) already
+    # minted by the caller for this source's image, when the superadmin
+    # `generative_ui_images` setting is on and the source had one. The model
+    # may only echo this exact value into a block -- it never mints or
+    # invents one.
+    image_ref: str | None = None
 
 _SYSTEM_PROMPT = (
     "You turn an already-grounded chat answer into OPTIONAL rich UI blocks "
@@ -84,7 +90,8 @@ _SYSTEM_PROMPT = (
     '"image_ref"?:string} (at most one of url/document_id; page requires '
     "document_id; only set image_ref if the context provides one)\n"
     '- {"type":"source_refs","title"?:string,"items":[{"title":string,'
-    '"source"?:string,"url"?:string,"document_id"?:string,"page"?:number}]} '
+    '"source"?:string,"url"?:string,"document_id"?:string,"page"?:number,'
+    '"image_ref"?:string}]} '
     "(each item has EITHER url OR document_id+page)\n"
     '- {"type":"tag_badges","tags":[{"label":string,'
     '"tone"?:"neutral"|"info"|"success"|"warning"|"danger"}]}\n'
@@ -109,7 +116,10 @@ _SYSTEM_PROMPT = (
     "sources' list is provided below, ALWAYS end the array with a "
     "source_refs block built ONLY from those sources -- one item per source "
     "you actually used, web sources use url, document sources use "
-    "document_id (+page). Never invent a url, document_id, or image_ref "
+    "document_id (+page). A source item may also carry an image_ref -- when "
+    "building an article_card or source_refs item from a source that HAS "
+    'one, you MAY set "image_ref" to that exact value; never invent one. '
+    "Never invent a url, document_id, or image_ref "
     "that isn't present in the context or the Available sources list. "
     "Never wrap the array in an object, never invent a block type or field "
     "not listed above."
@@ -125,15 +135,16 @@ def _build_messages(
         f"Source context:\n{wrap_untrusted_block('context', context)}"
     )
     if sources:
-        sources_json = json.dumps(
-            [
-                {
-                    "title": s.title, "source": s.source, "url": s.url,
-                    "document_id": s.document_id, "page": s.page,
-                }
-                for s in sources
-            ]
-        )
+        source_dicts: list[dict[str, object]] = []
+        for s in sources:
+            d: dict[str, object] = {
+                "title": s.title, "source": s.source, "url": s.url,
+                "document_id": s.document_id, "page": s.page,
+            }
+            if s.image_ref:
+                d["image_ref"] = s.image_ref
+            source_dicts.append(d)
+        sources_json = json.dumps(source_dicts)
         user_content += (
             "\n\nAvailable sources (build the source_refs block from THESE "
             "ONLY -- do not invent):\n" + wrap_untrusted_block("sources", sources_json)

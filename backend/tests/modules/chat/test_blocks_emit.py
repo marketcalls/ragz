@@ -176,3 +176,24 @@ def test_build_messages_with_empty_sources_list_omits_sources_section() -> None:
     messages = _build_messages(question="q", answer="a", context="c", sources=[])
     user_content = messages[-1]["content"]
     assert "Available sources" not in user_content
+
+
+# --- Task 8: web-result image_ref threading ----------------------------------
+
+
+def test_build_messages_includes_image_ref_when_set() -> None:
+    sources = [
+        SourceInput(
+            title="ACME", url="https://acme.test", source="acme.test",
+            image_ref="ref-abc123",
+        ),
+        SourceInput(title="Doc A", document_id="d1", page=3),
+    ]
+    messages = _build_messages(question="q", answer="a", context="c", sources=sources)
+    user_content = messages[-1]["content"]
+    assert isinstance(user_content, str)
+    assert '"image_ref": "ref-abc123"' in user_content
+
+
+def test_system_prompt_source_refs_item_may_carry_image_ref() -> None:
+    assert "source item may also carry an image_ref" in _SYSTEM_PROMPT
