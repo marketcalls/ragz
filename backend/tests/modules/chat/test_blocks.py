@@ -22,6 +22,7 @@ from ragz.modules.chat.blocks import (
     ImageCardBlock,
     InfoCardBlock,
     RankedListBlock,
+    SourceRefsBlock,
     TableBlock,
     TabsBlock,
     TagBadgesBlock,
@@ -647,6 +648,147 @@ def test_form_shaped_hostile_input_never_raises(raw: object) -> None:
 )
 def test_non_list_top_level_returns_empty(raw: object) -> None:
     assert validate_blocks(raw) == []
+
+
+# --- SourceRefsBlock + card links (openui-parity T1) -----------------------
+
+
+def test_source_refs_block_valid_web_and_doc_items() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "source_refs",
+                "title": "Sources",
+                "items": [
+                    {
+                        "title": "Example Article",
+                        "source": "example.com",
+                        "url": "https://example.com/article",
+                    },
+                    {
+                        "title": "Policy Doc",
+                        "document_id": "doc-123",
+                        "page": 4,
+                    },
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], SourceRefsBlock)
+    assert len(out[0].items) == 2
+    assert out[0].items[0].url == "https://example.com/article"
+    assert out[0].items[1].document_id == "doc-123"
+    assert out[0].items[1].page == 4
+
+
+def test_source_refs_item_extra_field_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "source_refs",
+                "items": [
+                    {"title": "x", "url": "https://example.com", "onclick": "evil()"}
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_source_ref_both_url_and_document_id_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "source_refs",
+                "items": [
+                    {"title": "x", "url": "https://example.com", "document_id": "doc-1"}
+                ],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_source_ref_neither_url_nor_document_id_dropped() -> None:
+    out = validate_blocks([{"type": "source_refs", "items": [{"title": "x"}]}])
+    assert out == []
+
+
+def test_source_ref_page_without_document_id_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "source_refs",
+                "items": [{"title": "x", "url": "https://example.com", "page": 5}],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_source_ref_javascript_url_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "source_refs",
+                "items": [{"title": "x", "url": "javascript:alert(1)"}],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_source_refs_too_many_items_dropped() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "source_refs",
+                "items": [{"title": "x", "url": "https://example.com"} for _ in range(25)],
+            }
+        ]
+    )
+    assert out == []
+
+
+def test_info_card_valid_url() -> None:
+    out = validate_blocks(
+        [{"type": "info_card", "title": "x", "url": "https://example.com/doc"}]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], InfoCardBlock)
+    assert out[0].url == "https://example.com/doc"
+
+
+def test_info_card_javascript_url_dropped() -> None:
+    out = validate_blocks(
+        [{"type": "info_card", "title": "x", "url": "javascript:alert(1)"}]
+    )
+    assert out == []
+
+
+def test_ranked_list_item_valid_url_and_image_ref() -> None:
+    out = validate_blocks(
+        [
+            {
+                "type": "ranked_list",
+                "items": [
+                    {
+                        "title": "Acme",
+                        "url": "https://acme.example.com",
+                        "image_ref": "img-1",
+                    }
+                ],
+            }
+        ]
+    )
+    assert len(out) == 1
+    assert isinstance(out[0], RankedListBlock)
+    assert out[0].items[0].url == "https://acme.example.com"
+    assert out[0].items[0].image_ref == "img-1"
+
+
+# --- Malformed top-level shapes: never raise, always [] --------------------
 
 
 @pytest.mark.parametrize(

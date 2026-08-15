@@ -24,9 +24,18 @@ from __future__ import annotations
 
 import math
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 # --- Global caps --------------------------------------------------------
 
@@ -89,6 +98,25 @@ _MAX_CHART_CELL_LEN = 500
 _MAX_CHART_ROW_KEYS = 30
 
 
+_MAX_URL_LEN = 2048
+
+
+def _valid_http_url(v: str | None) -> str | None:
+    """Shared trust-boundary check for every url-typed field: `None` passes
+    through; otherwise the value must be an http(s) URL with a non-empty
+    host and at most `_MAX_URL_LEN` characters, else validation fails (the
+    field -- and therefore the whole block -- is dropped by
+    `validate_blocks`, never raised to the caller)."""
+    if v is None:
+        return None
+    if len(v) > _MAX_URL_LEN:
+        raise ValueError("url exceeds maximum length")
+    parsed = urlparse(v)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("url must be an http(s) URL with a host")
+    return v
+
+
 def _row_is_finite(row: dict[str, _ChartValue]) -> bool:
     if len(row) > _MAX_CHART_ROW_KEYS:
         return False
@@ -144,6 +172,12 @@ class InfoCardBlock(BaseModel):
     subtitle: str | None = Field(default=None, max_length=_MAX_SUBTITLE)
     body: str | None = Field(default=None, max_length=_MAX_BODY)
     icon: IconName | None = None
+    url: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str | None) -> str | None:
+        return _valid_http_url(v)
 
 
 class ImageCardBlock(BaseModel):
@@ -164,6 +198,13 @@ class RankedListItem(BaseModel):
 
     title: str = Field(max_length=_MAX_TITLE)
     subtitle: str | None = Field(default=None, max_length=_MAX_SUBTITLE)
+    url: str | None = None
+    image_ref: str | None = Field(default=None, max_length=_MAX_IMAGE_REF)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str | None) -> str | None:
+        return _valid_http_url(v)
 
 
 class RankedListBlock(BaseModel):
@@ -172,6 +213,38 @@ class RankedListBlock(BaseModel):
     type: Literal["ranked_list"]
     title: str | None = Field(default=None, max_length=_MAX_TITLE)
     items: list[RankedListItem] = Field(max_length=_MAX_LIST_ITEMS)
+
+
+class SourceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(max_length=_MAX_TITLE)
+    source: str | None = Field(default=None, max_length=_MAX_SUBTITLE)
+    url: str | None = None
+    document_id: str | None = Field(default=None, max_length=64)
+    page: int | None = Field(default=None, ge=0, le=100000)
+    image_ref: str | None = Field(default=None, max_length=_MAX_IMAGE_REF)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str | None) -> str | None:
+        return _valid_http_url(v)
+
+    @model_validator(mode="after")
+    def _require_exactly_one_of_url_or_document_id(self) -> SourceRef:
+        if (self.url is None) == (self.document_id is None):
+            raise ValueError("exactly one of url or document_id must be set")
+        if self.document_id is None and self.page is not None:
+            raise ValueError("page requires document_id to be set")
+        return self
+
+
+class SourceRefsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["source_refs"]
+    title: str | None = Field(default=None, max_length=_MAX_TITLE)
+    items: list[SourceRef] = Field(max_length=_MAX_LIST_ITEMS)
 
 
 class TagBadge(BaseModel):
@@ -280,6 +353,7 @@ InnerBlock = Annotated[
     | InfoCardBlock
     | ImageCardBlock
     | RankedListBlock
+    | SourceRefsBlock
     | TagBadgesBlock
     | CalloutBlock
     | TableBlock
@@ -310,6 +384,7 @@ Block = Annotated[
     | InfoCardBlock
     | ImageCardBlock
     | RankedListBlock
+    | SourceRefsBlock
     | TagBadgesBlock
     | CalloutBlock
     | TableBlock
