@@ -36,7 +36,9 @@ _SAFE_PRODUCTION_KWARGS: dict[str, object] = {
     "litellm_master_key": "sk-a-real-litellm-master-key",
     "public_api_base_url": "https://api.example.com",
     "frontend_base_url": "https://app.example.com",
-    "kek_file": "/etc/ragz/kek",
+    # kek_file is injected from the real `kek_file` fixture below -- RAGZ-PUB-05's
+    # hardened validator now load_kek()s the path, so it must point at a real
+    # readable 32-byte KEK rather than a placeholder path.
 }
 
 
@@ -46,8 +48,8 @@ def test_settings() -> Settings:
 
 
 @pytest.fixture
-def production_settings() -> Settings:
-    return Settings(**_SAFE_PRODUCTION_KWARGS)  # type: ignore[arg-type]
+def production_settings(kek_file: str) -> Settings:
+    return Settings(**_SAFE_PRODUCTION_KWARGS, kek_file=kek_file)  # type: ignore[arg-type]
 
 
 @pytest.fixture
