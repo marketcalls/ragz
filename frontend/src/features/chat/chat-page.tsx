@@ -166,7 +166,13 @@ export function ChatPage() {
   const initialAttachmentIds = handoffState?.initialAttachmentIds ?? [];
   const initialWebSearch = handoffState?.initialWebSearch ?? false;
   useEffect(() => {
-    if (chatId && initialMessage && !initialSentRef.current) {
+    // Wait for a resolved model before auto-sending. On a fresh page load the
+    // models query is still pending when the create→navigate handoff arrives,
+    // so effectiveModelId is null; sending then omits model_id and the backend
+    // errors when the workspace has no default model — the classic "first
+    // message of a new chat silently disappears, second works" bug. Gating on
+    // effectiveModelId defers the send until models load, then fires once.
+    if (chatId && initialMessage && effectiveModelId && !initialSentRef.current) {
       initialSentRef.current = true;
       stream.send(
         initialMessage,
@@ -179,7 +185,7 @@ export function ChatPage() {
       navigate(location.pathname, { replace: true, state: null }); // consume the state
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount/handoff
-  }, [chatId, initialMessage]);
+  }, [chatId, initialMessage, effectiveModelId]);
 
   // Once the refetched tree contains the streamed message, drop the streamed block.
   const streamedInTree = useMemo(
