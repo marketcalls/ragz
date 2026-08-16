@@ -48,14 +48,14 @@ export function AssistantMessage({
   // composer (wired from chat-page.tsx). Absent (e.g. read-only contexts) --
   // BlockRenderer/FormBlockView render the form with submit disabled.
   onFormSubmit?: (message: string) => void;
-  // Task 6 (openui-parity design 2026-08-16, §6): a `follow_ups` chip's click
+  // Task 6 (generative-UI design 2026-08-16, §6): a `follow_ups` chip's click
   // sends its text as a normal chat message through the SAME send path --
   // mirrors onFormSubmit exactly (same value passed from chat-page.tsx).
   onFollowUp?: (message: string) => void;
 }) {
   const [highlightedN, setHighlightedN] = useState<number | null>(null);
 
-  // Fix C (openui-parity presentation polish): a `source_refs` block already
+  // Fix C (generative-UI presentation polish): a `source_refs` block already
   // renders the same sources as cards -- the legacy SourcePanel chips below
   // would just duplicate them, so suppress SourcePanel whenever one is present.
   const hasSourceRefsBlock = (blocks ?? []).some((b) => b.type === 'source_refs');

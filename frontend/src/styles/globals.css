@@ -6,8 +6,8 @@
 
 @layer base {
   body {
-    /* leading-normal (1.5) + a hair of letter-spacing: generous, openui-style
-       body rhythm (design-refresh) — was unset (browser default ~1.2). */
+    /* leading-normal (1.5) + a hair of letter-spacing: generous body rhythm
+       (design-refresh) — was unset (browser default ~1.2). */
     @apply bg-bg font-sans text-[14px] leading-normal tracking-[-0.006em] text-ink antialiased;
   }
   /* Accessibility (theme spec §5): visible accent focus ring, 2px offset, everywhere */

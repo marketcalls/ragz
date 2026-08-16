@@ -1,4 +1,4 @@
-"""Public image proxy (openui-parity Task 7). PUBLIC route -- see
+"""Public image proxy (generative UI Task 7). PUBLIC route -- see
 `modules/chat/media.py`'s module docstring for why: `<img src>` cannot carry
 a Bearer header, so the signed, time-limited `image_ref` IS the sole
 authorization gate (a capability URL, mirroring a signed S3 URL). No

@@ -1,5 +1,5 @@
 """Isolation/security tests for the SSRF-guarded image proxy + signed
-image_ref (openui-parity Task 7).
+image_ref (generative UI Task 7).
 
 The proxy is a CAPABILITY URL: the ref itself is the authorization (HMAC-signed
 with a KEK-derived key + an expiry inside the payload). The route is PUBLIC (no

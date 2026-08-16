@@ -647,7 +647,7 @@ def merge_chunks(*groups: Sequence[RetrievedChunk]) -> list[RetrievedChunk]:
     """Concatenate priority-ordered chunk groups (pinned, retrieved, backfilled),
     deduping on (document_id, page, chunk_index) — first occurrence wins, so a
     retrieved duplicate of a pinned chunk collapses into the pinned entry
-    (AnythingLLM's pinned-vs-search dedupe)."""
+    (pinned-vs-search dedupe)."""
     seen: set[tuple[UUID, int, int]] = set()
     out: list[RetrievedChunk] = []
     for group in groups:
@@ -1926,7 +1926,7 @@ async def stream_reply(
         # itself. generate_blocks is best-effort (never raises); only a
         # completer AND the global flag together run it at all.
         if completer is not None:
-            # openui-parity Task 8: generative_ui_images is superadmin-gated
+            # Generative UI Task 8: generative_ui_images is superadmin-gated
             # (default "off") and lives on the same provider settings we fetch
             # here to read the global generative_ui_enabled gate.
             provider_settings = await settings_service.get_provider_settings(session)

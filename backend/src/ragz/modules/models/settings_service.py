@@ -32,7 +32,7 @@ _WEB_SEARCH_PROVIDER_KEY = "web_search_provider"
 # Default ON. Stored as a string; "false"/"0"/"off" -> False, unset/other -> True.
 _WEB_SEARCH_FULL_CONTENT_KEY = "web_search_full_content"
 _DEFAULT_CHUNK_METHOD_KEY = "default_chunk_method"
-# openui-parity Task 8: gates the generative-UI image pipeline, default "off".
+# Generative UI Task 8: gates the generative-UI image pipeline, default "off".
 _GENERATIVE_UI_IMAGES_KEY = "generative_ui_images"
 # Global superadmin gate for in-chat generative UI (the visualize step),
 # default ON. Stored as a string; "false"/"0"/"off" -> False, unset/other -> True.

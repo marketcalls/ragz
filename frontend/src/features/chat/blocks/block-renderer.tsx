@@ -305,7 +305,7 @@ function InfoCard({ block }: { block: InfoCardBlockT }) {
       </div>
     </div>
   );
-  // Design 2026-08-16 (openui parity, §3.1): an optional http(s) `url` makes
+  // Design 2026-08-16 (generative-UI parity, §3.1): an optional http(s) `url` makes
   // the whole card an external link; anything else (absent, non-http) keeps
   // the card as inert display -- never a javascript:/data: href.
   if (isHttpUrl(block.url)) {
@@ -592,12 +592,12 @@ export function BlockRenderer({
   // chat-page.tsx down through AssistantMessage). Absent in contexts with
   // no send path -- the form still renders but submit is a disabled no-op.
   onFormSubmit?: (message: string) => void;
-  // Task 6 (openui-parity design 2026-08-16, §6): a `follow_ups` chip's click
+  // Task 6 (generative-UI design 2026-08-16, §6): a `follow_ups` chip's click
   // sends its text as a normal chat message through the SAME send path as
   // onFormSubmit (wired from chat-page.tsx's onSend, exactly mirroring
   // onFormSubmit's wiring). Absent -- the chips still render but disabled.
   onFollowUp?: (message: string) => void;
-  // openui-parity design (2026-08-16, Task 4): source_refs/article_card doc
+  // generative-UI design (2026-08-16, Task 4): source_refs/article_card doc
   // items open the SAME in-app document viewer as citation chips
   // (source-panel.tsx's SourceChipData). Absent in contexts with no viewer
   // -- the button/card still renders but the click is a no-op.

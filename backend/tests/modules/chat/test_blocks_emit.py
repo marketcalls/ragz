@@ -199,7 +199,7 @@ def test_system_prompt_source_refs_item_may_carry_image_ref() -> None:
     assert "source item may also carry an image_ref" in _SYSTEM_PROMPT
 
 
-# --- openui-parity T-A: steps/buttons/carousel, new chart kinds, slider/radio
+# --- Task A: steps/buttons/carousel, new chart kinds, slider/radio
 
 
 def test_system_prompt_documents_new_block_shapes_and_field_kinds() -> None:

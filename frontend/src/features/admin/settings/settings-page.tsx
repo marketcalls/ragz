@@ -227,7 +227,7 @@ export function SettingsPage() {
                 </label>
                 <p className="mt-1 text-xs text-muted">
                   Render answers as visual cards, tables, charts, source cards &amp; follow-ups
-                  (openui-style) instead of plain text. Global; applies to every workspace.
+                  instead of plain text. Global; applies to every workspace.
                 </p>
               </div>
               <div>

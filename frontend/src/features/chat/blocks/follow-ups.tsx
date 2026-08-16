@@ -1,6 +1,6 @@
 import type { FollowUpsBlock as FollowUpsBlockT } from '@/api/types';
 
-// Task 6 (openui-parity design 2026-08-16, §6): follow-up suggestion chips
+// Task 6 (generative-UI design 2026-08-16, §6): follow-up suggestion chips
 // under an assistant message. Clicking a chip sends its text as a new chat
 // turn -- mirrors FormBlockView's onSubmit exactly (same send path, same
 // "absent -> render disabled, never a silent no-op button" contract).

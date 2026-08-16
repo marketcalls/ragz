@@ -11,7 +11,7 @@ import { cn } from '@/lib/cn';
 // history shows no section at all. That's an accepted gap, not a bug: the
 // underlying citations/answer are unaffected.
 //
-// Web-search results render as openui-inspired source cards: favicon +
+// Web-search results render as source cards: favicon +
 // hostname header, title link, and a short snippet of context.
 
 function isHttpUrl(url: string): boolean {

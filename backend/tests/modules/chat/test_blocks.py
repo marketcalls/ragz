@@ -826,7 +826,7 @@ def test_non_list_top_level_returns_empty(raw: object) -> None:
     assert validate_blocks(raw) == []
 
 
-# --- SourceRefsBlock + card links (openui-parity T1) -----------------------
+# --- SourceRefsBlock + card links (Task 1) ----------------------------------
 
 
 def test_source_refs_block_valid_web_and_doc_items() -> None:
@@ -964,7 +964,7 @@ def test_ranked_list_item_valid_url_and_image_ref() -> None:
     assert out[0].items[0].image_ref == "img-1"
 
 
-# --- ArticleCardBlock: standard + hero (openui-parity T2) ------------------
+# --- ArticleCardBlock: standard + hero (Task 2) -----------------------------
 
 
 def test_article_card_standard_valid() -> None:
@@ -1141,7 +1141,7 @@ def test_validate_blocks_never_raises(raw: object) -> None:
     assert isinstance(result, list)
 
 
-# --- FollowUpsBlock + AccordionBlock (openui-parity T5) --------------------
+# --- FollowUpsBlock + AccordionBlock (Task 5) --------------------------------
 
 
 def test_follow_ups_block_valid() -> None:
@@ -1285,7 +1285,7 @@ def test_accordion_extra_field_dropped() -> None:
     assert out == []
 
 
-# --- New chart kinds: openui-parity T-A ------------------------------------
+# --- New chart kinds: Task A -------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -1351,7 +1351,7 @@ def test_new_chart_kind_nan_value_dropped(chart_kind: str) -> None:
     assert out == []
 
 
-# --- StepsBlock: openui-parity T-A ------------------------------------------
+# --- StepsBlock: Task A -------------------------------------------------------
 
 
 def test_steps_block_valid() -> None:
@@ -1408,7 +1408,7 @@ def test_steps_nested_inside_tab_valid() -> None:
     assert isinstance(out[0].tabs[0].blocks[0], StepsBlock)
 
 
-# --- ButtonsBlock: openui-parity T-A ----------------------------------------
+# --- ButtonsBlock: Task A ------------------------------------------------------
 
 
 def test_buttons_block_valid() -> None:
@@ -1474,7 +1474,7 @@ def test_buttons_nested_inside_tab_valid() -> None:
     assert isinstance(out[0].tabs[0].blocks[0], ButtonsBlock)
 
 
-# --- CarouselBlock: top-level only, openui-parity T-A -----------------------
+# --- CarouselBlock: top-level only, Task A -----------------------------------
 
 
 def test_carousel_block_valid() -> None:

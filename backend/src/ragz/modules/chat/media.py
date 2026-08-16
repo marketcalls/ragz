@@ -1,4 +1,4 @@
-"""Signed capability URLs for proxied images (openui-parity Task 7).
+"""Signed capability URLs for proxied images (generative UI Task 7).
 
 Images are rendered via `<img src>`, which cannot carry the app's Bearer
 header, so the browser reaches the proxy route directly and unauthenticated

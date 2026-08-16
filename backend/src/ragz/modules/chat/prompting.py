@@ -234,7 +234,7 @@ class BudgetSplit:
 
 
 def split_budget(budget: int) -> BudgetSplit:
-    """AnythingLLM's 15/15/70 split adapted to our message shape: system 15%,
+    """A 15/15/70 context split adapted to our message shape: system 15%,
     sources+question 70%, history 15%. The split CAPS system and sources;
     build_messages hands history everything actually left over."""
     system = int(budget * SYSTEM_FRACTION)
@@ -533,8 +533,8 @@ def _cannonball_chars(text: str, max_tokens: int) -> str:
 
 
 def cannonball(text: str, max_tokens: int, model_hint: str | None = None) -> str:
-    """Middle-out truncation for a single oversized text (AnythingLLM's
-    "cannonball"): keep the head and tail halves and splice CANNONBALL_MARKER
+    """Middle-out truncation for a single oversized text (the "cannonball"
+    technique): keep the head and tail halves and splice CANNONBALL_MARKER
     over the middle. Head+tail carry the intro and conclusion — the highest-
     signal parts of most prose. Returns `text` unchanged when it already fits.
     Falls back to a character-proportional split when tiktoken is unavailable

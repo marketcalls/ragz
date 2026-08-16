@@ -150,7 +150,7 @@ class WebResult:
     title: str
     url: str
     snippet: str
-    # Best-effort, provider-supplied preview image (openui-parity Task 8).
+    # Best-effort, provider-supplied preview image (generative UI Task 8).
     # Only TavilySearcher ever populates this; every other provider leaves it
     # None, which is byte-identical to pre-Task-8 behavior.
     image_url: str | None = None

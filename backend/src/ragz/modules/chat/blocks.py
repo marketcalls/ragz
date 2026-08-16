@@ -343,7 +343,7 @@ class FormField(BaseModel):
     label: str = Field(max_length=_MAX_FORM_FIELD_LABEL)
     kind: FormFieldKind
     options: list[str] | None = Field(default=None, max_length=_MAX_FORM_OPTIONS)
-    # Per-option subtitle text for card_select tiles (openui-parity T10).
+    # Per-option subtitle text for card_select tiles (generative UI Task 10).
     # Bounded and validated the same way as `options`, but not required to
     # be present, and not required to match `options` in length -- an
     # absent or mismatched entry just means the frontend renders no
@@ -351,7 +351,7 @@ class FormField(BaseModel):
     option_details: list[str] | None = Field(default=None, max_length=_MAX_FORM_OPTIONS)
     required: bool = False
     placeholder: str | None = Field(default=None, max_length=_MAX_FORM_PLACEHOLDER)
-    # slider-only bounds (openui-parity T-A); ignored by every other kind.
+    # slider-only bounds (generative UI Task A); ignored by every other kind.
     min: float | None = None
     max: float | None = None
     step: float | None = None

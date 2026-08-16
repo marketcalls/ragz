@@ -46,7 +46,7 @@ class SourceInput:
     url: str | None = None
     document_id: str | None = None
     page: int | None = None
-    # openui-parity Task 8: a signed image_ref (modules/chat/media.py) already
+    # Generative UI Task 8: a signed image_ref (modules/chat/media.py) already
     # minted by the caller for this source's image, when the superadmin
     # `generative_ui_images` setting is on and the source had one. The model
     # may only echo this exact value into a block -- it never mints or

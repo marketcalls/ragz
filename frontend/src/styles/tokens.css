@@ -1,66 +1,66 @@
 /* Design tokens — the single source of truth (theme spec §2).
-   Sitewide theme: openui (thesys) — a calm, monochrome, low-noise system.
+   Sitewide theme: a calm, monochrome, low-noise system.
    Surfaces are layered off-white/white (light) and near-black (dark); the
    interactive accent is monochrome (near-black in light, near-white in dark,
-   like openui's black/white buttons); borders are ~6% alpha hairlines; type is
-   Inter (loaded in main.tsx). Values mirror openui-defaults.scss (oklch),
-   converted to hex/rgba to match this file's format.
+   for a black/white button look); borders are ~6% alpha hairlines; type is
+   Inter (loaded in main.tsx). Values are hex/rgba, converted from oklch
+   during design.
 
    White-label rule (§4): org branding may rewrite --accent/--accent-soft (+ dark
    variants) only. Components never reference raw accent hexes. */
 
 :root {
-  /* Surfaces — openui layers a slightly-recessed off-white page under whiter,
+  /* Surfaces — a slightly-recessed off-white page sits under whiter,
      lifted cards (background 0.97 → foreground/popover 0.994). */
-  --bg: #f6f6f5;          /* openui background (page canvas) */
-  --bg-sidebar: #f1f1ef;  /* openui sunk — sidebar sits below the page */
+  --bg: #f6f6f5;          /* background (page canvas) */
+  --bg-sidebar: #f1f1ef;  /* sunk — sidebar sits below the page */
   --bg-subtle: #ececeb;   /* recessed fills: inputs, hover rows, chips */
-  --bg-raised: #ffffff;   /* openui foreground/popover — cards lift off the page */
+  --bg-raised: #ffffff;   /* foreground/popover — cards lift off the page */
 
   /* Borders: ~6% alpha overlays of --text so one scale composes over every
-     surface (openui border-default 0.06 / interactive 0.12). */
+     surface (border-default 0.06 / interactive 0.12). */
   --border: rgba(23, 23, 23, 0.06);
   --border-strong: rgba(23, 23, 23, 0.12);
   --border-faint: rgba(23, 23, 23, 0.04);
 
-  --text: #171717;                     /* openui text-neutral-primary */
+  --text: #171717;                     /* text-neutral-primary */
   --text-secondary: rgba(23, 23, 23, 0.56);
   --text-muted: rgba(23, 23, 23, 0.4); /* meta/decorative only */
 
-  /* Accent — monochrome (openui interactive-accent 0.097). Drives links, focus
+  /* Accent — monochrome (interactive-accent 0.097). Drives links, focus
      rings, selected states, and marker chips; primary buttons already use
      --text/--bg. Links get their affordance from underline, not hue. */
   --accent: #171717;
-  --accent-soft: rgba(23, 23, 23, 0.06);  /* openui highlight/elevated overlay */
+  --accent-soft: rgba(23, 23, 23, 0.06);  /* highlight/elevated overlay */
   --accent-on-soft: #171717;
 
   /* Chart primary series — data viz stays colorful even though the UI accent is
-     monochrome (openui charts are colored too). Read only by chart-palette.ts. */
+     monochrome (charts stay colored too). Read only by chart-palette.ts. */
   --chart-accent: #3b82f6;
 
-  /* Semantic status — openui success/danger/alert hues. */
+  /* Semantic status — success/danger/alert hues. */
   --success: #1f8a4c;
   --success-soft: rgba(31, 138, 76, 0.1);
   --danger: #d23a34;
   --danger-soft: rgba(210, 58, 52, 0.1);
   --warning: #9a6a16;
   --warning-soft: rgba(224, 168, 64, 0.16);
-  --scrim: rgba(0, 0, 0, 0.4);          /* openui overlay */
+  --scrim: rgba(0, 0, 0, 0.4);          /* overlay */
 
-  /* shape & elevation (theme spec §2.4) — openui radius s/m/l/2xl. */
+  /* shape & elevation (theme spec §2.4) — radius s/m/l/2xl. */
   --r-sm: 6px;
   --r-md: 8px;
   --r-lg: 10px;
   --r-xl: 14px;
 
-  /* Soft, multi-layer, low-opacity shadows (openui elevation). */
+  /* Soft, multi-layer, low-opacity shadows. */
   --shadow-sm: 0 1px 2px rgba(23, 23, 23, 0.04), 0 1px 1px rgba(23, 23, 23, 0.03);
   --shadow-md: 0 4px 8px -2px rgba(23, 23, 23, 0.08), 0 2px 4px -2px rgba(23, 23, 23, 0.04);
   --shadow-soft: var(--shadow-sm);
 }
 
 .dark {
-  /* Near-black surfaces (openui background 0.145), cards lifted just above. */
+  /* Near-black surfaces (background 0.145), cards lifted just above. */
   --bg: #1a1a1a;
   --bg-sidebar: #141414;
   --bg-subtle: #262626;
@@ -71,11 +71,11 @@
   --border-strong: rgba(250, 250, 250, 0.14);
   --border-faint: rgba(250, 250, 250, 0.05);
 
-  --text: #fafafa;                       /* openui dark text-neutral-primary */
+  --text: #fafafa;                       /* dark text-neutral-primary */
   --text-secondary: rgba(250, 250, 250, 0.56);
   --text-muted: rgba(250, 250, 250, 0.4);
 
-  /* Accent flips to near-white on dark (openui interactive-accent 0.994) — the
+  /* Accent flips to near-white on dark (interactive-accent 0.994) — the
      white-button-on-dark look. */
   --accent: #fafafa;
   --accent-soft: rgba(250, 250, 250, 0.09);
@@ -90,7 +90,7 @@
   --warning-soft: rgba(217, 164, 65, 0.15);
   --scrim: rgba(0, 0, 0, 0.6);
 
-  /* Dark shadows read stronger against a dark surface (openui light/dark ratio). */
+  /* Dark shadows read stronger against a dark surface (light/dark ratio). */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.16);
   --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.36), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
   --shadow-soft: var(--shadow-sm);

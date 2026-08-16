@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 import type { SourceRefItem, SourceRefsBlock as SourceRefsBlockT } from '@/api/types';
 
-// Copied from behind-the-scenes.tsx (openui-parity design 2026-08-16, §6):
+// Copied from behind-the-scenes.tsx (generative-UI design 2026-08-16, §6):
 // the same http(s)-only guard, re-applied at render time. The backend
 // already validates SourceRef.url as http(s)-only, but this renderer never
 // trusts a model-authored field without re-checking (Iron Rule 5).

@@ -102,7 +102,7 @@ class ToolResultItem:
     `www.` stripped) so the card can right-align it next to the title
     without the frontend fetching or parsing anything itself. `snippet` is the
     result's short excerpt (bounded server-side) so the card can show a line of
-    context under the title, openui-style, without a second fetch."""
+    context under the title, matching the card's title styling, without a second fetch."""
 
     title: str
     url: str

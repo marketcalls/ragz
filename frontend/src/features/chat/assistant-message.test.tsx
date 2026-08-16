@@ -105,7 +105,7 @@ test('agentSteps present (the live-turn path) renders the "Behind the scenes" to
   expect(screen.getByText('Behind the scenes')).toBeInTheDocument();
 });
 
-// Fix C (openui-parity presentation polish): when the answer already renders
+// Fix C (generative-UI presentation polish): when the answer already renders
 // a source_refs generative-UI block, the legacy SourcePanel chips would
 // otherwise duplicate the same sources below it.
 test('a source_refs block suppresses the legacy SourcePanel (no duplicate source chips)', () => {

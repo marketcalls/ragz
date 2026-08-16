@@ -15,7 +15,7 @@ ReasoningEffort = Literal["off", "low", "medium", "high"]
 
 ModelModality = Literal["chat", "embedding"]
 
-# openui-parity Task 8: gates the generative-UI image pipeline (superadmin
+# Generative UI Task 8: gates the generative-UI image pipeline (superadmin
 # global, default "off"). "web_results" surfaces images already present in
 # the turn's web-search results (Tavily); off -> no image fetch, no minting.
 GenerativeUiImages = Literal["off", "web_results"]

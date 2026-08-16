@@ -100,9 +100,9 @@ function shiftLightness(hex: string, t: number): string {
 /** Center-out selection of n colors from a ramp: short lists land on the
  * ramp's saturated middle instead of always starting at index 0, and longer
  * lists take a contiguous (wrapped) window around that center so adjacent
- * series stay visually separated. Ported from openui's PalletUtils
- * `getDistributedColors` (MIT, idea only — this is a from-scratch TS port
- * against our own tokens, not copied Recharts v2 code). */
+ * series stay visually separated. Idea ported from a reference PalletUtils
+ * `getDistributedColors` helper (MIT, idea only — this is a from-scratch TS
+ * port against our own tokens, not copied Recharts v2 code). */
 export function getDistributedColors(colors: string[], n: number): string[] {
   if (colors.length === 0 || n <= 0) return [];
   const wrap = (i: number) => ((i % colors.length) + colors.length) % colors.length;

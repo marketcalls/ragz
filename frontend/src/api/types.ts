@@ -145,14 +145,14 @@ export type TabItem = components['schemas']['TabItem'];
 // TabItem.blocks.
 export type FormBlock = components['schemas']['FormBlock'];
 export type FormField = components['schemas']['FormField'];
-// Phase 1 (openui-parity design 2026-08-16, Task 4): the "Sources" strip and
+// Phase 1 (generative-UI design 2026-08-16, Task 4): the "Sources" strip and
 // the article/photo-hero card. Both join InnerBlock (renderable inside a
 // tab) on the backend; SourceRef items carry EITHER url (web) OR
 // document_id/page (local doc), never both -- ArticleCard allows at most one.
 export type SourceRefsBlock = components['schemas']['SourceRefsBlock'];
 export type SourceRefItem = components['schemas']['SourceRef'];
 export type ArticleCardBlock = components['schemas']['ArticleCardBlock'];
-// Task 6 (openui-parity design 2026-08-16): follow-up suggestion chips and a
+// Task 6 (generative-UI design 2026-08-16): follow-up suggestion chips and a
 // foldable accordion (visual family shared with TabsView). AccordionItem.blocks
 // join InnerBlock on the backend -- same static depth cap as TabItem.blocks
 // (an accordion item's blocks can never themselves contain a tabs/accordion).

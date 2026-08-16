@@ -60,8 +60,8 @@ export default {
       },
       maxWidth: { thread: '720px' },
       // Motion (design-refresh): consistent, subtle open/close easing for
-      // Radix overlays — driven by data-state, matching openui's panel
-      // transitions (cubic-bezier(0.4,0,0.2,1)). `prefers-reduced-motion` is
+      // Radix overlays — driven by data-state, using a calm panel
+      // transition (cubic-bezier(0.4,0,0.2,1)). `prefers-reduced-motion` is
       // handled globally in globals.css, which forces near-zero durations.
       keyframes: {
         'overlay-in': { from: { opacity: '0' }, to: { opacity: '1' } },

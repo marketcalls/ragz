@@ -2,7 +2,7 @@
 //
 // Charts previously hard-set `isAnimationActive={false}` everywhere, so they
 // popped in with no motion. Recharts animates on mount when this is enabled —
-// a soft ease-out grow/sweep, matching openui's polished feel.
+// a soft ease-out grow/sweep for a polished feel.
 //
 // Disabled in two cases:
 //  - under test (jsdom drives recharts' requestAnimationFrame-based animation

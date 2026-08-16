@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8');
 const [lightBlock = '', darkBlock = ''] = css.split('.dark');
 
-// openui theme (§2). Surfaces layered off-white/white (light) & near-black
+// theme tokens (§2). Surfaces layered off-white/white (light) & near-black
 // (dark); monochrome interactive accent; ~6% alpha hairlines.
 const LIGHT: Record<string, string> = {
   '--bg': '#f6f6f5',

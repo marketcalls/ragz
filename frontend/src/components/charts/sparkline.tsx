@@ -5,7 +5,7 @@ import { useChartPalette } from '@/lib/chart-palette';
 const MARGIN = { top: 2, right: 0, bottom: 0, left: 0 };
 
 /** Tiny, axis-less, legend-less chart for embedding inline in a KPI tile
- * (openui Mini{Line,Bar,Area}Chart idea). Fixed small height — the parent
+ * (a mini line/bar/area chart idea). Fixed small height — the parent
  * controls width. */
 export function Sparkline({
   data, variant = 'line',

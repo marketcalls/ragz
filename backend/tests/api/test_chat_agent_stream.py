@@ -748,7 +748,7 @@ async def test_generative_ui_emits_source_refs_block_from_real_citations(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
 ) -> None:
-    """Task 3 (openui-parity): the visualize completer is scripted to return
+    """Task 3 (generative UI): the visualize completer is scripted to return
     a valid source_refs block; the `blocks` SSE frame carries it through
     exactly as validate_blocks produced it. Chosen e2e over a service-level
     test because the existing FakeCompleter/create_app fixtures here already
@@ -803,7 +803,7 @@ async def test_generative_ui_images_setting_mints_image_ref_for_web_source(
     engine: AsyncEngine, redis_client: Redis, test_settings: Settings, chat_env: dict[str, Any],
     seeded_user: Any, seeded_superadmin: Any, session: AsyncSession,
 ) -> None:
-    """openui-parity Task 8: with the superadmin `generative_ui_images`
+    """Task 8: with the superadmin `generative_ui_images`
     setting on ("web_results") and a web turn whose FakeWebSearcher result
     carries an image_url, the visualize step's "Available sources" payload
     (the SourceInput -> _build_messages JSON actually sent to the completer)

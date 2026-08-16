@@ -7,7 +7,7 @@ import { cn } from '@/lib/cn';
 import { BlockRenderer } from './block-renderer';
 import type { SourceChipData } from '../source-panel';
 
-// Task 6 (openui-parity design 2026-08-16, §6): a foldable accordion,
+// Task 6 (generative-UI design 2026-08-16, §6): a foldable accordion,
 // visual family shared with TabsView (chevron pattern mirrors
 // behind-the-scenes.tsx's StepCard/BehindTheScenes toggles). Sections open
 // independently -- local Set<number> of open indices, not a single active
