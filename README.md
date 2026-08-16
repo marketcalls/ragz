@@ -5,6 +5,10 @@ questions, get cited answers — with rich generative-UI responses (cards, chart
 tables, source cards), optional web search, and enterprise access control.
 FastAPI + React + Qdrant + LiteLLM + Postgres. AGPL-3.0.
 
+📖 **Documentation: [ragz.net](https://ragz.net)** — installation guides
+(Linux / macOS / Windows / Docker), configuration, models & parsers, RBAC, the
+API reference, and production deployment.
+
 ---
 
 ## What you get
@@ -111,7 +115,8 @@ exposing it beyond localhost:
 4. **Scale** by adding Celery workers (ingestion) and uvicorn processes (chat).
    Move Postgres to a managed instance with its own backups for real traffic.
 
-Full sizing and air-gapped notes are in `deploy/`.
+Full sizing, air-gapped, and hardening notes:
+**[ragz.net/docs/deploy/production](https://ragz.net/docs/deploy/production)**.
 
 ---
 
