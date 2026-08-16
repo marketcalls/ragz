@@ -1269,11 +1269,12 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Org */
+        delete: operations["delete_org_api_v1_admin_orgs__org_id__delete"];
         options?: never;
         head?: never;
-        /** Rename Org */
-        patch: operations["rename_org_api_v1_admin_orgs__org_id__patch"];
+        /** Update Org */
+        patch: operations["update_org_api_v1_admin_orgs__org_id__patch"];
         trace?: never;
     };
     "/api/v1/admin/roles": {
@@ -3620,6 +3621,14 @@ export interface components {
         OrgCreate: {
             /** Name */
             name: string;
+            /** Contact Email */
+            contact_email?: string | null;
+            /** Industry */
+            industry?: string | null;
+            /** Company Size */
+            company_size?: string | null;
+            /** Country */
+            country?: string | null;
         };
         /** OrgOut */
         OrgOut: {
@@ -3632,6 +3641,14 @@ export interface components {
             name: string;
             /** Sso Domains */
             sso_domains: string[] | null;
+            /** Contact Email */
+            contact_email: string | null;
+            /** Industry */
+            industry: string | null;
+            /** Company Size */
+            company_size: string | null;
+            /** Country */
+            country: string | null;
         };
         /** OrgQuotaIn */
         OrgQuotaIn: {
@@ -3659,10 +3676,18 @@ export interface components {
             /** Reset Day */
             reset_day: number;
         };
-        /** OrgRename */
-        OrgRename: {
+        /** OrgUpdate */
+        OrgUpdate: {
             /** Name */
-            name: string;
+            name?: string | null;
+            /** Contact Email */
+            contact_email?: string | null;
+            /** Industry */
+            industry?: string | null;
+            /** Company Size */
+            company_size?: string | null;
+            /** Country */
+            country?: string | null;
         };
         /** OrgUsage */
         OrgUsage: {
@@ -6908,7 +6933,36 @@ export interface operations {
             };
         };
     };
-    rename_org_api_v1_admin_orgs__org_id__patch: {
+    delete_org_api_v1_admin_orgs__org_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_org_api_v1_admin_orgs__org_id__patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -6919,7 +6973,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OrgRename"];
+                "application/json": components["schemas"]["OrgUpdate"];
             };
         };
         responses: {

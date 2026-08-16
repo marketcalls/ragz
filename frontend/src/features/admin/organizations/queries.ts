@@ -6,6 +6,14 @@ import { problemDetail } from '@/features/auth/mutations';
 
 export type Organization = OrgOut;
 
+// The optional profile fields shared by OrgCreate/OrgUpdate.
+export interface OrgProfileFields {
+  contact_email?: string | null;
+  industry?: string | null;
+  company_size?: string | null;
+  country?: string | null;
+}
+
 // GET/POST/PATCH /api/v1/admin/orgs (M1): superadmin-only org list/create/rename.
 // Shares the ['admin', 'orgs'] query key with features/admin/sso/queries.ts's
 // useAdminOrgs -- same endpoint, same cache entry, so a create/rename here is
@@ -35,8 +43,8 @@ function useInvalidateOrganizations() {
 export function useCreateOrganization() {
   const invalidate = useInvalidateOrganizations();
   return useMutation({
-    mutationFn: async (name: string): Promise<Organization> => {
-      const { data, error } = await api.POST('/api/v1/admin/orgs', { body: { name } });
+    mutationFn: async (input: { name: string } & OrgProfileFields): Promise<Organization> => {
+      const { data, error } = await api.POST('/api/v1/admin/orgs', { body: input });
       if (error) throw new Error(problemDetail(error));
       return data;
     },
@@ -44,16 +52,35 @@ export function useCreateOrganization() {
   });
 }
 
-export function useRenameOrganization() {
+export function useUpdateOrganization() {
   const invalidate = useInvalidateOrganizations();
   return useMutation({
-    mutationFn: async (input: { orgId: string; name: string }): Promise<Organization> => {
+    mutationFn: async (
+      input: { orgId: string; name?: string } & OrgProfileFields,
+    ): Promise<Organization> => {
+      const { orgId, ...body } = input;
       const { data, error } = await api.PATCH('/api/v1/admin/orgs/{org_id}', {
-        params: { path: { org_id: input.orgId } },
-        body: { name: input.name },
+        params: { path: { org_id: orgId } },
+        body,
       });
       if (error) throw new Error(problemDetail(error));
       return data;
+    },
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteOrganization() {
+  const invalidate = useInvalidateOrganizations();
+  return useMutation({
+    mutationFn: async (orgId: string): Promise<void> => {
+      const { error } = await api.DELETE('/api/v1/admin/orgs/{org_id}', {
+        params: { path: { org_id: orgId } },
+      });
+      // 403 "can't delete your own org" / 409 "org still has workspaces or
+      // users" surface here verbatim via problemDetail -- callers toast
+      // err.message.
+      if (error) throw new Error(problemDetail(error));
     },
     onSuccess: invalidate,
   });

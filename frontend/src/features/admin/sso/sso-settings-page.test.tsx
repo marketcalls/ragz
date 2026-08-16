@@ -23,8 +23,24 @@ const ssoConfig: SsoConfig = {
 };
 
 const orgs: AdminOrg[] = [
-  { id: 'org-1', name: 'Acme', sso_domains: ['acme.com'] },
-  { id: 'org-2', name: 'Globex', sso_domains: null },
+  {
+    id: 'org-1',
+    name: 'Acme',
+    sso_domains: ['acme.com'],
+    contact_email: null,
+    industry: null,
+    company_size: null,
+    country: null,
+  },
+  {
+    id: 'org-2',
+    name: 'Globex',
+    sso_domains: null,
+    contact_email: null,
+    industry: null,
+    company_size: null,
+    country: null,
+  },
 ];
 
 const putSsoSpy = vi.fn();

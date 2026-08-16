@@ -13,8 +13,9 @@ vi.mock('../organizations/queries', () => ({
 
 import { InviteDialog } from './invite-dialog';
 
-const orgA: Organization = { id: 'o1', name: 'Acme Corp', sso_domains: null };
-const orgB: Organization = { id: 'o2', name: 'Globex', sso_domains: null };
+const orgProfile = { contact_email: null, industry: null, company_size: null, country: null };
+const orgA: Organization = { id: 'o1', name: 'Acme Corp', sso_domains: null, ...orgProfile };
+const orgB: Organization = { id: 'o2', name: 'Globex', sso_domains: null, ...orgProfile };
 
 const b64 = (o: object) =>
   btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
