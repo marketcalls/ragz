@@ -1,6 +1,7 @@
 import { BarChart3, FileText, Gauge, ShieldCheck } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
+import { Logo } from '@/components/logo';
 import { cn } from '@/lib/cn';
 import { useAuthorization } from '@/lib/use-authorization';
 import { useClaims } from '@/lib/use-claims';
@@ -41,7 +42,7 @@ export function Sidebar() {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex items-center gap-2 px-3 pb-1 pt-3">
-        <span aria-hidden className="h-4 w-4 rounded-sm bg-accent" />
+        <Logo className="h-4 w-4" />
         <span className="text-[14px] font-semibold tracking-[-0.01em] text-ink">Ragz</span>
       </div>
       <div className="px-2 py-2">

@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom';
 
+import { Logo } from '@/components/logo';
+
 const GH = 'https://github.com/marketcalls/ragz';
 
 const FEATURES: { n: string; title: string; body: string }[] = [
@@ -20,7 +22,10 @@ const FEATURES: { n: string; title: string; body: string }[] = [
 function PillNav() {
   return (
     <div className="sticky top-4 z-10 mx-auto flex max-w-5xl items-center justify-between rounded-full border border-line bg-raised px-4 py-2 backdrop-blur">
-      <span className="pl-2 text-lg font-bold tracking-tight text-ink">Ragz</span>
+      <span className="flex items-center gap-2 pl-2 text-lg font-bold tracking-tight text-ink">
+        <Logo className="h-5 w-5" />
+        Ragz
+      </span>
       <nav className="hidden items-center gap-6 text-sm text-secondary sm:flex">
         <a href="#features" className="hover:text-ink">Features</a>
         <a href={GH} className="hover:text-ink" target="_blank" rel="noreferrer">Docs</a>
