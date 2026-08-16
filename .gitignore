@@ -33,3 +33,6 @@ docs/audit/
 
 # Log files (runtime: uvicorn/celery worker+beat+reindex, *.dev.log, *.run.log) — never commit
 *.log
+
+# Standalone Ragz portal site (its own project/deploy; not part of the platform repo)
+ragz-portal/
