@@ -45,8 +45,13 @@ from ragz.modules.secrets import service as secrets_service
 logger = structlog.get_logger()
 
 TAVILY_SECRET_NAME = "tavily"  # noqa: S105 - a secret NAME, not a secret
-_MAX_RESULTS = 5
+_MAX_RESULTS = 10
 _SNIPPET_CHARS = 500
+# Full-page-content budget: how many chars of extracted page text one result's
+# snippet may hold (much larger than _SNIPPET_CHARS -- real page text, not an
+# excerpt) and how many of the top results get that treatment.
+_CONTENT_CHARS = 6000
+_FULL_CONTENT_TOP_N = 3
 _IMAGE_URL_MAX_CHARS = 2048  # mirrors blocks.py's _MAX_URL_LEN
 
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
@@ -176,7 +181,16 @@ class TavilySearcher:
         key = await secrets_service._get_secret_decrypted(  # noqa: SLF001
             session, name=TAVILY_SECRET_NAME, settings=self._settings
         )
-        payload = {"query": query, "max_results": _MAX_RESULTS, "include_images": True}
+        payload = {
+            "query": query,
+            "max_results": _MAX_RESULTS,
+            "include_images": True,
+            # Ask Tavily for the full extracted page content natively (it does
+            # its own server-side fetch + extraction), so we do NOT run the
+            # web_content fetcher for Tavily results.
+            "search_depth": "advanced",
+            "include_raw_content": True,
+        }
         headers = {"Authorization": f"Bearer {key}"}
         try:
             async with httpx.AsyncClient(
@@ -203,11 +217,18 @@ class TavilySearcher:
             image_url = (
                 _normalize_image_url(raw_images[idx]) if idx < len(raw_images) else None
             )
+            # Prefer Tavily's natively-extracted full page content when present
+            # (raw_content); fall back to the short `content` excerpt otherwise.
+            raw_content = item.get("raw_content")
+            if raw_content:
+                snippet = str(raw_content)[:_CONTENT_CHARS]
+            else:
+                snippet = str(item.get("content") or "")[:_SNIPPET_CHARS]
             results.append(
                 WebResult(
                     title=str(item.get("title") or url)[:200],
                     url=url,
-                    snippet=str(item.get("content") or "")[:_SNIPPET_CHARS],
+                    snippet=snippet,
                     image_url=image_url,
                 )
             )
@@ -242,8 +263,19 @@ class DuckDuckGoSearcher:
 
     billable = False  # keyless, free provider -- never metered for cost
 
-    def __init__(self, *, max_results: int = _MAX_RESULTS) -> None:
+    def __init__(
+        self,
+        *,
+        max_results: int = _MAX_RESULTS,
+        full_content: bool = True,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._max_results = max_results
+        # When True, the top few snippet-only results are enriched with their
+        # actual page text via the SSRF-guarded web_content fetcher. `transport`
+        # is an injectable seam for tests (see media._pin_transport).
+        self._full_content = full_content
+        self._transport = transport
 
     async def __call__(self, session: AsyncSession, query: str) -> list[WebResult]:
         try:
@@ -264,6 +296,15 @@ class DuckDuckGoSearcher:
                     url=url,
                     snippet=str(item.get("body") or "")[:_SNIPPET_CHARS],
                 )
+            )
+        if self._full_content and results:
+            # Lazy import: web_content imports WebResult from this module, so a
+            # top-level import here would be circular. Imported at call time,
+            # mirroring the lazy `from ddgs import DDGS` in _search_sync.
+            from ragz.modules.chat.web_content import enrich_with_page_content
+
+            results = await enrich_with_page_content(
+                results, limit=_FULL_CONTENT_TOP_N, transport=self._transport
             )
         return results
 
@@ -309,4 +350,10 @@ async def build_web_searcher(
         if TAVILY_SECRET_NAME in present:
             return TavilySearcher(settings=settings, transport=transport)
         logger.info("chat.web_search.tavily_selected_but_unconfigured")
-    return DuckDuckGoSearcher()
+    raw_full_content = await get_app_setting(session, "web_search_full_content")
+    full_content = (
+        raw_full_content.strip().lower() not in ("false", "0", "off")
+        if raw_full_content is not None
+        else True
+    )
+    return DuckDuckGoSearcher(full_content=full_content, transport=transport)

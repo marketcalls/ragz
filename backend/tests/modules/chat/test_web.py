@@ -221,7 +221,9 @@ async def test_duckduckgo_maps_results_to_web_result_shape(
     ])
     _patch_ddgs(monkeypatch, fake)
 
-    searcher = DuckDuckGoSearcher()
+    # full_content=False -> pure snippet mapping, no page fetch (that path is
+    # tested separately below with an injected transport).
+    searcher = DuckDuckGoSearcher(full_content=False)
     results = await searcher(session, "ISO 45001")
 
     assert results == [
@@ -229,7 +231,7 @@ async def test_duckduckgo_maps_results_to_web_result_shape(
                    snippet="ISO 45001 is an occupational health standard."),
         WebResult(title="Second hit", url="https://example.com/second", snippet="More text."),
     ]
-    assert fake.calls == [("ISO 45001", 5)]  # default cap (_MAX_RESULTS)
+    assert fake.calls == [("ISO 45001", 10)]  # default cap (_MAX_RESULTS)
 
 
 async def test_duckduckgo_drops_results_without_a_real_url(
@@ -242,7 +244,7 @@ async def test_duckduckgo_drops_results_without_a_real_url(
     ])
     _patch_ddgs(monkeypatch, fake)
 
-    results = await DuckDuckGoSearcher()(session, "anything")
+    results = await DuckDuckGoSearcher(full_content=False)(session, "anything")
     assert [r.url for r in results] == ["https://example.com/good"]
 
 
@@ -333,5 +335,106 @@ async def test_duckduckgo_never_calls_secrets_service(
         raise AssertionError("DuckDuckGoSearcher must never decrypt a secret")
 
     monkeypatch.setattr(secrets_service, "_get_secret_decrypted", _boom)
-    results = await DuckDuckGoSearcher()(session, "anything")
+    results = await DuckDuckGoSearcher(full_content=False)(session, "anything")
     assert len(results) == 1
+
+
+# --- richer web search: 10 results + full page content -----------------------
+
+
+async def test_duckduckgo_returns_up_to_ten_results(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeDDGS(results=[
+        {"title": f"r{i}", "href": f"https://example.com/{i}", "body": f"snippet {i}"}
+        for i in range(10)
+    ])
+    _patch_ddgs(monkeypatch, fake)
+
+    results = await DuckDuckGoSearcher(full_content=False)(session, "brokers")
+    assert len(results) == 10
+    assert fake.calls == [("brokers", 10)]
+
+
+async def test_duckduckgo_full_content_replaces_top_snippets(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With full_content=True and an injected transport serving HTML, the top-3
+    snippets become the fetched full page text; the rest stay as DDG snippets."""
+    import socket
+
+    fake = _FakeDDGS(results=[
+        {"title": f"r{i}", "href": f"https://example.com/{i}", "body": f"snippet {i}"}
+        for i in range(6)
+    ])
+    _patch_ddgs(monkeypatch, fake)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        html = (
+            f"<html><body><article><p>Full page text for {request.url.path} "
+            "listing every broker in detail.</p></article></body></html>"
+        )
+        return httpx.Response(200, text=html, headers={"content-type": "text/html"})
+
+    searcher = DuckDuckGoSearcher(full_content=True, transport=httpx.MockTransport(handler))
+    results = await searcher(session, "brokers")
+
+    assert len(results) == 6
+    for i in range(3):
+        assert "Full page text" in results[i].snippet  # top-3 enriched
+    for i in range(3, 6):
+        assert results[i].snippet == f"snippet {i}"  # rest unchanged
+
+
+async def test_duckduckgo_full_content_false_leaves_snippets(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeDDGS(results=[
+        {"title": "r0", "href": "https://example.com/0", "body": "just the snippet"},
+    ])
+    _patch_ddgs(monkeypatch, fake)
+
+    def _boom(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("full_content=False must never fetch page content")
+
+    searcher = DuckDuckGoSearcher(full_content=False, transport=httpx.MockTransport(_boom))
+    results = await searcher(session, "anything")
+    assert results[0].snippet == "just the snippet"
+
+
+async def test_tavily_maps_raw_content_into_snippet(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    """When Tavily returns raw_content (its native full-page extraction), that
+    becomes the snippet instead of the short `content` excerpt."""
+    await _store_key(session, test_settings)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [
+            {"title": "Brokers", "url": "https://example.com/b",
+             "content": "short excerpt",
+             "raw_content": "The full page lists Zerodha, Upstox and Angel One in detail."},
+        ]})
+
+    searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
+    results = await searcher(session, "brokers")
+    assert results[0].snippet == "The full page lists Zerodha, Upstox and Angel One in detail."
+
+
+async def test_tavily_falls_back_to_content_without_raw_content(
+    session: AsyncSession, test_settings: Settings
+) -> None:
+    await _store_key(session, test_settings)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": [
+            {"title": "Brokers", "url": "https://example.com/b", "content": "short excerpt"},
+        ]})
+
+    searcher = TavilySearcher(settings=test_settings, transport=httpx.MockTransport(handler))
+    results = await searcher(session, "brokers")
+    assert results[0].snippet == "short excerpt"

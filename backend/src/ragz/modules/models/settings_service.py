@@ -28,6 +28,9 @@ _RERANK_KEY = "rerank_provider"
 _COHERE_MODEL_KEY = "cohere_rerank_model"
 _COHERE_MODEL_DEFAULT = "rerank-v4.0-fast"
 _WEB_SEARCH_PROVIDER_KEY = "web_search_provider"
+# Superadmin gate for enriching web-search results with full page content.
+# Default ON. Stored as a string; "false"/"0"/"off" -> False, unset/other -> True.
+_WEB_SEARCH_FULL_CONTENT_KEY = "web_search_full_content"
 _DEFAULT_CHUNK_METHOD_KEY = "default_chunk_method"
 # openui-parity Task 8: gates the generative-UI image pipeline, default "off".
 _GENERATIVE_UI_IMAGES_KEY = "generative_ui_images"
@@ -58,6 +61,12 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
     rerank = await get_app_setting(session, _RERANK_KEY) or "local"
     cohere_model = await get_app_setting(session, _COHERE_MODEL_KEY) or _COHERE_MODEL_DEFAULT
     web_search = await get_app_setting(session, _WEB_SEARCH_PROVIDER_KEY) or "duckduckgo"
+    _raw_web_search_full_content = await get_app_setting(session, _WEB_SEARCH_FULL_CONTENT_KEY)
+    web_search_full_content = (
+        _raw_web_search_full_content.strip().lower() not in ("false", "0", "off")
+        if _raw_web_search_full_content is not None
+        else True
+    )
     default_chunk = await get_app_setting(session, _DEFAULT_CHUNK_METHOD_KEY) or "heading"
     _raw_generative_ui_images = await get_app_setting(session, _GENERATIVE_UI_IMAGES_KEY)
     generative_ui_images: GenerativeUiImages = (
@@ -77,6 +86,7 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
         rerank_provider=rerank,
         cohere_rerank_model=cohere_model,
         web_search_provider=web_search,
+        web_search_full_content=web_search_full_content,
         default_chunk_method=default_chunk,
         llamaparse_key_set=_LLAMA_SECRET in present,
         cohere_key_set=_COHERE_SECRET in present,
@@ -102,6 +112,13 @@ async def update_provider_settings(
     if patch.web_search_provider is not None:
         await set_app_setting(
             session, _WEB_SEARCH_PROVIDER_KEY, patch.web_search_provider, commit=False
+        )
+    if patch.web_search_full_content is not None:
+        await set_app_setting(
+            session,
+            _WEB_SEARCH_FULL_CONTENT_KEY,
+            "true" if patch.web_search_full_content else "false",
+            commit=False,
         )
     if patch.default_chunk_method is not None:
         await set_app_setting(

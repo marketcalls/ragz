@@ -23,6 +23,8 @@ async def test_defaults_when_nothing_set(session, settings) -> None:
     assert out.rerank_provider == "local"
     assert out.cohere_rerank_model == "rerank-v4.0-fast"
     assert out.web_search_provider == "duckduckgo"
+    # Full page-content enrichment defaults ON when unset.
+    assert out.web_search_full_content is True
     assert out.default_chunk_method == "heading"
     assert out.llamaparse_key_set is False
     assert out.cohere_key_set is False
@@ -45,6 +47,22 @@ async def test_web_search_provider_and_tavily_key_roundtrip(
     assert out.tavily_key_set is True
     # write-only: the key itself is never echoed back on the Out schema.
     assert not hasattr(out, "tavily_api_key")
+
+
+async def test_web_search_full_content_roundtrip(session, settings, seeded_user: User) -> None:
+    # Default ON; turning it OFF round-trips, and turning it back ON restores.
+    out = await settings_service.update_provider_settings(
+        session, settings, actor_id=seeded_user.id,
+        patch=ProviderSettingsUpdate(web_search_full_content=False),
+    )
+    assert out.web_search_full_content is False
+    out = await settings_service.get_provider_settings(session)
+    assert out.web_search_full_content is False
+    out = await settings_service.update_provider_settings(
+        session, settings, actor_id=seeded_user.id,
+        patch=ProviderSettingsUpdate(web_search_full_content=True),
+    )
+    assert out.web_search_full_content is True
 
 
 async def test_default_chunk_method_roundtrip(session, settings, seeded_user: User) -> None:

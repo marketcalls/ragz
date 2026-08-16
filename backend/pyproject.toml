@@ -30,6 +30,7 @@ dependencies = [
     "firecrawl-anydoc>=0.1",
     "ddgs>=9.14.4",
     "liteparse>=2.12",
+    "trafilatura>=2.2.0",
 ]
 
 [dependency-groups]
@@ -82,7 +83,7 @@ packages = ["ragz"]
 module = [
     "celery.*", "kombu.*", "fastembed.*", "aioboto3.*", "aiobotocore.*",
     "botocore.*", "docling.*", "docling_core.*", "authlib.*", "sentry_sdk.*",
-    "liteparse.*",
+    "liteparse.*", "trafilatura.*",
 ]
 ignore_missing_imports = true
 

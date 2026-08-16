@@ -129,6 +129,9 @@ class ProviderSettingsOut(BaseModel):
     # ("duckduckgo" default/keyless, "tavily" cloud). tavily_key_set mirrors
     # the *_key_set booleans -- the Tavily key itself is write-only.
     web_search_provider: str
+    # When True (default), DuckDuckGo results are enriched with full page
+    # content (SSRF-guarded fetch) instead of short snippets.
+    web_search_full_content: bool
     tavily_key_set: bool
     # Global default chunking strategy NEW workspaces inherit at creation.
     # The per-workspace override (Workspace.chunk_method) is unchanged.
@@ -146,6 +149,7 @@ class ProviderSettingsUpdate(BaseModel):
     rerank_provider: Literal["local", "cohere"] | None = None
     cohere_rerank_model: Literal["rerank-v4.0-fast", "rerank-v4.0-pro"] | None = None
     web_search_provider: Literal["duckduckgo", "tavily"] | None = None
+    web_search_full_content: bool | None = None
     default_chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
     generative_ui_images: GenerativeUiImages | None = None
     generative_ui_enabled: bool | None = None
