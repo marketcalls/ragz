@@ -151,7 +151,7 @@ async def create_invitation(
     body: InvitationCreate, session: SessionDep, ctx: AdminDep, settings: SettingsDep
 ) -> InvitationOut:
     raw = await service.create_invitation(
-        session, ctx, email=body.email, role=body.role, settings=settings
+        session, ctx, email=body.email, role=body.role, settings=settings, org_id=body.org_id
     )
     return InvitationOut(invite_token=raw)
 

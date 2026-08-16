@@ -40,6 +40,11 @@ class BootstrapStatus(BaseModel):
 class InvitationCreate(BaseModel):
     email: EmailStr = Field(max_length=320)
     role: Literal["admin", "user"] = "user"
+    # Multi-org completion: a superadmin may invite into any org by id; a
+    # plain org admin may only ever target their own org (enforced in
+    # service.create_invitation). None (the default) preserves the original
+    # behavior -- invite lands in the caller's own org.
+    org_id: UUID | None = None
 
 
 class InvitationOut(BaseModel):

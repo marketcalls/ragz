@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.core.app_settings import get_or_create_signing_key
 from ragz.core.config import Settings
 from ragz.core.db import naive_utc
-from ragz.core.errors import AuthenticationError, ConflictError, NotFoundError, RateLimitExceeded
+from ragz.core.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    RateLimitExceeded,
+)
 from ragz.core.ratelimit import check_rate_limit
 from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import Invitation, PasswordResetToken, RefreshToken, User
@@ -562,21 +568,38 @@ async def change_password(
 
 async def create_invitation(
     session: AsyncSession, ctx: TenantContext, *, email: str, role: str,
-    settings: Settings, ttl_hours: int = 72,
+    settings: Settings, ttl_hours: int = 72, org_id: UUID | None = None,
 ) -> str:
+    """Multi-org completion: `org_id` lets a superadmin invite into ANY
+    organization, not just their own. `None` (or the caller's own org)
+    preserves the original behavior. Targeting a DIFFERENT org requires
+    ctx.role == "superadmin" -- a plain org admin remains hard-scoped to
+    ctx.org_id, exactly as before."""
+    if org_id is None or org_id == ctx.org_id:
+        target_org_id = ctx.org_id
+    else:
+        if ctx.role != "superadmin":
+            raise AuthorizationError("only a superadmin may invite into another organization")
+        org = (
+            await session.execute(select(Organization).where(Organization.id == org_id))
+        ).scalar_one_or_none()
+        if org is None:
+            raise NotFoundError("organization not found")
+        target_org_id = org_id
+
     existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if existing is not None:
         raise ConflictError("email already registered")
     raw = secrets.token_urlsafe(32)
     expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(tzinfo=None)
     invitation = Invitation(
-        org_id=ctx.org_id, email=email, role=role,
+        org_id=target_org_id, email=email, role=role,
         token_hash=_hash(raw, settings.api_key_pepper),
         expires_at=expires_at,
     )
     session.add(invitation)
     await session.flush()
-    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
+    await record_audit(session, org_id=target_org_id, actor_id=ctx.user_id,
                        action="invitation.created", target_type="invitation",
                        target_id=str(invitation.id))
     await session.commit()

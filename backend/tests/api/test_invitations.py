@@ -1,6 +1,10 @@
-import httpx
+import uuid
 
-from ragz.modules.auth.models import User
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ragz.modules.auth.models import Invitation, User
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -59,3 +63,70 @@ async def test_invite_accept_rejects_short_password(
         "/api/v1/auth/invitations/accept", json={"token": token, "password": "short123"}
     )
     assert r2.status_code == 422
+
+
+async def test_superadmin_invites_admin_into_chosen_org(
+    client: httpx.AsyncClient, session: AsyncSession, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    org_r = await client.post("/api/v1/admin/orgs", json={"name": "OtherOrg"}, headers=h)
+    assert org_r.status_code == 200
+    other_org_id = org_r.json()["id"]
+
+    r = await client.post(
+        "/api/v1/auth/invitations",
+        json={"email": "newadmin@other.com", "role": "admin", "org_id": other_org_id},
+        headers=h,
+    )
+    assert r.status_code == 201
+    token = r.json()["invite_token"]
+
+    invitation = (
+        await session.execute(
+            select(Invitation).where(Invitation.email == "newadmin@other.com")
+        )
+    ).scalar_one()
+    assert str(invitation.org_id) == other_org_id
+
+    r2 = await client.post(
+        "/api/v1/auth/invitations/accept",
+        json={"token": token, "password": "newadminpw1234"},
+    )
+    assert r2.status_code == 201
+
+    new_user = (
+        await session.execute(select(User).where(User.email == "newadmin@other.com"))
+    ).scalar_one()
+    assert str(new_user.org_id) == other_org_id
+    assert new_user.role == "admin"
+
+
+async def test_plain_admin_cannot_invite_into_other_org(
+    client: httpx.AsyncClient, session: AsyncSession, seeded_user: User,
+    seeded_superadmin: User,
+) -> None:
+    # seeded_user is an "admin" (not superadmin) in the "Acme" org; target a
+    # DIFFERENT org (the superadmin's "Platform" org).
+    h = await auth(client, "a@acme.com")
+    r = await client.post(
+        "/api/v1/auth/invitations",
+        json={
+            "email": "sneaky@acme.com",
+            "role": "admin",
+            "org_id": str(seeded_superadmin.org_id),
+        },
+        headers=h,
+    )
+    assert r.status_code == 403
+
+
+async def test_invite_nonexistent_org_404(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.post(
+        "/api/v1/auth/invitations",
+        json={"email": "ghost@nowhere.com", "role": "admin", "org_id": str(uuid.uuid4())},
+        headers=h,
+    )
+    assert r.status_code == 404
