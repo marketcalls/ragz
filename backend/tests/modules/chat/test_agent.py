@@ -450,12 +450,12 @@ async def test_gathered_counts_performed_web_searches(  # type: ignore[no-untype
 async def test_force_web_first_overrides_planner_docs_choice(  # type: ignore[no-untyped-def]
     session, chat_env, ctx, flagged_model
 ) -> None:
-    """Regression (explicit toggle answered from docs): with force_web_first,
-    step 1 is a web_search on the ORIGINAL question even though the planner is
-    scripted to pick local `search` -- the planner is bypassed for the first
-    step, so the user's toggle actually reaches the web. The scripted local
-    search is only consumed on step 2, proving step 1 didn't come from the
-    planner."""
+    """Regression (explicit toggle answered from docs): with force_web_first the
+    turn is WEB-ONLY. Step 1 is a forced web_search on the ORIGINAL question,
+    and even though the planner is scripted to pick a local `search` next, doc
+    retrieval is not offered as a tool this turn -- so the scripted `search` is
+    rejected and the loop answers instead of ever searching documents. No doc
+    chunks pollute the answer when the user explicitly asked for the web."""
     completer = FakeCompleter([_search_completion("nifty futures ltp")])
     web_searcher = FakeWebSearcher()
     steps, gathered = await _collect(run_agent_gather(
@@ -465,14 +465,14 @@ async def test_force_web_first_overrides_planner_docs_choice(  # type: ignore[no
         chunk_reader=FakeChunkReader(), web_searcher=web_searcher, metadata_field_names=[],
         collection_name=COLLECTION, web_search_consented=True, force_web_first=True,
     ))
-    # Step 1 is the forced web search on the original question, NOT the planner's
-    # scripted local `search`:
+    # Step 1 is the forced web search on the original question:
     assert steps[0].tool == "web_search"
     assert steps[0].query == "Get latest nifty future value"
     assert web_searcher.queries != []  # the web was actually searched
-    # The planner's scripted local search was consumed on a LATER step, so the
-    # first step bypassed the planner entirely (planner ran once for step 2):
-    assert [s.tool for s in steps] == ["web_search", "search"]
+    # Web-only: no `search`/doc step appears even though the planner scripted one,
+    # and no document chunks were gathered.
+    assert [s.tool for s in steps] == ["web_search"]
+    assert gathered.chunks == []
 
 
 async def test_force_web_first_off_leaves_planner_in_control(  # type: ignore[no-untyped-def]

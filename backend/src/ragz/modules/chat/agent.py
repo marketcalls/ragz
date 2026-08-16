@@ -546,9 +546,18 @@ async def run_agent_gather(
     `redis=None` / limits `0` again means every EXISTING caller that doesn't
     pass them keeps today's behavior (no persistent cap) unchanged; production
     (stream_reply) passes real values so the cap survives across turns."""
-    tool_names: list[str] = ["search", "search_by_metadata", "get_document"]
-    if web_searcher is not None:
-        tool_names.append("web_search")
+    if force_web_first and web_searcher is not None:
+        # Explicit web-search toggle => WEB-ONLY for this turn. The user asked to
+        # search the web, so do NOT also retrieve/blend workspace documents:
+        # otherwise doc chunks (which a doc-heavy workspace ranks highly) pull
+        # the answer back to the docs and the web results are shown as mere
+        # "references" instead of driving the answer. Only web_search + answer
+        # are offered; every step is a web search until the model answers.
+        tool_names: list[str] = ["web_search"]
+    else:
+        tool_names = ["search", "search_by_metadata", "get_document"]
+        if web_searcher is not None:
+            tool_names.append("web_search")
     chunks: list[RetrievedChunk] = []
     seen: set[tuple[UUID, int, int]] = set()
     web_results: list[WebResult] = []
@@ -567,9 +576,9 @@ async def run_agent_gather(
             # first and the toggle appears ignored. execute_tool still builds
             # the outgoing query from `question` itself (RAGZ-PUB-08 items 1 &
             # 3), so the forced action's query is only what the agent_step frame
-            # displays. Steps 2+ fall back to the planner, which may then search
-            # docs or answer once the web results are in -- web-first, not
-            # web-only. Gated on force_web_first (not web_search_consented) so a
+            # displays. Under force_web_first the tool set is web-only (above),
+            # so steps 2+ can only web_search again or answer -- never doc
+            # retrieval. Gated on force_web_first (not web_search_consented) so a
             # plain consented turn still lets the planner decide tool order.
             action, usage = (
                 PlannerAction(action="web_search", query=question),
