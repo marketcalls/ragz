@@ -14,6 +14,11 @@ class Organization(UUIDPk, Base):
     name: Mapped[str] = mapped_column(unique=True)
     # AUTH-6: lowercase email domains whose users may JIT-provision via SSO.
     sso_domains: Mapped[list[str] | None] = mapped_column(ARRAY(String), default=None)
+    # Minimal industry-standard org profile (all optional).
+    contact_email: Mapped[str | None] = mapped_column(default=None)
+    industry: Mapped[str | None] = mapped_column(default=None)
+    company_size: Mapped[str | None] = mapped_column(default=None)
+    country: Mapped[str | None] = mapped_column(default=None)
 
 
 class Workspace(UUIDPk, Base):

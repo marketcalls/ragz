@@ -1,8 +1,8 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
@@ -34,6 +34,10 @@ class OrgOut(BaseModel):
     id: UUID
     name: str
     sso_domains: list[str] | None
+    contact_email: str | None
+    industry: str | None
+    company_size: str | None
+    country: str | None
 
     model_config = {"from_attributes": True}
 
@@ -44,10 +48,18 @@ class SsoDomainsIn(BaseModel):
 
 class OrgCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    contact_email: EmailStr | None = None
+    industry: str | None = Field(default=None, max_length=120)
+    company_size: str | None = Field(default=None, max_length=40)
+    country: str | None = Field(default=None, max_length=80)
 
 
-class OrgRename(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+class OrgUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    contact_email: EmailStr | None = None
+    industry: str | None = Field(default=None, max_length=120)
+    company_size: str | None = Field(default=None, max_length=40)
+    country: str | None = Field(default=None, max_length=80)
 
 
 @router.get("/sso", response_model=SsoConfigOut)
@@ -91,15 +103,26 @@ async def put_sso_domains(
 
 @router.post("/orgs", response_model=OrgOut)
 async def create_org(body: OrgCreate, session: SessionDep, ctx: SuperDep) -> OrgOut:
-    org = await tenancy_service.create_organization(session, actor_id=ctx.user_id, name=body.name)
+    org = await tenancy_service.create_organization(
+        session, actor_id=ctx.user_id, name=body.name, contact_email=body.contact_email,
+        industry=body.industry, company_size=body.company_size, country=body.country,
+    )
     return OrgOut.model_validate(org)
 
 
 @router.patch("/orgs/{org_id}", response_model=OrgOut)
-async def rename_org(
-    org_id: UUID, body: OrgRename, session: SessionDep, ctx: SuperDep
+async def update_org(
+    org_id: UUID, body: OrgUpdate, session: SessionDep, ctx: SuperDep
 ) -> OrgOut:
-    org = await tenancy_service.rename_organization(
-        session, actor_id=ctx.user_id, org_id=org_id, name=body.name
+    org = await tenancy_service.update_organization(
+        session, actor_id=ctx.user_id, org_id=org_id, **body.model_dump(exclude_unset=True)
     )
     return OrgOut.model_validate(org)
+
+
+@router.delete("/orgs/{org_id}", status_code=204)
+async def delete_org(org_id: UUID, session: SessionDep, ctx: SuperDep) -> Response:
+    await tenancy_service.delete_organization(
+        session, actor_id=ctx.user_id, org_id=org_id, caller_org_id=ctx.org_id
+    )
+    return Response(status_code=204)

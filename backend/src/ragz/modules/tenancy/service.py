@@ -6,7 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_app_setting
-from ragz.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
+from ragz.core.errors import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    WorkspaceAccessDenied,
+)
 from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
 from ragz.modules.models import service as models_service
@@ -361,7 +366,9 @@ async def list_organizations(session: AsyncSession) -> list[Organization]:
 
 
 async def create_organization(
-    session: AsyncSession, *, actor_id: UUID | None, name: str
+    session: AsyncSession, *, actor_id: UUID | None, name: str,
+    contact_email: str | None = None, industry: str | None = None,
+    company_size: str | None = None, country: str | None = None,
 ) -> Organization:
     """Superadmin-only (admin/sso routes): today orgs only exist from first-run
     bootstrap, making the system effectively single-org. No membership/user
@@ -372,7 +379,10 @@ async def create_organization(
     stripped = name.strip()
     if not stripped:
         raise ConflictError("organization name cannot be blank")
-    org = Organization(name=stripped, sso_domains=None)
+    org = Organization(
+        name=stripped, sso_domains=None, contact_email=contact_email,
+        industry=industry, company_size=company_size, country=country,
+    )
     session.add(org)
     await session.flush()
     await record_audit(session, org_id=None, actor_id=actor_id,
@@ -382,24 +392,69 @@ async def create_organization(
     return org
 
 
-async def rename_organization(
-    session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, name: str
+async def update_organization(
+    session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, name: str | None = None,
+    contact_email: str | None = None, industry: str | None = None,
+    company_size: str | None = None, country: str | None = None,
 ) -> Organization:
-    """Superadmin-only (admin/sso routes): renames an existing organization."""
+    """Superadmin-only (admin/sso routes): partial update of an existing
+    organization -- `name` and the profile fields are all "leave unchanged
+    when None"; the route only forwards fields the caller actually set
+    (`OrgUpdate.model_dump(exclude_unset=True)`)."""
     org = (
         await session.execute(select(Organization).where(Organization.id == org_id))
     ).scalar_one_or_none()
     if org is None:
         raise NotFoundError("organization not found")
-    stripped = name.strip()
-    if not stripped:
-        raise ConflictError("organization name cannot be blank")
-    org.name = stripped
+    if name is not None:
+        stripped = name.strip()
+        if not stripped:
+            raise ConflictError("organization name cannot be blank")
+        org.name = stripped
+    if contact_email is not None:
+        org.contact_email = contact_email
+    if industry is not None:
+        org.industry = industry
+    if company_size is not None:
+        org.company_size = company_size
+    if country is not None:
+        org.country = country
     await record_audit(session, org_id=None, actor_id=actor_id,
-                       action="org.renamed", target_type="organization",
+                       action="org.updated", target_type="organization",
                        target_id=str(org.id))
     await session.commit()
     return org
+
+
+async def delete_organization(
+    session: AsyncSession, *, actor_id: UUID | None, org_id: UUID, caller_org_id: UUID
+) -> None:
+    """Superadmin-only (admin/sso routes): safe delete -- refuses to delete the
+    caller's own organization, and refuses (409) an organization that still
+    has users or workspaces, so no orphaned org-owned rows are ever left
+    behind."""
+    org = (
+        await session.execute(select(Organization).where(Organization.id == org_id))
+    ).scalar_one_or_none()
+    if org is None:
+        raise NotFoundError("organization not found")
+    if org_id == caller_org_id:
+        raise AuthorizationError("cannot delete your own organization")
+    user_count = (
+        await session.execute(select(func.count()).select_from(User).where(User.org_id == org_id))
+    ).scalar_one()
+    workspace_count = (
+        await session.execute(
+            select(func.count()).select_from(Workspace).where(Workspace.org_id == org_id)
+        )
+    ).scalar_one()
+    if user_count or workspace_count:
+        raise ConflictError("organization is not empty — remove its workspaces and users first")
+    await session.delete(org)
+    await record_audit(session, org_id=None, actor_id=actor_id,
+                       action="org.deleted", target_type="organization",
+                       target_id=str(org_id))
+    await session.commit()
 
 
 async def set_org_sso_domains(

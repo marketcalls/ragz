@@ -7,6 +7,7 @@ from ragz.core.app_settings import get_app_setting
 from ragz.modules.audit.models import AuditEvent
 from ragz.modules.auth.models import User
 from ragz.modules.auth.oidc import OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY
+from ragz.modules.tenancy.models import Organization, Workspace
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -156,3 +157,122 @@ async def test_put_sso_rolls_back_atomically_on_secret_failure(
     # Confirms the config really is unset end-to-end, not just at the DB layer.
     after = (await client.get("/api/v1/admin/sso", headers=h)).json()
     assert after == {"issuer": None, "client_id": None, "client_secret_set": False}
+
+
+async def test_create_org_with_profile_fields(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.post("/api/v1/admin/orgs", headers=h, json={
+        "name": "Profile Co",
+        "contact_email": "ops@profileco.example",
+        "industry": "Software",
+        "company_size": "51-200",
+        "country": "US",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["contact_email"] == "ops@profileco.example"
+    assert body["industry"] == "Software"
+    assert body["company_size"] == "51-200"
+    assert body["country"] == "US"
+
+    orgs = (await client.get("/api/v1/admin/orgs", headers=h)).json()
+    listed = next(o for o in orgs if o["id"] == body["id"])
+    assert listed["contact_email"] == "ops@profileco.example"
+    assert listed["industry"] == "Software"
+    assert listed["company_size"] == "51-200"
+    assert listed["country"] == "US"
+
+
+async def test_patch_org_updates_one_profile_field_leaves_others(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    created = (await client.post("/api/v1/admin/orgs", headers=h, json={
+        "name": "Partial Co",
+        "contact_email": "a@partial.example",
+        "industry": "Finance",
+        "company_size": "1-10",
+        "country": "IN",
+    })).json()
+    org_id = created["id"]
+
+    r = await client.patch(f"/api/v1/admin/orgs/{org_id}", headers=h, json={"industry": "Retail"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["industry"] == "Retail"
+    # untouched fields
+    assert body["name"] == "Partial Co"
+    assert body["contact_email"] == "a@partial.example"
+    assert body["company_size"] == "1-10"
+    assert body["country"] == "IN"
+
+    # name-rename still works via the same endpoint
+    r = await client.patch(
+        f"/api/v1/admin/orgs/{org_id}", headers=h, json={"name": "Renamed Partial"}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "Renamed Partial"
+    assert body["industry"] == "Retail"
+
+
+async def test_delete_empty_org(client: httpx.AsyncClient, seeded_superadmin: User) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.post("/api/v1/admin/orgs", headers=h, json={"name": "To Delete"})
+    org_id = r.json()["id"]
+
+    r = await client.delete(f"/api/v1/admin/orgs/{org_id}", headers=h)
+    assert r.status_code in (200, 204)
+
+    orgs = (await client.get("/api/v1/admin/orgs", headers=h)).json()
+    assert org_id not in [o["id"] for o in orgs]
+
+
+async def test_delete_own_org_forbidden(
+    client: httpx.AsyncClient, seeded_superadmin: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.delete(f"/api/v1/admin/orgs/{seeded_superadmin.org_id}", headers=h)
+    assert r.status_code == 403
+
+
+async def test_delete_org_with_workspace_conflicts(
+    client: httpx.AsyncClient, seeded_superadmin: User, session: AsyncSession
+) -> None:
+    org = Organization(name="Has Workspace Co")
+    session.add(org)
+    await session.flush()
+    ws = Workspace(org_id=org.id, name="W1")
+    session.add(ws)
+    await session.commit()
+
+    h = await auth(client, "root@platform.example")
+    r = await client.delete(f"/api/v1/admin/orgs/{org.id}", headers=h)
+    assert r.status_code == 409
+
+
+async def test_delete_org_with_user_conflicts(
+    client: httpx.AsyncClient, seeded_superadmin: User, seeded_user: User
+) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.delete(f"/api/v1/admin/orgs/{seeded_user.org_id}", headers=h)
+    assert r.status_code == 409
+
+
+async def test_delete_org_not_found(client: httpx.AsyncClient, seeded_superadmin: User) -> None:
+    h = await auth(client, "root@platform.example")
+    r = await client.delete(
+        "/api/v1/admin/orgs/00000000-0000-0000-0000-000000000000", headers=h
+    )
+    assert r.status_code == 404
+
+
+async def test_delete_org_requires_superadmin(
+    client: httpx.AsyncClient, seeded_user: User
+) -> None:
+    org_id = seeded_user.org_id
+    h = await auth(client, "a@acme.com")  # org admin, not superadmin
+    r = await client.delete(f"/api/v1/admin/orgs/{org_id}", headers=h)
+    assert r.status_code == 403
