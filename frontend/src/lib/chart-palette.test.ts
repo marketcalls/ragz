@@ -1,10 +1,10 @@
 import { categorical, getDistributedColors, readChartPalette } from './chart-palette';
 
 it('reads semantic tokens with fallbacks', () => {
-  document.documentElement.style.setProperty('--accent', '#123456');
+  document.documentElement.style.setProperty('--chart-accent', '#123456');
   expect(readChartPalette().accent).toBe('#123456');
-  document.documentElement.style.removeProperty('--accent');
-  expect(readChartPalette().accent).toBe('#4f46e5'); // spec fallback
+  document.documentElement.style.removeProperty('--chart-accent');
+  expect(readChartPalette().accent).toBe('#3b82f6'); // chart-accent fallback
 });
 
 describe('categorical', () => {
@@ -24,9 +24,9 @@ describe('categorical', () => {
 
   it('stays theme-aware: re-reading the palette after a token change changes the ramp', () => {
     const before = categorical(readChartPalette(), 8);
-    document.documentElement.style.setProperty('--accent', '#123456');
+    document.documentElement.style.setProperty('--chart-accent', '#123456');
     const after = categorical(readChartPalette(), 8);
-    document.documentElement.style.removeProperty('--accent');
+    document.documentElement.style.removeProperty('--chart-accent');
     expect(after).toContain('#123456');
     expect(after).not.toEqual(before);
   });

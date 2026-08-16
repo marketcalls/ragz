@@ -14,7 +14,7 @@ export interface ChartPalette {
 }
 
 const FALLBACKS: ChartPalette = {
-  accent: '#4f46e5',
+  accent: '#3b82f6',
   success: '#059669',
   warning: '#b45309',
   danger: '#dc2626',
@@ -27,7 +27,7 @@ export function readChartPalette(): ChartPalette {
   const v = (name: string, fallback: string): string =>
     s.getPropertyValue(name).trim() || fallback;
   return {
-    accent: v('--accent', FALLBACKS.accent),
+    accent: v('--chart-accent', FALLBACKS.accent),
     success: v('--success', FALLBACKS.success),
     warning: v('--warning', FALLBACKS.warning),
     danger: v('--danger', FALLBACKS.danger),
