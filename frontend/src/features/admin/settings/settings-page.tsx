@@ -27,6 +27,7 @@ export function SettingsPage() {
   const [rerank, setRerank] = useState<'local' | 'cohere'>('local');
   const [cohereModel, setCohereModel] = useState<CohereRerankModel>('rerank-v4.0-fast');
   const [webSearch, setWebSearch] = useState<WebSearchProvider>('duckduckgo');
+  const [fullContent, setFullContent] = useState(true);
   const [generativeUiImages, setGenerativeUiImages] = useState<GenerativeUiImages>('off');
   const [generativeUiEnabled, setGenerativeUiEnabled] = useState(true);
   const [defaultChunk, setDefaultChunk] = useState<ChunkMethod>('heading');
@@ -42,6 +43,7 @@ export function SettingsPage() {
       setRerank(settings.data.rerank_provider);
       setCohereModel(settings.data.cohere_rerank_model);
       setWebSearch(settings.data.web_search_provider);
+      setFullContent(settings.data.web_search_full_content);
       setGenerativeUiImages(settings.data.generative_ui_images);
       setGenerativeUiEnabled(settings.data.generative_ui_enabled);
       setDefaultChunk(settings.data.default_chunk_method);
@@ -64,6 +66,7 @@ export function SettingsPage() {
       document_parser: parser,
       rerank_provider: rerank,
       web_search_provider: webSearch,
+      web_search_full_content: fullContent,
       generative_ui_images: generativeUiImages,
       generative_ui_enabled: generativeUiEnabled,
       default_chunk_method: defaultChunk,
@@ -197,6 +200,21 @@ export function SettingsPage() {
                   />
                 </div>
               ) : null}
+              <div>
+                <label className="flex items-center gap-2 text-sm text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={fullContent}
+                    onChange={(e) => setFullContent(e.target.checked)}
+                    aria-label="Fetch full page content"
+                  />
+                  Fetch full page content
+                </label>
+                <p className="mt-1 text-xs text-muted">
+                  Read the top results&apos; full page text (not just search snippets) so answers
+                  to list/overview questions are complete. Fetched server-side; slightly slower.
+                </p>
+              </div>
               <div>
                 <label className="flex items-center gap-2 text-sm text-secondary">
                   <input

@@ -3684,6 +3684,8 @@ export interface components {
             cohere_rerank_model: string;
             /** Web Search Provider */
             web_search_provider: string;
+            /** Web Search Full Content */
+            web_search_full_content: boolean;
             /** Tavily Key Set */
             tavily_key_set: boolean;
             /** Default Chunk Method */
@@ -3710,6 +3712,8 @@ export interface components {
             cohere_rerank_model?: ("rerank-v4.0-fast" | "rerank-v4.0-pro") | null;
             /** Web Search Provider */
             web_search_provider?: ("duckduckgo" | "tavily") | null;
+            /** Web Search Full Content */
+            web_search_full_content?: boolean | null;
             /** Default Chunk Method */
             default_chunk_method?: ("heading" | "fixed" | "page" | "table_qa") | null;
             /** Generative Ui Images */

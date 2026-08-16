@@ -17,6 +17,7 @@ const settings: ProviderSettings = {
   rerank_provider: 'local',
   cohere_rerank_model: 'rerank-v4.0-fast',
   web_search_provider: 'duckduckgo',
+  web_search_full_content: true,
   default_chunk_method: 'heading',
   generative_ui_images: 'off',
   generative_ui_enabled: true,

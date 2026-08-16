@@ -18,6 +18,7 @@ export interface ProviderSettings {
   rerank_provider: 'local' | 'cohere';
   cohere_rerank_model: CohereRerankModel;
   web_search_provider: WebSearchProvider;
+  web_search_full_content: boolean;
   default_chunk_method: ChunkMethod;
   generative_ui_images: GenerativeUiImages;
   generative_ui_enabled: boolean;
@@ -31,6 +32,7 @@ export interface ProviderSettingsUpdate {
   rerank_provider?: 'local' | 'cohere';
   cohere_rerank_model?: CohereRerankModel;
   web_search_provider?: WebSearchProvider;
+  web_search_full_content?: boolean;
   default_chunk_method?: ChunkMethod;
   generative_ui_images?: GenerativeUiImages;
   generative_ui_enabled?: boolean;
