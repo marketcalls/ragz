@@ -10,9 +10,24 @@ vi.mock('./queries', () => ({
   useOrganizations: () => useOrganizations(),
   // OrganizationsPage always mounts the form dialog (closed by default); it
   // calls useCreateOrganization/useRenameOrganization unconditionally
-  // regardless of open state, mirroring RolesPage/RoleFormDialog.
+  // regardless of open state, mirroring RolesPage/RoleFormDialog. The
+  // "Invite admin" InviteDialog (also always mounted, closed by default)
+  // resolves to this same mocked module for its org selector.
   useCreateOrganization: () => useCreateOrganization(),
   useRenameOrganization: () => useRenameOrganization(),
+}));
+
+// InviteDialog (always mounted, closed by default) calls useInvite
+// unconditionally — mirroring useCreateOrganization/useRenameOrganization above.
+const useInvite = vi.fn();
+vi.mock('../users/queries', () => ({
+  useInvite: () => useInvite(),
+}));
+
+// OrganizationsPage is a superadmin-only route; the "Invite admin" shortcut
+// only makes sense for that role, so claims are fixed to superadmin here.
+vi.mock('@/lib/use-claims', () => ({
+  useClaims: () => ({ sub: 'u1', org: 'o1', role: 'superadmin', exp: 9e9 }),
 }));
 
 vi.mock('@/components/ui/toaster', () => ({
@@ -38,6 +53,7 @@ beforeEach(() => {
   useOrganizations.mockReturnValue({ data: [orgA, orgB], isPending: false, isError: false });
   useCreateOrganization.mockReturnValue({ mutate: vi.fn(), isPending: false, reset: vi.fn() });
   useRenameOrganization.mockReturnValue({ mutate: vi.fn(), isPending: false, reset: vi.fn() });
+  useInvite.mockReturnValue({ mutate: vi.fn(), isPending: false, reset: vi.fn(), data: undefined });
 });
 
 afterEach(() => {
@@ -100,4 +116,15 @@ test('renaming a row opens a pre-filled dialog whose submit calls useRenameOrgan
   await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
   expect(mutate).toHaveBeenCalledWith({ orgId: 'o1', name: 'Acme Corporation' }, expect.anything());
+});
+
+test('"Invite admin" opens the invite dialog pre-set to that org + admin role', async () => {
+  const user = userEvent.setup();
+  render(<OrganizationsPage />);
+
+  await user.click(screen.getByRole('button', { name: /invite admin to globex/i }));
+
+  expect(screen.getByText('Invite a user')).toBeInTheDocument();
+  expect(screen.getByLabelText('Role')).toHaveValue('admin');
+  expect(screen.getByLabelText('Organization')).toHaveValue('o2');
 });

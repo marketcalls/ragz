@@ -33,7 +33,7 @@ export function usePatchUser() {
 
 export function useInvite() {
   return useMutation({
-    mutationFn: async (body: { email: string; role: 'admin' | 'user' }) => {
+    mutationFn: async (body: { email: string; role: 'admin' | 'user'; org_id?: string }) => {
       const { data, error } = await api.POST('/api/v1/auth/invitations', { body });
       if (error) throw new Error('failed to create invitation');
       return data;

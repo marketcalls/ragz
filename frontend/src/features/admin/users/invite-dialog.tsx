@@ -6,32 +6,52 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/select';
 import { toast } from '@/components/ui/toaster';
+import { useClaims } from '@/lib/use-claims';
+
+import { useOrganizations } from '../organizations/queries';
 
 import { useInvite } from './queries';
 
 export function InviteDialog({
   open,
   onOpenChange,
+  defaultOrgId,
+  defaultRole,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Pre-seeds the org selector (superadmin only) — e.g. the Organizations
+   * page's "Invite admin" shortcut opening this dialog for a specific org. */
+  defaultOrgId?: string;
+  /** Pre-seeds the role field. */
+  defaultRole?: 'admin' | 'user';
 }) {
   const invite = useInvite();
+  const claims = useClaims();
+  const isSuperadmin = claims?.role === 'superadmin';
+  // Non-superadmins always invite into their own org — skip the (superadmin-only)
+  // orgs list request for them entirely.
+  const orgs = useOrganizations({ enabled: isSuperadmin });
+
+  const initialOrgId = (): string => defaultOrgId ?? claims?.org ?? '';
+
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'admin' | 'user'>('user');
+  const [role, setRole] = useState<'admin' | 'user'>(defaultRole ?? 'user');
+  const [orgId, setOrgId] = useState(initialOrgId);
 
   const close = (next: boolean): void => {
     if (!next) {
       invite.reset();
       setEmail('');
-      setRole('user');
+      setRole(defaultRole ?? 'user');
+      setOrgId(initialOrgId());
     }
     onOpenChange(next);
   };
 
   const onSubmit = (e: FormEvent): void => {
     e.preventDefault();
-    invite.mutate({ email, role });
+    invite.mutate(isSuperadmin ? { email, role, org_id: orgId } : { email, role });
   };
 
   const inviteLink = invite.data
@@ -84,6 +104,22 @@ export function InviteDialog({
                 <option value="admin">Admin</option>
               </NativeSelect>
             </div>
+            {isSuperadmin ? (
+              <div>
+                <Label htmlFor="invite-org">Organization</Label>
+                <NativeSelect
+                  id="invite-org"
+                  value={orgId}
+                  onChange={(e) => setOrgId(e.target.value)}
+                >
+                  {(orgs.data ?? []).map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+            ) : null}
             {invite.isError ? (
               <p role="alert" className="text-[12px] text-danger">
                 {invite.error.message}

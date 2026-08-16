@@ -1,4 +1,4 @@
-import { Pencil, Plus } from 'lucide-react';
+import { Pencil, Plus, UserPlus } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
 import { TopBar } from '@/components/layout/top-bar';
@@ -11,6 +11,8 @@ import { Spinner } from '@/components/ui/spinner';
 import { StatusPill } from '@/components/ui/status-pill';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
 import { toast } from '@/components/ui/toaster';
+
+import { InviteDialog } from '../users/invite-dialog';
 
 import { useCreateOrganization, useOrganizations, useRenameOrganization, type Organization } from './queries';
 
@@ -100,6 +102,10 @@ export function OrganizationsPage() {
   // a fresh mount on every open, mirroring RolesPage's formTarget pattern.
   const [formTarget, setFormTarget] = useState<'create' | Organization | null>(null);
   const [formKey, setFormKey] = useState(0);
+  // "Invite admin" per row (below): a fresh InviteDialog mount per open so
+  // its defaultOrgId/defaultRole seed cleanly, mirroring formKey above.
+  const [inviteTarget, setInviteTarget] = useState<Organization | null>(null);
+  const [inviteKey, setInviteKey] = useState(0);
 
   const openCreate = (): void => {
     setFormTarget('create');
@@ -108,6 +114,10 @@ export function OrganizationsPage() {
   const openEdit = (org: Organization): void => {
     setFormTarget(org);
     setFormKey((k) => k + 1);
+  };
+  const openInviteAdmin = (org: Organization): void => {
+    setInviteTarget(org);
+    setInviteKey((k) => k + 1);
   };
 
   return (
@@ -156,6 +166,14 @@ export function OrganizationsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        aria-label={`Invite admin to ${org.name}`}
+                        onClick={() => openInviteAdmin(org)}
+                      >
+                        <UserPlus className="h-4 w-4" aria-hidden />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         aria-label={`Rename ${org.name}`}
                         onClick={() => openEdit(org)}
                       >
@@ -173,10 +191,17 @@ export function OrganizationsPage() {
         </div>
       </div>
       <OrgFormDialog
-        key={formKey}
+        key={`form-${formKey}`}
         open={formTarget !== null}
         onOpenChange={(o) => !o && setFormTarget(null)}
         org={formTarget === 'create' ? null : formTarget}
+      />
+      <InviteDialog
+        key={`invite-${inviteKey}`}
+        open={inviteTarget !== null}
+        onOpenChange={(o) => !o && setInviteTarget(null)}
+        defaultOrgId={inviteTarget?.id}
+        defaultRole="admin"
       />
     </>
   );

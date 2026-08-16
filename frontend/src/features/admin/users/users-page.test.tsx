@@ -40,6 +40,16 @@ vi.mock('../groups/queries', () => ({
   useSetGroupMembership: () => useSetGroupMembership(),
 }));
 
+// InviteDialog (always mounted, closed by default) calls useOrganizations
+// unconditionally for its superadmin-only org selector — this is a real
+// react-query hook (org.md-2), so it needs a mock here rather than a live
+// QueryClient this test file doesn't set up. No token is set below, so
+// InviteDialog's isSuperadmin stays false and this mock's data goes unused.
+const useOrganizations = vi.fn();
+vi.mock('../organizations/queries', () => ({
+  useOrganizations: () => useOrganizations(),
+}));
+
 import { UsersPage } from './users-page';
 
 const userA: UserOut = {
@@ -62,6 +72,7 @@ beforeEach(() => {
   useSetGroupMembership.mockReturnValue({ mutate: vi.fn(), isPending: false });
   useUserQuota.mockReturnValue({ data: undefined, isPending: false, isError: false });
   useSetUserQuota.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false });
+  useOrganizations.mockReturnValue({ data: [], isPending: false, isError: false });
 });
 
 afterEach(() => {

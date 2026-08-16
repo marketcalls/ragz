@@ -3147,6 +3147,8 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "user";
+            /** Org Id */
+            org_id?: string | null;
         };
         /** InvitationOut */
         InvitationOut: {

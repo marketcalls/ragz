@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
 import { setAccessToken } from '@/lib/auth-store';
@@ -83,4 +84,16 @@ test('a non-superadmin admin with delegated org permissions sees the single Admi
     permissions: ['users.read', 'feedback.review', 'analytics.view'],
   });
   expect(await screen.findByText('Admin')).toBeInTheDocument();
+});
+
+test('the workspace-settings gear renders when a workspace is selected and opens the dialog', async () => {
+  setAccessToken(tokenFor('user'));
+  renderSidebar({ role: 'user', permissions: ['search.execute', 'chat.generate'] });
+  await screen.findByText('Finance');
+
+  const gear = screen.getByRole('button', { name: 'Workspace settings' });
+  const user = userEvent.setup();
+  await user.click(gear);
+
+  expect(await screen.findByText(/Retrieval settings — Finance/)).toBeInTheDocument();
 });

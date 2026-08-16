@@ -12,9 +12,13 @@ export type Organization = OrgOut;
 // immediately reflected on the SSO page's org list (and vice versa).
 const ORGS_KEY = ['admin', 'orgs'];
 
-export function useOrganizations() {
+// `enabled` lets non-superadmin callers (e.g. InviteDialog, mounted for any
+// admin) skip the request entirely — GET /api/v1/admin/orgs is
+// superadmin-only and would 403 for everyone else.
+export function useOrganizations(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ORGS_KEY,
+    enabled: options?.enabled ?? true,
     queryFn: async (): Promise<Organization[]> => {
       const { data, error } = await api.GET('/api/v1/admin/orgs');
       if (error) throw new Error('failed to load organizations');
