@@ -135,6 +135,11 @@ export function ModelsPage() {
                   <TH>Name</TH>
                   <TH>Provider</TH>
                   <TH>Type</TH>
+                  {/* Dimension is meaningful only for embedding models, and is
+                      immutable after creation (see ModelUpdate) — surfacing it
+                      here is the only way to spot a wrong value, which
+                      otherwise stays invisible until ingestion fails. */}
+                  {tab === 'embedding' ? <TH>Dimension</TH> : null}
                   <TH>Model id</TH>
                   <TH>Key</TH>
                   <TH>Gateway</TH>
@@ -153,6 +158,11 @@ export function ModelsPage() {
                       <TD className="font-medium">{model.display_name}</TD>
                       <TD className="text-secondary">{model.provider_kind}</TD>
                       <TD className="capitalize text-secondary">{model.modality}</TD>
+                      {tab === 'embedding' ? (
+                        <TD className="font-mono text-[12px] tabular-nums text-secondary">
+                          {model.dimension ?? '—'}
+                        </TD>
+                      ) : null}
                       <TD className="font-mono text-[12px] text-secondary">
                         <div>{model.litellm_model_name}</div>
                         {catalogEntry ? (
