@@ -15,6 +15,7 @@ from ragz.core.errors import (
 from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
 from ragz.modules.models import service as models_service
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import (
     Group,
@@ -248,30 +249,34 @@ async def update_retrieval_settings(
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="workspace.retrieval_settings_changed",
                        target_type="workspace", target_id=str(ws.id))
+    # Task 12 (§6): a ranking-relevant change re-runs the eval suite (if any
+    # golden query exists) so admins see the impact without waiting for the
+    # nightly job.
+    #
+    # Published BEFORE the commit/flush below, deliberately. This used to call
+    # enqueue_eval_run AFTER the write, and justified it as "no meaningful
+    # window" because the PATCH route commits the same session moments later --
+    # but a rolled-back settings change could still have scheduled a run
+    # against the old settings, and a crash between the two lost the run
+    # entirely. Publishing into the caller's transaction makes the eval and the
+    # settings change genuinely atomic, and drops the local import of
+    # worker.tasks (and its layering exception) along with the hand-wave.
+    if _RANKING_FIELDS & updates.keys():
+        from ragz.modules.evals.service import has_any_golden_query
+
+        if await has_any_golden_query(session, workspace_id):
+            outbox_service.publish(
+                session,
+                topic="evals.run",
+                payload={
+                    "workspace_id": str(workspace_id),
+                    "triggered_by": "settings_change",
+                },
+            )
     if commit:
         await session.commit()
     else:
         await session.flush()
-    if _RANKING_FIELDS & updates.keys():
-        # Task 12 (§6): a ranking-relevant change re-runs the eval suite (if
-        # any golden query exists) so admins see the impact without waiting
-        # for the nightly job. Local imports break a REAL circular import
-        # (evals.service already imports tenancy.service at module scope;
-        # worker.tasks -> ... -> tenancy.service transitively too) -- see
-        # this module's ignore_imports entry in pyproject.toml's layering
-        # contract, mirroring documents/service.py's enqueue_reindex
-        # precedent. The enqueue is a fire-and-forget Celery apply_async
-        # (never raises against a healthy broker) placed after the write
-        # above (commit or flush) rather than gated on `commit` itself:
-        # PATCH /workspaces calls this with commit=False and commits the
-        # SAME session immediately afterward in the same request, so there
-        # is no meaningful window in which a rolled-back write could still
-        # have scheduled a run.
-        from ragz.modules.evals.service import has_any_golden_query
-        from ragz.worker.tasks import enqueue_eval_run
-
-        if await has_any_golden_query(session, workspace_id):
-            enqueue_eval_run(workspace_id, "settings_change")
     return ws
 
 

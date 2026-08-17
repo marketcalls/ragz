@@ -26,6 +26,12 @@ def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # ty
     def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
         if topic == "documents.ingest":
             calls["ingest"].append((UUID(payload["document_id"]), payload["size_bytes"]))
+        elif topic == "documents.delete":
+            calls["delete"].append(
+                (UUID(payload["document_id"]), UUID(payload["actor_id"]))
+            )
+        elif topic == "documents.reindex":
+            calls["reindex"].append(UUID(payload["document_id"]))
         return real_publish(session, topic=topic, payload=payload, queue=queue)
 
     monkeypatch.setattr(outbox_service, "publish", _spy_publish)
@@ -34,10 +40,6 @@ def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # ty
         return 0
 
     monkeypatch.setattr("ragz.api.routes.documents.dispatch_pending", _noop_dispatch)
-    monkeypatch.setattr("ragz.api.routes.documents.enqueue_delete",
-                        lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
-    monkeypatch.setattr("ragz.api.routes.documents.enqueue_reindex",
-                        lambda doc_id: calls["reindex"].append(doc_id))
     return calls
 
 

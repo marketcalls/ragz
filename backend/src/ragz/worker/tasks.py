@@ -430,3 +430,14 @@ def outbox_dispatch_task(self: Task) -> int:
     from ragz.worker.outbox import dispatch_pending
 
     return _run(self, lambda: dispatch_pending())  # type: ignore[no-any-return]
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="documents.reconcile_stuck")
+def reconcile_stuck_documents_task(self: Task) -> dict[str, int]:
+    """Re-drive documents stranded mid-pipeline (review P1).
+
+    The outbox stops work being lost from now on; this recovers rows stranded
+    BEFORE it existed, and any whose worker died after claiming the message.
+    """
+    return _run(self, lambda: ingest.reconcile_stuck_documents())  # type: ignore[no-any-return]

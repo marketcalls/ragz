@@ -33,9 +33,9 @@ from ragz.modules.documents.schemas import (
     MetadataFieldOut,
     MetadataValuesIn,
 )
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext, require_action
 from ragz.worker.outbox import dispatch_pending
-from ragz.worker.tasks import enqueue_delete, enqueue_reindex
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -201,8 +201,18 @@ async def delete_document(
     # document is left in a clearly-broken state rather than silently
     # looking untouched forever.
     doc.status = "deleting"
+    # Outbox (review P1): the "deleting" flag and the work that acts on it commit
+    # together. Previously a crash here left a document parked at "deleting"
+    # forever -- visibly broken, as the comment above intends, but with nothing
+    # anywhere that would ever finish the job.
+    outbox_service.publish(
+        session,
+        topic="documents.delete",
+        payload={"document_id": str(doc.id), "actor_id": str(ctx.user_id)},
+        queue="interactive",
+    )
     await session.commit()
-    enqueue_delete(doc.id, ctx.user_id)
+    await dispatch_pending()
     return {"status": "deletion scheduled"}
 
 
@@ -233,7 +243,14 @@ async def reindex_document(
         raise ConflictError(
             "document is not in a reindexable state (must be indexed or failed)"
         )
-    enqueue_reindex(doc.id)
+    outbox_service.publish(
+        session,
+        topic="documents.reindex",
+        payload={"document_id": str(doc.id)},
+        queue="interactive",
+    )
+    await session.commit()
+    await dispatch_pending()
     return {"status": "reindexing"}
 
 
@@ -275,7 +292,14 @@ async def set_document_approved(
     # actual enqueue.
     doc, needs_reindex = await service.set_approved(session, ctx, document_id, body.approved)
     if needs_reindex is not None:
-        enqueue_reindex(needs_reindex)
+        outbox_service.publish(
+            session,
+            topic="documents.reindex",
+            payload={"document_id": str(needs_reindex)},
+            queue="interactive",
+        )
+        await session.commit()
+        await dispatch_pending()
     return _serialize_document(doc, ctx)
 
 
@@ -339,12 +363,22 @@ async def delete_folder(
 ) -> dict[str, int]:
     # Task 3: folders_service.delete_folder never enqueues itself (modules/
     # must never import worker/, Plan K Task 11's inversion) -- it returns
-    # the document ids whose status it already flipped to "deleting"; this
-    # route is the entrypoint layer allowed to import worker.tasks, so it
-    # performs the actual enqueue_delete call for each one.
+    # the document ids whose status it already flipped to "deleting".
+    #
+    # This was the worst of the publication gaps: delete_folder makes TWO
+    # commits before returning, so a crash here could leave a whole folder's
+    # documents at "deleting" with no work queued for any of them. The events
+    # go in one transaction, so the cascade is now all-or-nothing.
     document_ids = await folders_service.delete_folder(session, ctx, folder_id)
     for document_id in document_ids:
-        enqueue_delete(document_id, ctx.user_id)
+        outbox_service.publish(
+            session,
+            topic="documents.delete",
+            payload={"document_id": str(document_id), "actor_id": str(ctx.user_id)},
+            queue="interactive",
+        )
+    await session.commit()
+    await dispatch_pending()
     return {"documents_deleted": len(document_ids)}
 
 

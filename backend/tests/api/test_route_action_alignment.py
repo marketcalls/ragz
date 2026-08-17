@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
 from ragz.modules.documents.models import Document
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.reembed_models import ReembedJob
 from tests.api.test_permissions_routes import make_templated_member
 
@@ -176,9 +177,19 @@ async def test_eval_run_denied_without_evals_run(
 ) -> None:
     ws = chat_env["workspace"]
     enqueued: list[str] = []
-    monkeypatch.setattr(
-        "ragz.api.routes.evals.enqueue_eval_run", lambda w, tb: enqueued.append(tb)
-    )
+    real_publish = outbox_service.publish
+
+    def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
+        if topic == "evals.run":
+            enqueued.append(payload["triggered_by"])
+        return real_publish(session, topic=topic, payload=payload, queue=queue)
+
+    monkeypatch.setattr(outbox_service, "publish", _spy_publish)
+
+    async def _noop_dispatch(*_a: object, **_k: object) -> int:
+        return 0
+
+    monkeypatch.setattr("ragz.api.routes.evals.dispatch_pending", _noop_dispatch)
     # evals.read (view runs) granted, evals.run (trigger) denied -- the actions
     # were indistinguishable when both routes shared workspace.configure.
     await _reader(session, seeded_user, str(ws.id), email="noevalrun@acme.com",

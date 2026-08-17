@@ -103,18 +103,9 @@ root_package = "ragz"
 name = "Layered architecture"
 type = "layers"
 layers = ["ragz.api", "ragz.worker", "ragz.modules", "ragz.core"]
-ignore_imports = [
-    # Task 12 (Plan J, §6): update_retrieval_settings's settings-change eval
-    # trigger needs worker.tasks.enqueue_eval_run, and importing it at module
-    # scope would be a real circular import (evals.service, which this
-    # function also imports locally, already imports tenancy.service at
-    # module scope). Plan K Task 11 removed the sibling documents.service
-    # exception (DOC-5's promote_lineage) by inverting control instead:
-    # promote_lineage/set_approved/the ingest.py runners now return a
-    # needs-reindex document id, and their ENTRYPOINT callers -- worker/
-    # tasks.py's Celery task wrappers (which define enqueue_reindex in the
-    # same module, no import needed) and the approve route (api -> worker is
-    # an allowed layer direction) -- perform the actual enqueue. This entry
-    # remains a live, narrow exception for the unrelated tenancy.service edge.
-    "ragz.modules.tenancy.service -> ragz.worker.tasks",
-]
+# No exceptions. The last one (tenancy.service -> worker.tasks, for the
+# settings-change eval trigger) died when that trigger moved to the
+# transactional outbox: publishing an event needs no knowledge of Celery, so
+# the layer violation it required simply stopped existing. Adding an entry here
+# should be a last resort -- the outbox is usually the answer.
+ignore_imports = []

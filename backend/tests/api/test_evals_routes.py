@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.models import RoleTemplate, WorkspaceMember
 
 
@@ -82,9 +83,19 @@ async def test_golden_query_routes_require_configure_permission(
 
 async def test_trigger_and_list_eval_runs(evals_client, ws_id, h_admin, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     enqueued: list[str] = []
-    monkeypatch.setattr(
-        "ragz.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
-    )
+    real_publish = outbox_service.publish
+
+    def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
+        if topic == "evals.run":
+            enqueued.append(payload["triggered_by"])
+        return real_publish(session, topic=topic, payload=payload, queue=queue)
+
+    monkeypatch.setattr(outbox_service, "publish", _spy_publish)
+
+    async def _noop_dispatch(*_a: object, **_k: object) -> int:
+        return 0
+
+    monkeypatch.setattr("ragz.api.routes.evals.dispatch_pending", _noop_dispatch)
     r = await evals_client.post(f"/api/v1/workspaces/{ws_id}/evals/run", headers=h_admin)
     assert r.status_code == 202 and enqueued == ["manual"]
     r = await evals_client.get(f"/api/v1/workspaces/{ws_id}/evals/runs", headers=h_admin)
@@ -118,9 +129,19 @@ async def test_trigger_eval_run_rejects_cross_org_workspace(
     await session.commit()
 
     enqueued: list[str] = []
-    monkeypatch.setattr(
-        "ragz.api.routes.evals.enqueue_eval_run", lambda ws, tb: enqueued.append(tb)
-    )
+    real_publish = outbox_service.publish
+
+    def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
+        if topic == "evals.run":
+            enqueued.append(payload["triggered_by"])
+        return real_publish(session, topic=topic, payload=payload, queue=queue)
+
+    monkeypatch.setattr(outbox_service, "publish", _spy_publish)
+
+    async def _noop_dispatch(*_a: object, **_k: object) -> int:
+        return 0
+
+    monkeypatch.setattr("ragz.api.routes.evals.dispatch_pending", _noop_dispatch)
     r = await evals_client.post(f"/api/v1/workspaces/{rival_ws.id}/evals/run", headers=h_admin)
     # get_workspace_checked raises WorkspaceAccessDenied (403) uniformly for
     # cross-org and non-member so existence never leaks (tenancy/service.py's

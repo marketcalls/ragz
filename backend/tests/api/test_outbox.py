@@ -10,6 +10,7 @@ These tests hold the guarantee: the event commits WITH the domain change, a
 broker failure never loses it, and the sweep eventually delivers it.
 """
 
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.db import naive_utc
+from ragz.modules.auth.models import User
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.outbox.models import OutboxEvent
 
@@ -145,3 +147,75 @@ async def test_an_unknown_topic_is_parked_for_a_human_not_retried_forever(
 
     assert await outbox_service.claim_due(session) == []
     assert (await outbox_service.pending_backlog(session)) == 0
+
+
+async def _seed_document(
+    session: AsyncSession, user: "User", *, status: str, updated_at: "datetime"
+):  # type: ignore[no-untyped-def]
+    """A document in a given pipeline state, with a controllable updated_at --
+    the field the stuck sweep keys off."""
+    from ragz.modules.documents.models import Document
+    from ragz.modules.tenancy.models import Workspace, WorkspaceMember
+
+    ws = Workspace(org_id=user.org_id, name=f"stuck-{uuid4().hex[:6]}")
+    session.add(ws)
+    await session.flush()
+    session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id))
+    doc = Document(
+        org_id=user.org_id, workspace_id=ws.id, filename="f.pdf",
+        mime="application/pdf", size_bytes=10, content_hash=uuid4().hex,
+        status=status, storage_key="k", created_by=user.id, lineage_id=uuid4(),
+    )
+    session.add(doc)
+    await session.commit()
+    # Set after the insert: updated_at has onupdate=naive_utc, so assigning it
+    # in the constructor would be overwritten on the very next flush.
+    doc.updated_at = updated_at
+    await session.commit()
+    return doc
+
+
+async def test_a_stuck_document_is_requeued_through_the_outbox(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rows stranded mid-pipeline must come back.
+
+    The outbox stops work being lost from now on, but it cannot help a document
+    stranded BEFORE it existed, or one whose worker died after claiming the
+    message. Those sit at "queued"/"processing"/"deleting" forever, because the
+    status column looks like a queue while nothing reads it.
+
+    Recovery republishes to the OUTBOX rather than to Celery directly, so the
+    re-drive carries the same durability guarantee as the original.
+    """
+    from datetime import timedelta
+
+    from ragz.modules.documents import ingest
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+
+    stale = naive_utc() - timedelta(seconds=ingest._STUCK_AFTER_SECONDS + 60)
+    doc = await _seed_document(session, seeded_user, status="queued", updated_at=stale)
+
+    counts = await ingest.reconcile_stuck_documents()
+
+    assert counts["queued"] == 1
+    due = await outbox_service.claim_due(session)
+    assert [e.topic for e in due] == ["documents.ingest"]
+    assert due[0].payload["document_id"] == str(doc.id)
+
+
+async def test_a_recently_updated_document_is_left_alone(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow parse is not a stuck one -- re-driving it would duplicate work."""
+    from ragz.modules.documents import ingest
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+
+    await _seed_document(session, seeded_user, status="processing", updated_at=naive_utc())
+
+    counts = await ingest.reconcile_stuck_documents()
+
+    assert counts == {"queued": 0, "processing": 0, "deleting": 0}
+    assert await outbox_service.claim_due(session) == []

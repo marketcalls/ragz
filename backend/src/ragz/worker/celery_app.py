@@ -66,6 +66,14 @@ def build_celery() -> Celery:
                 "task": "outbox.dispatch_pending",
                 "schedule": 30,
             },
+            # Review P1: recovers documents stranded mid-pipeline -- rows from
+            # before the outbox existed, and any whose worker died after
+            # claiming the message. Hourly, because its own cutoff is hours: a
+            # tighter schedule would only re-scan the same rows.
+            "reconcile-stuck-documents": {
+                "task": "documents.reconcile_stuck",
+                "schedule": 60 * 60,
+            },
         },
     )
     return app

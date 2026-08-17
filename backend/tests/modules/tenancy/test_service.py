@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.evals import service as evals_service
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy import service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Workspace
@@ -39,19 +40,18 @@ async def test_top_k_change_triggers_eval_run_when_golden_queries_exist(
     await evals_service.create_golden_query(
         session, ctx, ws.id, question="q", expected_document_ids=[]
     )
-    enqueued: list[tuple[object, str]] = []
-    # enqueue_eval_run is imported locally inside update_retrieval_settings
-    # (avoids a real circular import -- evals.service already imports
-    # tenancy.service at module scope), so the interception point is the
-    # worker.tasks module attribute itself, not a tenancy.service name --
-    # mirrors tests/modules/documents/test_versioning.py's enqueue_reindex
-    # patching for the same reason.
-    monkeypatch.setattr(
-        "ragz.worker.tasks.enqueue_eval_run",
-        lambda workspace_id, triggered_by: enqueued.append((workspace_id, triggered_by)),
-    )
+    # The trigger is now an OUTBOX event published inside the caller's
+    # transaction, not a local import of worker.tasks.enqueue_eval_run -- which
+    # is why tenancy.service no longer needs a layering exception at all. The
+    # assertion is on the durable record of intent rather than on a fire-and-
+    # forget call, so it also proves the eval survives a broker outage.
     await service.update_retrieval_settings(session, ctx, ws.id, {"top_k": 12})
-    assert enqueued == [(ws.id, "settings_change")]
+    await session.commit()
+
+    events = await outbox_service.claim_due(session)
+    assert [(e.topic, e.payload["workspace_id"], e.payload["triggered_by"]) for e in events] == [
+        ("evals.run", str(ws.id), "settings_change")
+    ]
 
 
 async def test_fallback_policy_change_does_not_trigger_eval_run(

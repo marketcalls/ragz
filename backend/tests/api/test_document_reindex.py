@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
 from ragz.modules.documents.models import Document
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.models import Group
 from tests.api.test_permissions_routes import make_templated_member
 
@@ -21,9 +22,19 @@ from tests.api.test_permissions_routes import make_templated_member
 @pytest.fixture
 def captured_reindex(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
     calls: list[UUID] = []
-    monkeypatch.setattr(
-        "ragz.api.routes.documents.enqueue_reindex", lambda doc_id: calls.append(doc_id)
-    )
+    real_publish = outbox_service.publish
+
+    def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
+        if topic == "documents.reindex":
+            calls.append(UUID(payload["document_id"]))
+        return real_publish(session, topic=topic, payload=payload, queue=queue)
+
+    monkeypatch.setattr(outbox_service, "publish", _spy_publish)
+
+    async def _noop_dispatch(*_a: object, **_k: object) -> int:
+        return 0
+
+    monkeypatch.setattr("ragz.api.routes.documents.dispatch_pending", _noop_dispatch)
     return calls
 
 

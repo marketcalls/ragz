@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import timedelta
 from uuid import UUID
 
 import structlog
@@ -741,3 +742,72 @@ async def reconcile_security_projections(limit: int = 500) -> int:
             remaining=len(stale) - recovered,
         )
     return recovered
+
+
+#: A document that has been mid-flight longer than this is not "slow", it is
+#: abandoned -- its worker died, or its message was lost before the outbox
+#: existed. Generous enough that a genuinely large parse+embed is never
+#: disturbed.
+_STUCK_AFTER_SECONDS = 3 * 60 * 60
+
+
+async def reconcile_stuck_documents(limit: int = 200) -> dict[str, int]:
+    """Re-drive documents stranded mid-pipeline (review P1).
+
+    The outbox guarantees work is never LOST going forward, but it cannot help
+    rows stranded before it existed, nor a worker that died after claiming a
+    message. Those sit at "queued", "processing" or "deleting" forever: the
+    status column looks like a queue but nothing ever reads it.
+
+    Rather than re-enqueue Celery directly, this republishes to the OUTBOX --
+    same durability guarantee as the original publication, and one dispatch
+    path to reason about. Idempotent: the pipeline upserts under deterministic
+    point ids and delete is idempotent by design, so re-driving a document that
+    was actually fine is harmless.
+    """
+    from ragz.modules.outbox import service as outbox_service
+
+    cutoff = naive_utc() - timedelta(seconds=_STUCK_AFTER_SECONDS)
+    counts = {"queued": 0, "processing": 0, "deleting": 0}
+    async with _session() as session:
+        stuck = (
+            (
+                await session.execute(
+                    select(Document)
+                    .where(
+                        Document.status.in_(("queued", "processing", "deleting")),
+                        Document.updated_at < cutoff,
+                    )
+                    .order_by(Document.updated_at)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for doc in stuck:
+            if doc.status == "deleting":
+                outbox_service.publish(
+                    session,
+                    topic="documents.delete",
+                    payload={"document_id": str(doc.id), "actor_id": str(doc.created_by)},
+                    queue="interactive",
+                )
+            else:
+                # queued never started; processing died partway. Both re-enter
+                # at the front of the chain -- parse is cheap relative to
+                # guessing which stage was reached.
+                outbox_service.publish(
+                    session,
+                    topic="documents.ingest",
+                    payload={"document_id": str(doc.id), "size_bytes": doc.size_bytes},
+                )
+            counts[doc.status] += 1
+        await session.commit()
+    if stuck:
+        log.warning(
+            "stuck_documents_requeued",
+            cutoff_seconds=_STUCK_AFTER_SECONDS,
+            **counts,
+        )
+    return counts
