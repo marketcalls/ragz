@@ -672,3 +672,57 @@ async def mark_failed(document_id: UUID, reason: str) -> None:
             doc.status = "failed"
             doc.error = reason[:1000]
             await session.commit()
+
+
+async def reconcile_security_projections(limit: int = 500) -> int:
+    """Re-drive documents whose committed security state never reached Qdrant.
+
+    Fail-closed ACL projection (review P0) trades availability for safety: a
+    document with an unprojected revision is excluded from retrieval. That is
+    the correct default, but without this it is also PERMANENT -- one Qdrant
+    blip would leave a document invisible until someone noticed and re-saved
+    its ACL by hand. This is the other half of the contract: the system closes
+    the door on failure, then reopens it by itself once the store is reachable.
+
+    Idempotent and safe to run concurrently with live traffic: it re-reads the
+    current Postgres ACL and projects that, so a document that has since been
+    changed again is simply projected at its newer revision.
+
+    Returns the number of documents brought back to 'active', so the beat log
+    (and, later, a metric) shows whether the backlog is draining or growing.
+    """
+    from ragz.modules.documents.service import project_document_security
+
+    recovered = 0
+    async with _session() as session:
+        stale = (
+            (
+                await session.execute(
+                    select(Document)
+                    .where(Document.index_state != "active")
+                    .order_by(Document.updated_at)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for doc in stale:
+            try:
+                await project_document_security(session, doc)
+            except Exception:  # noqa: BLE001 - one bad document must not stall the sweep
+                log.warning(
+                    "security_projection_reconcile_failed",
+                    document_id=str(doc.id),
+                    security_revision=doc.security_revision,
+                )
+                continue
+            recovered += 1
+    if stale:
+        log.info(
+            "security_projection_reconciled",
+            attempted=len(stale),
+            recovered=recovered,
+            remaining=len(stale) - recovered,
+        )
+    return recovered

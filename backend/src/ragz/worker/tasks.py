@@ -402,3 +402,16 @@ def refresh_model_catalog() -> None:
             await engine.dispose()
 
     asyncio.run(_run())
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="documents.reconcile_security_projections")
+def reconcile_security_projections_task(self: Task) -> int:
+    """Re-drive documents whose committed ACL never reached Qdrant (review P0).
+
+    Fail-closed projection makes a Qdrant failure hide a document instead of
+    over-sharing it. This is what makes that recoverable without a human:
+    without it, one blip would leave the document invisible until someone
+    re-saved its ACL by hand.
+    """
+    return _run(self, lambda: ingest.reconcile_security_projections())  # type: ignore[no-any-return]

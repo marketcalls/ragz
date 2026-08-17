@@ -49,6 +49,15 @@ def build_celery() -> Celery:
                 "task": "attachments.cleanup_stale",
                 "schedule": 24 * 60 * 60,
             },
+            # Review P0: fail-closed ACL projection hides a document when Qdrant
+            # is unreachable rather than over-sharing it. This reopens the door
+            # once the store is back. Minutes, not the daily cadence above --
+            # the window it closes is one where legitimate readers are denied,
+            # so the recovery time IS the user-visible outage.
+            "reconcile-security-projections": {
+                "task": "documents.reconcile_security_projections",
+                "schedule": 5 * 60,
+            },
         },
     )
     return app

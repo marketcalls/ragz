@@ -90,6 +90,7 @@ def _tenant_filter(
     acl_group_ids: frozenset[UUID] | None,
     current_only: bool,
     metadata_clauses: Sequence[MetadataClause] | None,
+    unprojected_document_ids: frozenset[UUID] = frozenset(),
 ) -> models.Filter:
     """The ONE Qdrant filter builder (iron rule 1). tenant_id is always a
     must-condition. acl_group_ids, current_only, and metadata_clauses are all
@@ -165,6 +166,25 @@ def _tenant_filter(
                         key="is_current", match=models.MatchValue(value=True)
                     ),
                     models.IsEmptyCondition(is_empty=models.PayloadField(key="is_current")),
+                ]
+            )
+        )
+    # Fail-closed ACL projection (review P0). These documents have a committed
+    # security change that has NOT reached this collection, so their payload
+    # still carries the previous, possibly broader ACL. Excluded as a must_not
+    # INSIDE the vector query -- never post-filtered in Python (iron rule 2).
+    # Bounded in practice: only documents mid-projection are ever listed, which
+    # is why documents/service.py reads them from a partial index.
+    if unprojected_document_ids:
+        must.append(
+            models.Filter(
+                must_not=[
+                    models.FieldCondition(
+                        key="document_id",
+                        match=models.MatchAny(
+                            any=sorted(str(d) for d in unprojected_document_ids)
+                        ),
+                    )
                 ]
             )
         )
@@ -497,9 +517,20 @@ async def retrieve(
             prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
         )
     sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
+    # Fail-closed ACL projection (review P0): documents whose committed security
+    # state has not reached this collection are excluded from the query. Local
+    # import for the same reason as models_service above -- documents.service
+    # imports THIS module, so a module-scope import would be circular. A public
+    # service call, never that module's ORM.
+    from ragz.modules.documents import service as documents_service
+
+    unprojected = await documents_service.unprojected_document_ids(
+        session, ctx.org_id, workspace_id
+    )
     flt = _tenant_filter(
         org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx),
         current_only=True, metadata_clauses=metadata_clauses,
+        unprojected_document_ids=unprojected,
     )
     client = get_qdrant()
     fetch_k = _RERANK_PREFETCH if ws.rerank_enabled else k

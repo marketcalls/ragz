@@ -56,6 +56,11 @@ class Document(UUIDPk, Base):
             "chunk_method_override IN ('heading', 'fixed', 'page', 'table_qa')",
             name="ck_documents_chunk_method_override",
         ),
+        # Mirrors migration b1c4e7a20d31's ck_documents_index_state.
+        CheckConstraint(
+            "index_state IN ('active', 'pending', 'failed')",
+            name="ck_documents_index_state",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
@@ -76,6 +81,16 @@ class Document(UUIDPk, Base):
     acl_group_ids: Mapped[list[UUID] | None] = mapped_column(
         ARRAY(PG_UUID(as_uuid=True)), default=None
     )
+    # Fail-closed ACL projection (review P0). A security-relevant change bumps
+    # security_revision in the SAME commit as the change itself; the projection
+    # to Qdrant then advances projected_security_revision and flips index_state
+    # back to 'active'. While they differ the document is NOT retrievable: the
+    # vector payload no longer reflects committed intent, so no caller's access
+    # can be evaluated correctly -- including one the new ACL permits. A brief
+    # under-grant is the right trade for never over-granting.
+    security_revision: Mapped[int] = mapped_column(default=0)
+    projected_security_revision: Mapped[int] = mapped_column(default=0)
+    index_state: Mapped[str] = mapped_column(default="active")  # active|pending|failed
     # Plan H (DOC-5): version lineage
     version: Mapped[int] = mapped_column(default=1)
     lineage_id: Mapped[UUID] = mapped_column(index=True)  # v1 row's own id; no FK (self-ref churn)

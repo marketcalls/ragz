@@ -292,18 +292,52 @@ async def set_document_acl(
         if owned != set(acl_group_ids):
             raise NotFoundError("one or more groups not found")
     doc.acl_group_ids = list(acl_group_ids) if acl_group_ids is not None else None
+    # Fail-closed ACL projection (review P0). The new ACL, the revision bump and
+    # the audit event land in ONE commit. From this instant the document is
+    # unprojected, so retrieval stops serving it (see unprojected_document_ids)
+    # -- the previous ordering left the OLD, broader payload searchable if the
+    # Qdrant call below failed, which is precisely the over-grant window.
+    doc.security_revision += 1
+    doc.index_state = "pending"
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="document.acl_changed", target_type="document",
                        target_id=str(doc.id))
     await session.commit()
-    # After commit so a failed Qdrant call never strands a half-applied ACL in
-    # PG; on Qdrant failure the route 502s and the admin retries (set_payload
-    # is idempotent).
-    collection_name = await retrieval_service.resolve_collection_name(session, doc.workspace_id)
-    await retrieval_service.update_document_acl(
-        ctx.org_id, doc.id, doc.acl_group_ids, collection_name=collection_name
-    )
+    await project_document_security(session, doc)
     return doc
+
+
+async def project_document_security(session: AsyncSession, doc: Document) -> None:
+    """Push a document's committed ACL into the vector store and mark it active.
+
+    Idempotent by construction: it writes the CURRENT Postgres ACL and then
+    records the revision it projected, so re-running after a partial failure
+    converges rather than double-applying. Safe to call from the request path,
+    from a retry, or from the reconciler.
+
+    On failure the document stays out of retrieval (index_state='failed') and
+    the exception propagates so the caller can surface it -- but unlike before,
+    the failure is now merely an availability problem, not a security one.
+    """
+    target_revision = doc.security_revision
+    try:
+        collection_name = await retrieval_service.resolve_collection_name(
+            session, doc.workspace_id
+        )
+        await retrieval_service.update_document_acl(
+            doc.org_id, doc.id, doc.acl_group_ids, collection_name=collection_name
+        )
+    except Exception:
+        doc.index_state = "failed"
+        await session.commit()
+        raise
+    # Record the revision that was actually projected, not "now": a concurrent
+    # commit may already have bumped security_revision past it, and claiming
+    # that newer revision as projected would re-open the over-grant window.
+    doc.projected_security_revision = target_revision
+    if doc.security_revision == target_revision:
+        doc.index_state = "active"
+    await session.commit()
 
 
 async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID) -> UUID | None:
@@ -403,3 +437,29 @@ async def set_approved(
     needs_reindex = await promote_lineage(session, ctx.org_id, doc.lineage_id)
     await session.refresh(doc)
     return doc, needs_reindex
+
+
+async def unprojected_document_ids(
+    session: AsyncSession, org_id: UUID, workspace_id: UUID
+) -> frozenset[UUID]:
+    """Documents whose committed security state has not reached the vector store.
+
+    Fail-closed ACL projection (review P0): a security change commits to
+    Postgres before it is projected into Qdrant, so between those two points the
+    stored payload still carries the PREVIOUS, possibly broader ACL. Retrieval
+    must not serve from that payload -- see retrieval.service._tenant_filter,
+    which excludes these ids inside the vector query rather than post-filtering.
+
+    Public because `retrieval` may call another module's service but never reach
+    into its ORM models. Backed by the ix_documents_unprojected partial index,
+    so this is a small read even on a large corpus: only documents actually
+    mid-projection are ever returned.
+    """
+    rows = await session.execute(
+        select(Document.id).where(
+            Document.org_id == org_id,
+            Document.workspace_id == workspace_id,
+            Document.index_state != "active",
+        )
+    )
+    return frozenset(rows.scalars())
