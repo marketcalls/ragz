@@ -1,0 +1,262 @@
+# Required PR gates.
+#
+# CLAUDE.md has long claimed every PR runs ruff, mypy, ESLint, tsc, unit +
+# integration, isolation, and import-linter. Until this file existed, none of
+# that was enforced: only a dependency audit and a nightly red-team run were
+# checked in, so boundary, isolation, type and behaviour regressions could
+# merge against the documented security model. This is that missing gate.
+#
+# Jobs are split so a failure names the thing that broke rather than "CI red".
+# The isolation suite is deliberately its OWN job: it is the tenant/ACL leak
+# boundary, and it must be visible and separately required in branch
+# protection, never buried in a general test run.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push supersedes the previous run for the same ref -- stale PR runs stop
+# instead of competing for runners.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Tests bring their own containers (testcontainers); this keeps the app's own
+  # settings deterministic and off any developer .env.
+  RAGZ_ENVIRONMENT: test
+
+jobs:
+  backend-quality:
+    name: backend · lint, types, boundaries
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: Ruff
+        run: uv run ruff check src tests
+
+      - name: Mypy
+        run: uv run mypy src
+
+      # The module map in CLAUDE.md is only real if it is machine-checked:
+      # api/worker -> modules -> core, and no module reaching into another
+      # module's internals.
+      - name: Import boundaries (import-linter)
+        run: uv run lint-imports
+
+  backend-tests:
+    name: backend · unit + integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      # Real Postgres/Qdrant/Redis/MinIO via testcontainers -- no mocked stores,
+      # per the testing strategy. Ubuntu runners ship a working Docker daemon.
+      - name: Pytest (everything except the isolation suite)
+        run: uv run pytest tests --ignore=tests/isolation --ignore=tests/redteam -q
+
+  backend-isolation:
+    name: backend · tenant + ACL isolation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      # Adversarial cross-tenant and ACL leak tests. Expensive live-model
+      # red-team runs stay nightly; these are deterministic and run per PR.
+      - name: Isolation suite
+        run: uv run pytest tests/isolation -q
+
+  migrations:
+    name: backend · migrations are linear and current
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      # Forward-only migrations mean a second head is a merge accident, not a
+      # style problem: it makes `upgrade head` ambiguous.
+      - name: Exactly one Alembic head
+        run: |
+          heads=$(uv run alembic heads | grep -c '(head)' || true)
+          echo "alembic heads: $heads"
+          test "$heads" -eq 1 || { uv run alembic heads; exit 1; }
+
+      # Applies the whole chain against a real Postgres and asserts the seeds.
+      - name: Migration chain applies to head
+        run: uv run pytest tests/test_migrations.py -q
+
+  openapi-drift:
+    name: api · generated client matches the API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: uv sync --locked
+        working-directory: backend
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      # A route or schema change without a regenerated client is a type lie:
+      # the frontend compiles against a contract the server no longer serves.
+      # Derived from the app object, so no server needs to run.
+      - name: Regenerate the client from the live app definition
+        run: |
+          uv run python scripts/export_openapi.py "$RUNNER_TEMP/openapi.json"
+        working-directory: backend
+
+      - name: Diff against the committed client
+        run: |
+          pnpm exec openapi-typescript "$RUNNER_TEMP/openapi.json" -o /tmp/schema.d.ts
+          if ! diff -u src/api/schema.d.ts /tmp/schema.d.ts; then
+            echo "::error::frontend/src/api/schema.d.ts is stale. Run 'pnpm generate:api' against a running backend and commit the result."
+            exit 1
+          fi
+        working-directory: frontend
+
+  frontend-quality:
+    name: frontend · lint, types, tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # No `version:` -- pnpm is pinned by package.json#packageManager, so CI
+      # and developers cannot drift apart. (audit.yml previously pinned 9,
+      # which cannot even read this repo's pnpm-workspace.yaml.)
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: TypeScript
+        run: pnpm typecheck
+
+      - name: Vitest
+        run: pnpm test
+
+      # `build` runs tsc --noEmit then vite build: catches anything that only
+      # fails in a production bundle (bad dynamic import, missing asset).
+      - name: Production build
+        run: pnpm build
+
+  e2e-smoke:
+    name: frontend · playwright smoke (compiles)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # The spec self-skips unless E2E=1 against a live stack, so this gate
+      # proves the smoke still parses, typechecks and its selectors compile --
+      # it does NOT prove the flow works. Running it for real needs the full
+      # compose stack plus a provider key; that is Phase 3 of the review, and
+      # until then this only stops the smoke suite rotting silently.
+      - name: Playwright (skipped without a live stack)
+        run: pnpm exec playwright test --list
+
+  secret-scan:
+    name: repo · secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # gitleaks scans history, not just the tip
+
+      # Iron rule 3: the KEK is the only out-of-DB secret and nothing else
+      # belongs in the repo. This makes that checkable rather than assumed.
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
