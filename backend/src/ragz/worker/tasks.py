@@ -35,6 +35,15 @@ class IngestTask(Task):
 
     def on_failure(self, exc: Exception, task_id: str, args: tuple[Any, ...],
                    kwargs: dict[str, Any], einfo: Any) -> None:
+        # Beat-scheduled maintenance tasks (outbox dispatch, the reconcilers)
+        # share this base but take NO arguments, so args[0] raised IndexError
+        # and replaced the real failure with a confusing one from the hook
+        # itself. Nothing to mark in that case -- let the original propagate.
+        if not args:
+            structlog.get_logger().error(
+                "scheduled_task_failed", task=self.name, error=str(exc)
+            )
+            return
         asyncio.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
 
 

@@ -9,10 +9,9 @@ and queues is exactly the coupling the review flagged -- "do not call
 
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.db import naive_utc
@@ -28,7 +27,12 @@ _MAX_BACKOFF = 3600
 
 
 def _backoff(attempts: int) -> timedelta:
-    idx = min(attempts, len(_BACKOFF_SECONDS) - 1)
+    """Delay before retry number `attempts` (1-based).
+
+    Indexed with attempts-1: mark_failed increments FIRST, so the first failure
+    arrives here as attempts=1 and must get the 5s tier, not the 30s one.
+    """
+    idx = min(max(attempts - 1, 0), len(_BACKOFF_SECONDS) - 1)
     return timedelta(seconds=min(_BACKOFF_SECONDS[idx], _MAX_BACKOFF))
 
 
@@ -101,11 +105,10 @@ async def mark_failed(session: AsyncSession, event: OutboxEvent, error: str) -> 
 async def pending_backlog(session: AsyncSession) -> int:
     """How many events are owed work. Surfaced by ops/health so a broker outage
     shows up as a growing number rather than as silence."""
-    rows = await session.execute(
-        select(OutboxEvent.id).where(OutboxEvent.status == "pending")
+    # COUNT(*) in the database: this is called for health/alerting, exactly when
+    # the backlog is LARGE, so materialising every pending UUID to len() them
+    # would be slowest precisely when it matters most.
+    count = await session.scalar(
+        select(func.count()).select_from(OutboxEvent).where(OutboxEvent.status == "pending")
     )
-    return len(list(rows.scalars()))
-
-
-async def get_event(session: AsyncSession, event_id: UUID) -> OutboxEvent | None:
-    return await session.get(OutboxEvent, event_id)
+    return int(count or 0)

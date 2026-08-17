@@ -33,10 +33,10 @@ def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # ty
 
     monkeypatch.setattr(outbox_service, "publish", _spy_publish)
 
-    async def _noop_dispatch(*_a: object, **_k: object) -> int:
-        return 0
+    async def _noop_dispatch(*_a: object, **_k: object) -> None:
+        return None
 
-    monkeypatch.setattr("ragz.api.routes.documents.dispatch_pending", _noop_dispatch)
+    monkeypatch.setattr("ragz.api.routes.documents.nudge", _noop_dispatch)
     return calls
 
 

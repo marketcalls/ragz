@@ -35,7 +35,7 @@ from ragz.modules.documents.schemas import (
 )
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext, require_action
-from ragz.worker.outbox import dispatch_pending
+from ragz.worker.outbox import nudge
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -133,7 +133,7 @@ async def upload_document(
     # process dies here, the sweep still picks the event up. That is the whole
     # difference from the old enqueue_ingest call, which WAS the only record
     # that the work was owed.
-    await dispatch_pending()
+    await nudge()
     return _serialize_document(doc, ctx)
 
 
@@ -212,7 +212,7 @@ async def delete_document(
         queue="interactive",
     )
     await session.commit()
-    await dispatch_pending()
+    await nudge()
     return {"status": "deletion scheduled"}
 
 
@@ -250,7 +250,7 @@ async def reindex_document(
         queue="interactive",
     )
     await session.commit()
-    await dispatch_pending()
+    await nudge()
     return {"status": "reindexing"}
 
 
@@ -299,7 +299,7 @@ async def set_document_approved(
             queue="interactive",
         )
         await session.commit()
-        await dispatch_pending()
+        await nudge()
     return _serialize_document(doc, ctx)
 
 
@@ -378,7 +378,7 @@ async def delete_folder(
             queue="interactive",
         )
     await session.commit()
-    await dispatch_pending()
+    await nudge()
     return {"documents_deleted": len(document_ids)}
 
 

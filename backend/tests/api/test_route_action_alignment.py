@@ -186,10 +186,10 @@ async def test_eval_run_denied_without_evals_run(
 
     monkeypatch.setattr(outbox_service, "publish", _spy_publish)
 
-    async def _noop_dispatch(*_a: object, **_k: object) -> int:
-        return 0
+    async def _noop_dispatch(*_a: object, **_k: object) -> None:
+        return None
 
-    monkeypatch.setattr("ragz.api.routes.evals.dispatch_pending", _noop_dispatch)
+    monkeypatch.setattr("ragz.api.routes.evals.nudge", _noop_dispatch)
     # evals.read (view runs) granted, evals.run (trigger) denied -- the actions
     # were indistinguishable when both routes shared workspace.configure.
     await _reader(session, seeded_user, str(ws.id), email="noevalrun@acme.com",

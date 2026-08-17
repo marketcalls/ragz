@@ -115,7 +115,7 @@ async def test_the_dispatcher_delivers_pending_work_to_the_broker(
 
     sent: list[dict[str, Any]] = []
     monkeypatch.setitem(
-        worker_outbox._HANDLERS, "documents.ingest", lambda p: sent.append(p)
+        worker_outbox._HANDLERS, "documents.ingest", lambda p, _q: sent.append(p)
     )
     monkeypatch.setattr(ingest, "_session", _FixedSession(session))
 
@@ -134,19 +134,33 @@ async def test_the_dispatcher_delivers_pending_work_to_the_broker(
 
 
 async def test_an_unknown_topic_is_parked_for_a_human_not_retried_forever(
-    session: AsyncSession,
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A publisher shipped ahead of its consumer needs attention, not backoff."""
+    """A publisher shipped ahead of its consumer needs attention, not backoff.
+
+    Driven through the REAL dispatcher: an earlier version set status='failed'
+    by hand, which re-implemented the branch under test instead of testing it --
+    it would still have passed if that branch were deleted entirely.
+    """
+    from ragz.modules.documents import ingest
+    from ragz.worker import outbox as worker_outbox
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+
     outbox_service.publish(session, topic="totally.unknown", payload={})
     await session.commit()
 
-    event = (await outbox_service.claim_due(session))[0]
-    event.status = "failed"
-    event.last_error = "no handler for topic 'totally.unknown'"
-    await session.commit()
+    assert await worker_outbox.dispatch_pending() == 0
 
+    # Parked, not backed off: it will not be retried, and it no longer counts
+    # as owed work, so it cannot mask a real backlog.
     assert await outbox_service.claim_due(session) == []
-    assert (await outbox_service.pending_backlog(session)) == 0
+    assert await outbox_service.pending_backlog(session) == 0
+    event = (await session.execute(select(OutboxEvent))).scalars().one()
+    await session.refresh(event)
+    assert event.status == "failed"
+    assert "totally.unknown" in (event.last_error or "")
+
 
 
 async def _seed_document(

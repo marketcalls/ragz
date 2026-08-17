@@ -195,3 +195,47 @@ async def test_a_projection_superseded_mid_flight_never_activates_a_stale_revisi
     await session.refresh(row)
     assert row.index_state == "active"
     assert row.projected_security_revision == row.security_revision
+
+
+async def test_an_acl_committed_mid_query_cannot_be_served_from_the_stale_payload(
+    session: AsyncSession, qdrant_collection: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cubic P0: the pre-query exclusion is a snapshot, not a lock.
+
+    retrieve() reads the unprojected set, then queries Qdrant. An ACL can commit
+    in that window: the snapshot does not know the document is now pending, while
+    Qdrant is still serving the pre-change payload -- so the old, broader ACL
+    would be honoured for that one query.
+
+    Reproduced by making the FIRST read (the pre-query snapshot) return the state
+    as it was BEFORE the restriction, and later reads return the truth. Without
+    the post-query recheck this test fails: the outsider gets the secret.
+    """
+    from ragz.modules.documents import service as documents_service
+
+    ctx_in, ctx_out, ctx_admin, ws, finance = await seed_acl_workspace(session)
+    doc = await ingest_text(session, ctx_admin, ws, "secret.txt", SECRET)
+    before = await retrieve(session, ctx_out, ws.id, SECRET, top_k=10)
+    assert doc.id in {c.document_id for c in before.chunks}, "baseline: open"
+
+    # Restrict it, with the projection failing so Qdrant keeps the OLD
+    # unrestricted payload -- the stale-payload condition.
+    await _tighten_with_qdrant_down(monkeypatch, session, ctx_admin, doc.id, finance.id)
+
+    real_unprojected = documents_service.unprojected_document_ids
+    calls = {"n": 0}
+
+    async def _stale_first(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # The pre-query snapshot, taken a moment before the ACL committed.
+            return frozenset()
+        return await real_unprojected(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(documents_service, "unprojected_document_ids", _stale_first)
+
+    after = await retrieve(session, ctx_out, ws.id, SECRET, top_k=10)
+
+    assert calls["n"] >= 2, "retrieve must re-read after the query, not trust one snapshot"
+    assert doc.id not in {c.document_id for c in after.chunks}
+    assert all("4400" not in c.text for c in after.chunks)

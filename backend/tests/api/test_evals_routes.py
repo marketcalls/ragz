@@ -92,10 +92,10 @@ async def test_trigger_and_list_eval_runs(evals_client, ws_id, h_admin, monkeypa
 
     monkeypatch.setattr(outbox_service, "publish", _spy_publish)
 
-    async def _noop_dispatch(*_a: object, **_k: object) -> int:
-        return 0
+    async def _noop_dispatch(*_a: object, **_k: object) -> None:
+        return None
 
-    monkeypatch.setattr("ragz.api.routes.evals.dispatch_pending", _noop_dispatch)
+    monkeypatch.setattr("ragz.api.routes.evals.nudge", _noop_dispatch)
     r = await evals_client.post(f"/api/v1/workspaces/{ws_id}/evals/run", headers=h_admin)
     assert r.status_code == 202 and enqueued == ["manual"]
     r = await evals_client.get(f"/api/v1/workspaces/{ws_id}/evals/runs", headers=h_admin)
@@ -138,10 +138,10 @@ async def test_trigger_eval_run_rejects_cross_org_workspace(
 
     monkeypatch.setattr(outbox_service, "publish", _spy_publish)
 
-    async def _noop_dispatch(*_a: object, **_k: object) -> int:
-        return 0
+    async def _noop_dispatch(*_a: object, **_k: object) -> None:
+        return None
 
-    monkeypatch.setattr("ragz.api.routes.evals.dispatch_pending", _noop_dispatch)
+    monkeypatch.setattr("ragz.api.routes.evals.nudge", _noop_dispatch)
     r = await evals_client.post(f"/api/v1/workspaces/{rival_ws.id}/evals/run", headers=h_admin)
     # get_workspace_checked raises WorkspaceAccessDenied (403) uniformly for
     # cross-org and non-member so existence never leaks (tenancy/service.py's

@@ -547,6 +547,28 @@ async def retrieve(
         with_payload=True,
     )
     candidates = [_chunk_from_point(p) for p in fused.points]
+    # Close the read-then-query window (Cubic P0). The pre-query exclusion above
+    # is a SNAPSHOT: an ACL can commit between that read and query_points, and
+    # Qdrant would still be serving the pre-change payload for a document the
+    # snapshot did not know was pending. Re-reading afterwards and dropping
+    # those hits closes it.
+    #
+    # This is a Python filter, which iron rule 2 forbids for ACL enforcement --
+    # and the distinction matters. Rule 2 exists so that a permissive query is
+    # never rescued by application code, because anything the code forgets is
+    # served. This pass can only ever REMOVE candidates, never admit one the
+    # vector filter excluded, so its failure mode is a needless denial rather
+    # than a leak. The allow-decision still lives entirely in the Qdrant filter.
+    recheck = await documents_service.unprojected_document_ids(
+        session, ctx.org_id, workspace_id
+    )
+    newly_unprojected = recheck - unprojected
+    if newly_unprojected:
+        candidates = [c for c in candidates if c.document_id not in newly_unprojected]
+        structlog.get_logger().info(
+            "retrieval_dropped_newly_unprojected",
+            workspace_id=str(workspace_id), count=len(newly_unprojected),
+        )
     candidates = _dedupe_hq(candidates)
     if not candidates:
         return RetrievalResult(chunks=[], no_answer=True)

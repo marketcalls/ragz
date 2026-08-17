@@ -313,8 +313,23 @@ async def set_document_acl(
     # unprojected, so retrieval stops serving it (see unprojected_document_ids)
     # -- the previous ordering left the OLD, broader payload searchable if the
     # Qdrant call below failed, which is precisely the over-grant window.
-    doc.security_revision += 1
-    doc.index_state = "pending"
+    #
+    # The bump is done IN SQL, not as `doc.security_revision += 1` (Cubic P1).
+    # Read-modify-write on this session's snapshot lets two concurrent updates
+    # both read revision N and both write N+1; their projections then both
+    # compare-and-set successfully against N+1, and Qdrant can end up holding
+    # one ACL while Postgres reports the other as projected. Postgres computes
+    # the increment from the CURRENT row, so concurrent updates always get
+    # distinct revisions.
+    await session.execute(
+        sa_update(Document)
+        .where(Document.id == doc.id)
+        .values(
+            security_revision=Document.security_revision + 1,
+            index_state="pending",
+        )
+    )
+    await session.refresh(doc, ["security_revision", "index_state"])
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="document.acl_changed", target_type="document",
                        target_id=str(doc.id))

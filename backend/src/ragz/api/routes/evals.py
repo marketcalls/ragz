@@ -9,7 +9,7 @@ from ragz.modules.evals import service
 from ragz.modules.evals.schemas import EvalRunOut, GoldenQueryCreate, GoldenQueryOut
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext, require_action
-from ragz.worker.outbox import dispatch_pending
+from ragz.worker.outbox import nudge
 
 router = APIRouter(tags=["evals"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -65,7 +65,7 @@ async def trigger_eval_run(workspace_id: UUID, session: SessionDep, ctx: EvalsRu
         payload={"workspace_id": str(workspace_id), "triggered_by": "manual"},
     )
     await session.commit()
-    await dispatch_pending()
+    await nudge()
 
 
 @router.get("/workspaces/{workspace_id}/evals/runs", response_model=list[EvalRunOut])
