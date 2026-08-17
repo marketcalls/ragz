@@ -2,7 +2,15 @@
 
 Ragz is a self-hosted, multi-tenant Agentic RAG platform (FastAPI + React + Qdrant + LiteLLM + Postgres). AGPL-3.0, fully open source.
 
-**Source of truth:** `docs/superpowers/specs/2026-07-18-ragz-engineering-foundation-design.md` (the Foundation). Product requirements: `docs/prd.md`. This file is distilled from the Foundation — if they disagree, the Foundation wins; fix this file in the same commit.
+**Source of truth:** this repository — the tests, the CI gates, and `docs/adr/`. See
+[ADR-0005](docs/adr/ADR-0005-architecture-source-of-truth.md). (Earlier revisions
+pointed at `docs/superpowers/specs/…`; those files were never tracked here, so every
+reference to them resolved to nothing.) Product requirements: `docs/prd.md`. Current
+remediation plan: `docs/audit/2026-08-17-architecture-review.md`.
+
+A rule in this file must be executable — a test, or a CI gate — or explicitly marked
+**Not implemented**. Never state an unbuilt control in the present tense: it reads as
+evidence the control exists, and reviewers stop looking.
 
 ## The Five Iron Security Rules
 
@@ -36,7 +44,12 @@ Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.
 - **Frontend:** React + Vite, TS `strict`, pnpm, TanStack Query, shadcn/ui + Tailwind. API client generated from OpenAPI.
 - **Commands:** `uv run pytest` · `uv run ruff check --fix` · `uv run mypy` · `pnpm test` · `pnpm lint` · `docker compose up` (canonical dev env).
 - Conventional Commits. Architecture-changing decisions get an ADR in `docs/adr/`.
-- CI gates (all required): ruff, mypy, ESLint, tsc, unit + integration (testcontainers — real Postgres/Qdrant/Redis, no mocked stores), isolation suite, import-linter, dependency audit, image scan.
+- CI gates (`.github/workflows/ci.yml`, per PR): ruff, mypy, import-linter, unit +
+  integration (testcontainers — real Postgres/Qdrant/Redis, no mocked stores), the
+  isolation suite as its own required job, Alembic single-head + chain apply, OpenAPI
+  client drift, ESLint, tsc, Vitest, production build, Playwright compile, gitleaks.
+  Dependency audit runs in `audit.yml`. **Not implemented:** SBOM and image scanning —
+  blocked on there being no Dockerfiles yet (review item 7).
 
 ## Never Do
 
@@ -51,16 +64,26 @@ Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.
 
 ## Error Handling & Observability
 
-Typed exceptions per module → one global `application/problem+json` handler; no internal details in responses. `request_id`/`org_id`/`user_id` bound in structlog and propagated to workers. Prometheus metrics `ragz_<module>_<metric>`; per-stage RAG latency histograms; OpenTelemetry tracing; `/healthz` + `/readyz` on both processes. Degradation contract: reranker down → fusion order; LLM error → fallback chain; Redis down → quotas fail closed, caches fail open.
+Typed exceptions per module → one global `application/problem+json` handler; no internal details in responses. `request_id`/`org_id`/`user_id` bound in structlog and propagated to workers. `/healthz` + `/readyz` on the API. Degradation contract: reranker down → fusion order; LLM error → fallback chain; Redis down → quotas fail closed, caches fail open.
 
-## Depth Pointers (Foundation sections)
+**Not implemented** (review item 8, scored 3/15 — earlier revisions of this file
+asserted all of it as if built): Prometheus metrics `ragz_<module>_<metric>`, per-stage
+RAG latency histograms, OpenTelemetry tracing, trace propagation into Celery, worker
+health endpoints, and alerting/SLOs. Neither `prometheus_client` nor `opentelemetry` is
+a dependency today.
 
-Architecture & layout §2 · Security model §3 · Coding standards §4 · Testing strategy §5 · Observability/ops §6 · Phase scoping §8.
+## Depth Pointers
+
+Architecture & layout: the Module Map above, enforced by import-linter. Security model:
+the Five Iron Rules above, enforced by `backend/tests/isolation/`. Coding standards:
+ruff + mypy config in `backend/pyproject.toml`, ESLint + `tsconfig.json` in `frontend/`.
+Testing strategy: `.github/workflows/ci.yml`. Decisions: `docs/adr/`. Known gaps and
+sequencing: `docs/audit/2026-08-17-architecture-review.md`.
 
 ## Product Requirements Pointers (owner addendum 2026-07-19)
 
-Binding product requirements beyond the PRD live in
-`docs/superpowers/specs/2026-07-19-customer-requirements-addendum.md`. Non-negotiables:
+The addendum file itself was never tracked here (see ADR-0005); these non-negotiables
+are transcribed so they survive it:
 formats incl. PPTX + OCR for scanned PDFs; version-aware retrieval (latest approved
 wins, superseded ignored); citations carry document name, version, section, page;
 never answer without sufficient indexed grounding (no-answer mode stays on);
