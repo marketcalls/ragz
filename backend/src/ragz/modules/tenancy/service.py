@@ -15,6 +15,7 @@ from ragz.core.errors import (
 from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
 from ragz.modules.models import service as models_service
+from ragz.modules.models.settings_service import get_default_embedding_model_id
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import (
@@ -35,7 +36,16 @@ async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str)
     # untouched; each workspace's chunk_method stays independently editable in
     # Workspace Settings. Unset -> "heading" (the column default).
     default_chunk = await get_app_setting(session, "default_chunk_method") or "heading"
+    # Likewise for the embedding model. Before this setting existed the column
+    # default hardcoded LOCAL_EMBEDDING_MODEL_ID, so a new workspace used the
+    # built-in TEI embedder even on an install whose only enabled embedding
+    # model was hosted -- ingestion then failed with a connection error against
+    # a TEI that was never started. Unset -> None -> the column default, which
+    # preserves exactly that old behaviour for installs that never set one.
+    default_embedding = await get_default_embedding_model_id(session)
     ws = Workspace(org_id=ctx.org_id, name=name, chunk_method=default_chunk)
+    if default_embedding is not None:
+        ws.embedding_model_id = default_embedding
     session.add(ws)
     await session.flush()
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,

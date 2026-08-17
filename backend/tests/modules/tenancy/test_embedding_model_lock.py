@@ -10,6 +10,7 @@ seed INSERT), so no local fixture is needed here.
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.app_settings import set_app_setting
 from ragz.core.config import Settings
 from ragz.core.errors import ConflictError
 from ragz.modules.auth.models import User
@@ -132,3 +133,30 @@ async def test_set_embedding_model_409s_once_indexed(
     ws_id = indexed_document_fixture.workspace_id
     with pytest.raises(ConflictError):
         await service.set_embedding_model(session, ctx, ws_id, embedding_model_fixture.id)
+
+
+async def test_new_workspace_inherits_global_default_embedding_model(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    """The regression this setting exists for: before it, every new workspace
+    was pinned to LOCAL_EMBEDDING_MODEL_ID by the column default no matter which
+    models were enabled, so enabling a hosted embedder changed nothing and
+    ingestion kept dialling a TEI that need not even be running."""
+    hosted = Model(
+        litellm_model_name="text-embedding-3-large", display_name="OpenAI Large",
+        provider_kind="openai", modality="embedding", dimension=3072, enabled=True,
+    )
+    session.add(hosted)
+    await session.flush()
+    await set_app_setting(session, "default_embedding_model_id", str(hosted.id))
+
+    ws = await service.create_workspace(session, ctx, "inherits-global")
+    assert ws.embedding_model_id == hosted.id
+
+
+async def test_new_workspace_falls_back_to_local_when_default_unset(
+    session: AsyncSession, ctx: TenantContext
+) -> None:
+    """Unset must preserve the pre-setting behaviour exactly."""
+    ws = await service.create_workspace(session, ctx, "no-global-default")
+    assert ws.embedding_model_id == LOCAL_EMBEDDING_MODEL_ID
