@@ -29,7 +29,7 @@ from testcontainers.postgres import PostgresContainer
 
 from ragz.core.db import build_engine, build_session_factory
 from ragz.modules.auth.passwords import hash_password
-from ragz.modules.tenancy.models import Organization
+from tests.migrations._historical import insert_org
 
 # Revision that seeds the core role templates (incl. Content Manager c03),
 # i.e. the schema state immediately BEFORE this admin-grant migration.
@@ -59,9 +59,9 @@ async def test_existing_admin_and_superadmin_granted_content_manager() -> None:
         user_id = uuid.uuid4()
         other_template_id = uuid.uuid4()
         async with factory() as session:
-            org = Organization(name="PreMigrationOrg")
-            session.add(org)
-            await session.flush()
+            # Raw insert, not the ORM: see tests/migrations/_historical.py --
+            # the ORM sends columns this revision does not have yet.
+            org_id = await insert_org(session)
             # A distinct pre-existing role template an admin might already hold.
             await session.execute(
                 sa.text(
@@ -90,7 +90,7 @@ async def test_existing_admin_and_superadmin_granted_content_manager() -> None:
                         ":ph, :role, true, :crid)"
                     ).bindparams(
                         sa.bindparam("id", value=uid, type_=sa.Uuid()),
-                        sa.bindparam("org_id", value=org.id, type_=sa.Uuid()),
+                        sa.bindparam("org_id", value=org_id, type_=sa.Uuid()),
                         sa.bindparam("email", value=email, type_=sa.String()),
                         sa.bindparam("ph", value=hash_password("pw123456x"), type_=sa.String()),
                         sa.bindparam("role", value=role, type_=sa.String()),

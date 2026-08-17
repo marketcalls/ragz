@@ -35,7 +35,7 @@ from testcontainers.postgres import PostgresContainer
 
 from ragz.core.db import build_engine, build_session_factory
 from ragz.modules.auth.passwords import hash_password
-from ragz.modules.tenancy.models import Organization
+from tests.migrations._historical import insert_org
 
 _PRE_MIGRATION_REVISION = "4380e51fba67"
 
@@ -58,9 +58,9 @@ async def test_contributor_seeded_and_assigned_to_existing_users() -> None:
         factory = build_session_factory(engine)
         pre_user_id = uuid.uuid4()
         async with factory() as session:
-            org = Organization(name="PreMigrationOrg")
-            session.add(org)
-            await session.flush()
+            # Raw insert, not the ORM: see tests/migrations/_historical.py --
+            # the ORM sends columns this revision does not have yet.
+            org_id = await insert_org(session)
             await session.execute(
                 sa.text(
                     "INSERT INTO users (id, created_at, org_id, email, password_hash, role, "
@@ -69,7 +69,7 @@ async def test_contributor_seeded_and_assigned_to_existing_users() -> None:
                 ),
                 {
                     "id": pre_user_id,
-                    "org_id": org.id,
+                    "org_id": org_id,
                     "email": "pre@x.com",
                     "ph": hash_password("pw123456x"),
                 },

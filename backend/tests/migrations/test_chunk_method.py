@@ -26,7 +26,7 @@ from testcontainers.postgres import PostgresContainer
 
 from ragz.core.db import build_engine, build_session_factory
 from ragz.modules.auth.passwords import hash_password
-from ragz.modules.tenancy.models import Organization
+from tests.migrations._historical import insert_org
 
 _PRE_MIGRATION_REVISION = "43a13912a44c"
 
@@ -48,9 +48,9 @@ async def test_chunk_method_backfilled_and_check_constrained() -> None:
         engine = build_engine(async_url)
         factory = build_session_factory(engine)
         async with factory() as session:
-            org = Organization(name="PreMigrationOrg")
-            session.add(org)
-            await session.flush()
+            # Raw insert, not the ORM: see tests/migrations/_historical.py --
+            # the ORM sends columns this revision does not have yet.
+            org_id = await insert_org(session)
             ws_result = await session.execute(
                 sa.text(
                     "INSERT INTO workspaces (id, created_at, org_id, name, embedding_model_id, "
@@ -60,7 +60,7 @@ async def test_chunk_method_backfilled_and_check_constrained() -> None:
                     "(SELECT id FROM models LIMIT 1), 0.35, 8, false, 'general_knowledge', "
                     "false, false, false) RETURNING id"
                 ),
-                {"org_id": org.id},
+                {"org_id": org_id},
             )
             pre_ws_id = ws_result.scalar_one()
 
@@ -70,7 +70,7 @@ async def test_chunk_method_backfilled_and_check_constrained() -> None:
                     "active, custom_role_id) VALUES (gen_random_uuid(), now(), :org_id, "
                     ":email, :ph, 'user', true, NULL) RETURNING id"
                 ),
-                {"org_id": org.id, "email": "pre@chunk.com", "ph": hash_password("pw123456x")},
+                {"org_id": org_id, "email": "pre@chunk.com", "ph": hash_password("pw123456x")},
             )
             pre_user_id = user_result.scalar_one()
             await session.commit()
@@ -110,7 +110,7 @@ async def test_chunk_method_backfilled_and_check_constrained() -> None:
                     ":created_by, now(), false, 1, gen_random_uuid(), "
                     "false, false, false, false) RETURNING id"
                 ),
-                {"org_id": org.id, "ws_id": pre_ws_id, "created_by": pre_user_id},
+                {"org_id": org_id, "ws_id": pre_ws_id, "created_by": pre_user_id},
             )
             doc_id = doc_result.scalar_one()
             await session.commit()
