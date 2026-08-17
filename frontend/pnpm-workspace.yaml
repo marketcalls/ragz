@@ -1,2 +1,11 @@
-allowBuilds:
-  esbuild: true
+# Not a multi-package workspace -- this file exists only to carry pnpm
+# settings. `packages` is deliberately empty: pnpm <10 rejects the file
+# without the key ("packages field missing or empty"), which is why an
+# unpinned `pnpm install` failed here. The version is pinned by
+# package.json#packageManager so CI and developers resolve the same pnpm.
+packages: []
+
+# pnpm 10's name for the old `allowBuilds`: dependencies allowed to run
+# install scripts. Everything else is blocked by default.
+onlyBuiltDependencies:
+  - esbuild

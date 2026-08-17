@@ -42,7 +42,12 @@ test('fetches the file as a blob, builds an object URL, and reports the mime typ
   await waitFor(() => expect(result.current.status).toBe('success'));
   expect(result.current.objectUrl).toBe('blob:mock-url');
   expect(result.current.mimeType).toBe('application/pdf');
-  expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+  // Observable shape, not `expect.any(Blob)`: Response.blob() returns undici's
+  // Blob, a different realm's constructor from jsdom's global, so an identity
+  // check fails on a value that is a perfectly good Blob.
+  const passed = vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob;
+  expect(passed.type).toBe('application/pdf');
+  expect(passed.size).toBeGreaterThan(0);
 });
 
 test('revokes the object URL on unmount', async () => {
