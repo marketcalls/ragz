@@ -15,6 +15,12 @@ evidence the control exists, and reviewers stop looking.
 ## The Five Iron Security Rules
 
 1. **Tenant isolation has one code path per store.** Postgres queries on org-owned tables go through the `TenantContext` dependency (`modules/tenancy/`). Qdrant searches go through the single filter-building function in `modules/retrieval/` (tenant_id + workspace membership + ACL-group intersection). Nothing else constructs Qdrant filters.
+   Backed in Postgres by composite same-tenant foreign keys on `documents`,
+   `chats`, `folders`, `api_keys` and `bot_integrations`: a row cannot reference
+   another org's workspace or user even if application code tries
+   (`tests/isolation/test_composite_tenant_fks.py`). **Not implemented:** row-level
+   security, and the "no unrestricted ORM access to tenant-owned entities" rule
+   is still convention rather than an enforced repository layer (review item 4).
 2. **Document ACLs are enforced inside the vector query** — never post-filtered in Python. An answer must never cite a document the asking user cannot open. Adversarial leak tests live in `backend/tests/isolation/` and run on every PR. Restricted documents still appear in workspace document listings for plain members (existence is visible, Drive-style); only contents/citations/chunks are ACL-enforced in the vector query, and the `acl_group_ids` field itself is admin/superadmin-only metadata, blanked to `null` for plain users.
 3. **Secrets live encrypted in Postgres** (envelope AES-256-GCM); the KEK is the only out-of-DB secret. Decryption happens in exactly one function in `modules/secrets/`. Secret fields are write-only in schemas. Secrets never appear in `.env` (beyond DB conn + KEK source), logs, traces, or API responses.
 4. **AuthN/AuthZ are declarative at the route boundary**: Argon2id, 15-min JWT access + rotating refresh, permission checks as FastAPI dependencies per route — no inline role checks in handlers. Rate limiting on auth/chat endpoints.

@@ -1,7 +1,15 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,6 +37,15 @@ class Folder(UUIDPk, Base):
             "uq_folders_workspace_root_name", "workspace_id", "name",
             unique=True, postgresql_where=text("parent_folder_id IS NULL"),
         ),
+        # Same-tenant composite FKs (e4f7c1a83b26) -- see Document.
+        ForeignKeyConstraint(
+            ["workspace_id", "org_id"], ["workspaces.id", "workspaces.org_id"],
+            name="fk_folders_workspace_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "org_id"], ["users.id", "users.org_id"],
+            name="fk_folders_created_by_org",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
@@ -55,6 +72,18 @@ class Document(UUIDPk, Base):
             "chunk_method_override IS NULL OR "
             "chunk_method_override IN ('heading', 'fixed', 'page', 'table_qa')",
             name="ck_documents_chunk_method_override",
+        ),
+        # Same-tenant composite FKs (e4f7c1a83b26): a plain FK on workspace_id
+        # proves the workspace EXISTS, not that it belongs to this row's org.
+        # Pairing org_id on both sides makes a cross-tenant reference
+        # impossible to persist, rather than merely unlikely to be written.
+        ForeignKeyConstraint(
+            ["workspace_id", "org_id"], ["workspaces.id", "workspaces.org_id"],
+            name="fk_documents_workspace_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "org_id"], ["users.id", "users.org_id"],
+            name="fk_documents_created_by_org",
         ),
         # Mirrors migration b1c4e7a20d31's ck_documents_index_state.
         CheckConstraint(

@@ -13,6 +13,8 @@ class User(UUIDPk, Base):
     # (test/dev schema build) enforces it too, not just a genuinely-migrated
     # Postgres.
     __table_args__ = (
+        # Composite-FK target -- see Workspace for the rationale.
+        UniqueConstraint("id", "org_id", name="uq_users_id_org_id"),
         CheckConstraint(
             "role IN ('superadmin', 'admin', 'user')", name="ck_users_role"
         ),

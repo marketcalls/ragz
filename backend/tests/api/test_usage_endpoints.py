@@ -122,6 +122,21 @@ async def test_platform_usage_requires_superadmin(
     assert {"org_id": str(seeded_user.org_id), "name": "Acme", "tokens": 10} in rows
 
 
+async def _workspace_in(session: AsyncSession, org_id, name: str) -> Workspace:  # type: ignore[no-untyped-def]
+    """A workspace in an EXISTING org.
+
+    The chats below carry seeded_user's org_id, so their workspace must belong
+    to that same org -- _org_with_workspace mints a NEW org, which made those
+    rows cross-tenant. That was invisible until the composite same-tenant FKs
+    (e4f7c1a83b26) started rejecting it; the constraint found real bad data in
+    the fixture, not a false positive.
+    """
+    ws = Workspace(org_id=org_id, name=name)
+    session.add(ws)
+    await session.flush()
+    return ws
+
+
 async def _org_with_workspace(session: AsyncSession, name: str) -> tuple[Organization, Workspace]:
     org = Organization(name=name)
     session.add(org)
@@ -143,7 +158,7 @@ async def test_summary_dashboard_fields_org_scoped(
     session.add(model)
     await session.flush()
 
-    _, ws = await _org_with_workspace(session, "AcmeWS-Home")
+    ws = await _workspace_in(session, seeded_user.org_id, "AcmeWS-Home")
     await record_usage(session, org_id=seeded_user.org_id, user_id=seeded_user.id,
                        model_id=model.id, feature="chat", prompt_tokens=10, completion_tokens=5)
     chat = Chat(org_id=seeded_user.org_id, workspace_id=ws.id, user_id=seeded_user.id)
@@ -182,7 +197,7 @@ async def test_no_answer_count(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:
     """kpis.no_answer_count == seeded no_answer messages in the window."""
-    _, ws = await _org_with_workspace(session, "AcmeWS-NoAnswer")
+    ws = await _workspace_in(session, seeded_user.org_id, "AcmeWS-NoAnswer")
     chat = Chat(org_id=seeded_user.org_id, workspace_id=ws.id, user_id=seeded_user.id)
     session.add(chat)
     await session.flush()
@@ -326,7 +341,7 @@ async def test_dashboard_feedback_summary(
 ) -> None:
     """Task 3 (CHAT-10/ADM-5): the dashboard's single summary call also
     carries the org-scoped feedback rollup, additively."""
-    _, ws = await _org_with_workspace(session, "AcmeWS-Feedback")
+    ws = await _workspace_in(session, seeded_user.org_id, "AcmeWS-Feedback")
     chat = Chat(org_id=seeded_user.org_id, workspace_id=ws.id, user_id=seeded_user.id)
     session.add(chat)
     await session.flush()
