@@ -34,7 +34,8 @@ from ragz.modules.documents.schemas import (
     MetadataValuesIn,
 )
 from ragz.modules.tenancy.context import TenantContext, require_action
-from ragz.worker.tasks import enqueue_delete, enqueue_ingest, enqueue_reindex
+from ragz.worker.outbox import dispatch_pending
+from ragz.worker.tasks import enqueue_delete, enqueue_reindex
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -126,7 +127,13 @@ async def upload_document(
         mime=file.content_type or "application/octet-stream",
         data=data, folder_id=folder_id,
     )
-    enqueue_ingest(doc.id, doc.size_bytes)
+    # The work is already durable: create_from_upload committed an outbox event
+    # in the same transaction as the document. This is only a latency nudge so
+    # ingestion starts now rather than at the next sweep -- if it fails, or the
+    # process dies here, the sweep still picks the event up. That is the whole
+    # difference from the old enqueue_ingest call, which WAS the only record
+    # that the work was owed.
+    await dispatch_pending()
     return _serialize_document(doc, ctx)
 
 

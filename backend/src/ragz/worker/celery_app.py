@@ -58,6 +58,14 @@ def build_celery() -> Celery:
                 "task": "documents.reconcile_security_projections",
                 "schedule": 5 * 60,
             },
+            # Review P1: the safety net behind the API's inline nudge. Frequent,
+            # because the gap it covers is work that is durably owed but not yet
+            # started -- an upload sitting at "queued". 30s bounds how late a
+            # job can be when the nudge could not run.
+            "outbox-dispatch": {
+                "task": "outbox.dispatch_pending",
+                "schedule": 30,
+            },
         },
     )
     return app

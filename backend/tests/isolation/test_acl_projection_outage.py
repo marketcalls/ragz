@@ -24,6 +24,7 @@ against regression.
 """
 
 import pytest
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.documents.service import set_document_acl
@@ -137,3 +138,60 @@ async def test_the_reconciler_reopens_access_once_qdrant_is_reachable_again(
     assert doc.id in {c.document_id for c in permitted.chunks}
     denied = await retrieve(session, ctx_out, ws.id, SECRET, top_k=10)
     assert doc.id not in {c.document_id for c in denied.chunks}
+
+
+async def test_a_projection_superseded_mid_flight_never_activates_a_stale_revision(
+    session: AsyncSession, qdrant_collection: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Independent audit finding: the activation must be a compare-and-set.
+
+    Sequence: a projection reads security_revision=N, and while it is talking to
+    Qdrant a SECOND ACL change commits revision N+1. If activation compared the
+    projector's stale in-memory snapshot, the row would be marked active while
+    Qdrant holds revision N -- serving the superseded, broader ACL indefinitely,
+    and a state-only reconciler query would never revisit it.
+
+    The document must stay unprojected until something projects N+1.
+    """
+    from ragz.modules.documents.models import Document
+    from ragz.modules.documents.service import project_document_security
+
+    ctx_in, ctx_out, ctx_admin, ws, finance = await seed_acl_workspace(session)
+    doc = await ingest_text(session, ctx_admin, ws, "secret.txt", SECRET)
+    doc.acl_group_ids = [finance.id]
+    doc.security_revision = 1
+    doc.index_state = "pending"
+    await session.commit()
+
+    real_update = retrieval_service.update_document_acl
+
+    async def _bump_then_project(*args: object, **kwargs: object) -> None:
+        # Someone else tightens the ACL again while this projection is in flight.
+        await session.execute(
+            sa_update(Document)
+            .where(Document.id == doc.id)
+            .values(security_revision=2)
+        )
+        await session.commit()
+        await real_update(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(retrieval_service, "update_document_acl", _bump_then_project)
+    await project_document_security(session, doc)
+    monkeypatch.undo()
+
+    row = await session.get(Document, doc.id)
+    assert row is not None
+    await session.refresh(row)
+    assert row.security_revision == 2
+    assert row.projected_security_revision == 1
+    assert row.index_state != "active", (
+        "activating here would serve revision 1's ACL while revision 2 is committed"
+    )
+
+    # And the reconciler must SEE it -- a state-only query would not.
+    from ragz.modules.documents.ingest import reconcile_security_projections
+
+    assert await reconcile_security_projections() == 1
+    await session.refresh(row)
+    assert row.index_state == "active"
+    assert row.projected_security_revision == row.security_revision

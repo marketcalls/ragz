@@ -1,8 +1,11 @@
+from uuid import UUID
+
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
+from ragz.modules.outbox import service as outbox_service
 
 
 @pytest.fixture
@@ -10,10 +13,24 @@ def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # ty
     """Mirrors tests/api/test_documents_routes.py's identically-shaped
     fixture (not shared via conftest, so redefined here) -- delete_folder's
     route loops calling enqueue_delete once per document, same as the
-    single-document delete route."""
+    single-document delete route.
+
+    Ingest now goes through the transactional outbox (review P1), so the spy sits
+    on publish rather than on a direct enqueue call."""
     calls: dict[str, list] = {"ingest": [], "delete": [], "reindex": []}  # type: ignore[type-arg]
-    monkeypatch.setattr("ragz.api.routes.documents.enqueue_ingest",
-                        lambda doc_id, size: calls["ingest"].append((doc_id, size)))
+    real_publish = outbox_service.publish
+
+    def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
+        if topic == "documents.ingest":
+            calls["ingest"].append((UUID(payload["document_id"]), payload["size_bytes"]))
+        return real_publish(session, topic=topic, payload=payload, queue=queue)
+
+    monkeypatch.setattr(outbox_service, "publish", _spy_publish)
+
+    async def _noop_dispatch(*_a: object, **_k: object) -> int:
+        return 0
+
+    monkeypatch.setattr("ragz.api.routes.documents.dispatch_pending", _noop_dispatch)
     monkeypatch.setattr("ragz.api.routes.documents.enqueue_delete",
                         lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
     monkeypatch.setattr("ragz.api.routes.documents.enqueue_reindex",

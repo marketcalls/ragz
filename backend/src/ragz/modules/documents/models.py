@@ -61,6 +61,15 @@ class Document(UUIDPk, Base):
             "index_state IN ('active', 'pending', 'failed')",
             name="ck_documents_index_state",
         ),
+        # Mirrors d3e6a9c42f15. The security invariant, enforced by the database
+        # rather than trusted from application code: a document may only claim
+        # to be projected when the revision Qdrant holds IS the committed one.
+        # Without this, a concurrent ACL update could mark a row active at an
+        # already-superseded revision and serve a stale ACL indefinitely.
+        CheckConstraint(
+            "index_state <> 'active' OR projected_security_revision = security_revision",
+            name="ck_documents_active_is_projected",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)

@@ -699,7 +699,22 @@ async def reconcile_security_projections(limit: int = 500) -> int:
             (
                 await session.execute(
                     select(Document)
-                    .where(Document.index_state != "active")
+                    .where(
+                        # Both halves matter. index_state catches the ordinary
+                        # failure; the revision comparison catches a row that
+                        # says "active" while its projection is behind -- which
+                        # a state-only query would skip forever, leaving a stale
+                        # ACL served indefinitely. The compare-and-set in
+                        # project_document_security should make that
+                        # unreachable, and the DB constraint makes it
+                        # impossible, but the sweep must not DEPEND on either
+                        # being perfect: this is the backstop.
+                        (Document.index_state != "active")
+                        | (
+                            Document.projected_security_revision
+                            != Document.security_revision
+                        )
+                    )
                     .order_by(Document.updated_at)
                     .limit(limit)
                 )

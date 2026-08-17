@@ -415,3 +415,18 @@ def reconcile_security_projections_task(self: Task) -> int:
     re-saved its ACL by hand.
     """
     return _run(self, lambda: ingest.reconcile_security_projections())  # type: ignore[no-any-return]
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="outbox.dispatch_pending")
+def outbox_dispatch_task(self: Task) -> int:
+    """Sweep undispatched outbox events (review P1).
+
+    The API nudges the dispatcher inline after a commit, so this sweep is the
+    SAFETY NET, not the normal path: it covers the cases the nudge cannot --
+    the process dying between commit and nudge, the broker being down at that
+    moment, or an event published by something with no request to nudge from.
+    """
+    from ragz.worker.outbox import dispatch_pending
+
+    return _run(self, lambda: dispatch_pending())  # type: ignore[no-any-return]

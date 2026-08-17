@@ -35,6 +35,7 @@ Review bar: OWASP ASVS L2 + OWASP LLM Top 10.
 | `quotas` | allocations, usage ledger, enforcement |
 | `secrets` | envelope encryption, KEK handling |
 | `audit` | append-only event log |
+| `outbox` | durable intent to run background work; committed with the domain change that justifies it |
 
 Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.py` only. Modules import `core/` and other modules' public services only — never internals or ORM models. Direction: `api`/`worker` → `modules` → `core`. Enforced by import-linter in CI.
 

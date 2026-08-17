@@ -1,7 +1,10 @@
 import hashlib
+from typing import Any
 from uuid import UUID, uuid4
 
+import structlog
 from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
@@ -15,11 +18,14 @@ from ragz.core.storage import build_storage
 from ragz.modules.audit.service import record_audit
 from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents.models import Document
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.retrieval import service as retrieval_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Group
 from ragz.modules.tenancy.reembed_models import ReembedJob
 from ragz.modules.tenancy.service import get_workspace_checked
+
+log = structlog.get_logger()
 
 
 async def _enforce_org_upload_quota(
@@ -139,6 +145,16 @@ async def create_from_upload(
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="document.uploaded", target_type="document",
                        target_id=str(doc.id))
+    # Transactional outbox (review P1): the document row, its audit event and
+    # the intent to ingest it commit TOGETHER. The route used to commit here and
+    # then call enqueue_ingest -- a crash or broker outage in that gap left a
+    # document stuck at "queued" forever with nothing to retry from, because a
+    # status column is not a queue.
+    outbox_service.publish(
+        session,
+        topic="documents.ingest",
+        payload={"document_id": str(doc.id), "size_bytes": doc.size_bytes},
+    )
     await session.commit()
     return doc
 
@@ -331,13 +347,40 @@ async def project_document_security(session: AsyncSession, doc: Document) -> Non
         doc.index_state = "failed"
         await session.commit()
         raise
-    # Record the revision that was actually projected, not "now": a concurrent
-    # commit may already have bumped security_revision past it, and claiming
-    # that newer revision as projected would re-open the over-grant window.
-    doc.projected_security_revision = target_revision
-    if doc.security_revision == target_revision:
-        doc.index_state = "active"
+    # Activate with a COMPARE-AND-SET, not an in-memory check. `doc` is this
+    # session's snapshot: a concurrent transaction can bump security_revision
+    # in the database while we project, and comparing against the stale
+    # attribute would mark the row active at an already-superseded revision --
+    # re-opening the exact over-grant window this protocol exists to close.
+    # Guarding inside the UPDATE lets Postgres arbitrate: if the revision moved,
+    # zero rows match, the document stays unprojected, and the reconciler
+    # re-drives it at the newer revision.
+    result: Any = await session.execute(
+        sa_update(Document)
+        .where(
+            Document.id == doc.id,
+            Document.security_revision == target_revision,
+        )
+        .values(
+            projected_security_revision=target_revision,
+            index_state="active",
+        )
+    )
+    if result.rowcount == 0:
+        # Superseded mid-projection. Record what we DID project so the
+        # reconciler can see the gap, but leave the row unprojected.
+        await session.execute(
+            sa_update(Document)
+            .where(Document.id == doc.id)
+            .values(projected_security_revision=target_revision, index_state="pending")
+        )
+        log.info(
+            "security_projection_superseded",
+            document_id=str(doc.id),
+            projected_revision=target_revision,
+        )
     await session.commit()
+    await session.refresh(doc)
 
 
 async def promote_lineage(session: AsyncSession, org_id: UUID, lineage_id: UUID) -> UUID | None:
