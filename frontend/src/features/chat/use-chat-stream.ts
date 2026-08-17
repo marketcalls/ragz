@@ -140,6 +140,25 @@ export function useChatStream(chatId: string | null) {
     [run],
   );
 
+  // Streams the reply to an already-persisted user message that has none --
+  // the opening turn of a chat created with first_message, or any turn
+  // stranded by a reload. The server 409s if an answer already exists, so a
+  // double call cannot fork a second reply.
+  const answer = useCallback(
+    (messageId: string, modelId?: string | null, reasoningEffort?: string | null) =>
+      run(
+        `/api/v1/messages/${messageId}/answer`,
+        {
+          ...(modelId ? { model_id: modelId } : {}),
+          ...(reasoningEffort && reasoningEffort !== 'off'
+            ? { reasoning_effort: reasoningEffort }
+            : {}),
+        },
+        null,
+      ),
+    [run],
+  );
+
   const abort = useCallback(() => abortRef.current?.abort(), []);
   const reset = useCallback(() => setState(IDLE), []);
 
@@ -154,5 +173,5 @@ export function useChatStream(chatId: string | null) {
     }, 750);
   }, [chatId, queryClient]);
 
-  return { ...state, send, regenerate, abort, reset, stop };
+  return { ...state, send, regenerate, answer, abort, reset, stop };
 }

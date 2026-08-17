@@ -145,13 +145,20 @@ export function ChatPage() {
         webSearchConsented,
       ),
     onNewChat: (newChatId, content, attachmentIds) =>
-      navigate(`/chat/${newChatId}`, {
-        state: {
-          initialMessage: content,
-          initialAttachmentIds: attachmentIds,
-          initialWebSearch: webSearchConsented,
-        },
-      }),
+      // content === null: already persisted by POST /chats — navigate with no
+      // state at all, so nothing depends on surviving a reload.
+      navigate(
+        `/chat/${newChatId}`,
+        content === null
+          ? undefined
+          : {
+              state: {
+                initialMessage: content,
+                initialAttachmentIds: attachmentIds,
+                initialWebSearch: webSearchConsented,
+              },
+            },
+      ),
     pendingFiles: pendingAttachments.files,
     clearPending: pendingAttachments.clear,
   });
@@ -186,6 +193,39 @@ export function ChatPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount/handoff
   }, [chatId, initialMessage, effectiveModelId]);
+
+  // Resume an unanswered turn. Two cases land here, both as "the active leaf
+  // is a user message with no reply":
+  //   1. the normal new-chat path — POST /chats persisted first_message, we
+  //      navigated here, and this streams its answer;
+  //   2. recovery — a turn stranded by a reload or a dropped stream, which
+  //      previously vanished with the browser's in-memory state.
+  // Gated on effectiveModelId for the same reason as the handoff above: on a
+  // fresh load the models query is still pending. Unlike the old path, losing
+  // this race is no longer fatal — the message is in the database, so a reload
+  // simply tries again. The server 409s if an answer already exists, so a
+  // double fire cannot fork a duplicate reply.
+  const answeredRef = useRef<string | null>(null);
+  const activeLeaf = path.length > 0 ? path[path.length - 1]!.message : null;
+  const unansweredId =
+    activeLeaf && activeLeaf.role === 'user' && activeLeaf.children.length === 0
+      ? activeLeaf.id
+      : null;
+  useEffect(() => {
+    if (
+      !chatId ||
+      !unansweredId ||
+      !effectiveModelId ||
+      initialMessage || // the attachment handoff above owns this turn
+      stream.status !== 'idle' ||
+      answeredRef.current === unansweredId
+    ) {
+      return;
+    }
+    answeredRef.current = unansweredId;
+    stream.answer(unansweredId, effectiveModelId, reasoningEffort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per unanswered turn
+  }, [chatId, unansweredId, effectiveModelId, initialMessage]);
 
   // Once the refetched tree contains the streamed message, drop the streamed block.
   const streamedInTree = useMemo(

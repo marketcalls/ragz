@@ -27,8 +27,36 @@ vi.mock('./stream', () => ({
 
 const createChatMock = vi.fn(async () => ({ id: 'new-1' }));
 
+// POST /chats persists the opening turn, so the server already holds it by the
+// time we land on /chat/new-1 -- this mock stands in for that row.
+const persistedFirstMessage = {
+  id: 'm-1',
+  parent_message_id: null,
+  sibling_index: 0,
+  role: 'user',
+  content: 'What is the websocket pattern for fyers?',
+  model_id: null,
+  prompt_tokens: null,
+  completion_tokens: null,
+  created_at: '2026-08-17T00:00:00Z',
+  stopped: false,
+  no_answer: false,
+  grounding: 'documents',
+  validation_failed: false,
+  citations: [],
+  feedback: null,
+  blocks: null,
+  children: [],
+};
+
 vi.mock('./queries', () => ({
-  useChat: () => ({ data: { messages: [], has_summary: false }, isPending: false }),
+  useChat: (chatId: string | null) => ({
+    data: {
+      messages: chatId === 'new-1' ? [persistedFirstMessage] : [],
+      has_summary: false,
+    },
+    isPending: false,
+  }),
   useCreateChat: () => ({ mutateAsync: createChatMock, isPending: false }),
   useSetMessageFeedback: () => ({ mutate: vi.fn() }),
   useClearMessageFeedback: () => ({ mutate: vi.fn() }),
@@ -77,15 +105,21 @@ test('the first message from a new chat is actually sent and its stream is not a
   await user.type(box, 'What is the websocket pattern for fyers?');
   await user.keyboard('{Enter}');
 
-  // The chat gets created, we navigate, and the handoff auto-send fires.
+  // The message rides along with the chat creation rather than being held in
+  // browser memory for a second request.
+  await waitFor(() =>
+    expect(createChatMock).toHaveBeenCalledWith({
+      workspace_id: 'ws-1',
+      first_message: 'What is the websocket pattern for fyers?',
+    }),
+  );
+
+  // We navigate, and the resume effect streams the answer to the persisted turn.
   await waitFor(() => expect(streamCalls.length).toBeGreaterThan(0));
 
   const last = streamCalls[streamCalls.length - 1];
   if (!last) throw new Error('expected a stream send');
-  expect(last.url).toContain('/chats/new-1/messages');
-  expect((last.body as { content: string }).content).toBe(
-    'What is the websocket pattern for fyers?',
-  );
+  expect(last.url).toContain('/messages/m-1/answer');
   // The crux: the send that fired must NOT be immediately aborted by the
   // chatId-change cleanup. If this is aborted, the user sees "nothing happened".
   await new Promise((r) => setTimeout(r, 0));

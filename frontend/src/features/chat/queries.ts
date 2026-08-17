@@ -35,7 +35,10 @@ export function useChat(chatId: string | null) {
 export function useCreateChat() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { workspace_id: string }) => {
+    // first_message persists the opening turn WITH the chat, so it is never
+    // held only in browser memory between create and send. The reply is
+    // streamed afterwards by chat-page's resume effect.
+    mutationFn: async (body: { workspace_id: string; first_message?: string }) => {
       const { data, error } = await api.POST('/api/v1/chats', { body });
       if (error) throw new Error('failed to create chat');
       return data;

@@ -48,6 +48,15 @@ class RegenerateRequest(BaseModel):
 class ChatCreate(BaseModel):
     workspace_id: UUID
     title: str | None = Field(default=None, max_length=200)
+    # Atomic create-and-persist for a new chat's opening turn. Without it the
+    # client had to create the chat, then send the message in a SECOND request,
+    # leaving the user's text held only in browser memory in between -- a
+    # reload or navigation in that window lost it for good and left an empty
+    # "New chat" behind. Persisting it here means the worst case is a chat that
+    # shows the question awaiting its answer, which POST /messages/{id}/answer
+    # (and the client's own resume-on-load) can always finish.
+    # Same bounds as MessageSend.content.
+    first_message: str | None = Field(default=None, min_length=1, max_length=32000)
 
 
 class ChatOut(BaseModel):

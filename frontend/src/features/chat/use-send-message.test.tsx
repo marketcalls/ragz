@@ -96,7 +96,7 @@ test('new-chat path: the chat is created first, then uploads target the real cha
   expect(clearPending).toHaveBeenCalled();
 });
 
-test('a new chat with no pending files still creates the chat and hands off with no attachments', async () => {
+test('a new chat with no pending files persists the message via first_message and hands off nothing', async () => {
   const createChat = vi.fn().mockResolvedValue({ id: 'new-chat-id' });
   const onNewChat = vi.fn();
   const { result } = renderHook(() =>
@@ -114,7 +114,11 @@ test('a new chat with no pending files still creates the chat and hands off with
   await act(async () => result.current.send('hi'));
 
   expect(uploadPendingAttachments).not.toHaveBeenCalled();
-  expect(onNewChat).toHaveBeenCalledWith('new-chat-id', 'hi', []);
+  // The message rides along with the chat creation, so it is durable the
+  // instant the chat exists...
+  expect(createChat).toHaveBeenCalledWith({ workspace_id: 'ws-1', first_message: 'hi' });
+  // ...and nothing is handed through browser state for a reload to lose.
+  expect(onNewChat).toHaveBeenCalledWith('new-chat-id', null, []);
 });
 
 test('an upload failure on send surfaces an error, keeps pending files, and does not send', async () => {

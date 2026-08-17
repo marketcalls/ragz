@@ -168,6 +168,12 @@ async def create_chat(body: ChatCreate, session: SessionDep, ctx: CtxDep) -> Cha
     chat = await service.create_chat(
         session, ctx, workspace_id=body.workspace_id, title=body.title
     )
+    if body.first_message is not None:
+        # The opening turn is persisted with the chat, so it can no longer be
+        # lost between "chat created" and "message sent". No reply is generated
+        # here -- this route doesn't stream; the caller follows up with
+        # POST /messages/{id}/answer.
+        await service.add_user_message(session, ctx, chat, body.first_message)
     return _chat_out(chat)
 
 
@@ -314,6 +320,58 @@ async def regenerate(
         reasoning_effort=reasoning_effort,
         web_search_consented=body.web_search_consented if body is not None else False,
         # RAGZ-PUB-08 residual: same persistent daily cap as send_message.
+        redis=request.app.state.redis,
+    ))
+
+
+@router.post("/messages/{message_id}/answer", dependencies=[_ChatGenerateDep])
+async def answer(
+    message_id: UUID, request: Request,
+    session: SessionDep, settings: SettingsDep, ctx: SendCtxDep,
+    body: RegenerateRequest | None = None,
+) -> StreamingResponse:
+    """Generate the reply to an ALREADY-PERSISTED user message that has none.
+
+    The companion to ChatCreate.first_message: the opening turn is persisted by
+    POST /chats, and this streams its answer. It also makes the whole flow
+    resumable -- a client that reloads mid-turn re-finds the unanswered message
+    and calls this, instead of the message being stranded.
+
+    Idempotency guard: refuses once an assistant reply exists, so a double call
+    (or a reload racing the first stream) can't fork a second answer under the
+    same user message. Re-answering an already-answered turn is `regenerate`.
+    Body is RegenerateRequest -- identical option set (model/effort/consent).
+    """
+    chat, msg = await service.get_message(session, ctx, message_id)
+    if msg.role != service.ROLE_USER:
+        raise ConflictError("only a user message can be answered")
+    messages = await service.list_messages(session, chat.id)
+    if any(
+        m.parent_message_id == msg.id and m.role == service.ROLE_ASSISTANT for m in messages
+    ):
+        raise ConflictError("this message already has an answer -- use regenerate")
+    workspace, model = await _resolve_workspace_and_model(
+        session, ctx, chat, body.model_id if body is not None else None
+    )
+    reasoning_effort = _resolve_reasoning_effort(
+        model, body.reasoning_effort if body is not None else None
+    )
+    await quota_service.check_quota(
+        session, request.app.state.redis, org_id=ctx.org_id, user_id=ctx.user_id
+    )
+    streamer = await _streamer(request, session, settings, ctx)
+    completer: LLMCompleter | None = request.app.state.llm_completer
+    if completer is None and isinstance(streamer, LiteLLMStreamer):
+        completer = streamer  # same gateway client, non-streaming endpoint
+    return _sse(service.stream_reply(
+        session, ctx, chat=chat, workspace=workspace, user_message=msg, model=model,
+        streamer=streamer, retriever=request.app.state.retriever,
+        chunk_reader=request.app.state.chunk_reader, settings=settings,
+        session_factory=request.app.state.session_factory, completer=completer,
+        web_searcher=request.app.state.web_searcher
+        or await build_web_searcher(session, settings),
+        reasoning_effort=reasoning_effort,
+        web_search_consented=body.web_search_consented if body is not None else False,
         redis=request.app.state.redis,
     ))
 

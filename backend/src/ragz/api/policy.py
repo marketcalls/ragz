@@ -202,6 +202,10 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("DELETE", "/api/v1/chats/{chat_id}"): "chat.delete",
     ("POST", "/api/v1/chats/{chat_id}/messages"): "chat.generate",
     ("POST", "/api/v1/messages/{message_id}/regenerate"): "chat.generate",
+    # Same capability as sending: it produces an assistant reply, just for a
+    # user message that was persisted earlier (ChatCreate.first_message, or a
+    # turn stranded by a reload) instead of one supplied in the request.
+    ("POST", "/api/v1/messages/{message_id}/answer"): "chat.generate",
     ("PUT", "/api/v1/messages/{message_id}/feedback"): "chat.feedback",
     ("DELETE", "/api/v1/messages/{message_id}/feedback"): "chat.feedback",
     ("POST", "/api/v1/chats/{chat_id}/attachments"): "chat.attachments.create",

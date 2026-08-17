@@ -9,10 +9,14 @@ export interface UseSendMessageOptions {
   createChat: (input: { workspace_id: string }) => Promise<{ id: string }>;
   // Sends into the current (already-existing) chat.
   sendToChat: (content: string, parentMessageId: string | null | undefined, attachmentIds: string[]) => void;
-  // No chat existed yet -- a chat was just created (and attachments, if any,
-  // already uploaded against its real id). The caller navigates there and
-  // hands the message off (chat-page's existing initialMessage handoff).
-  onNewChat: (chatId: string, content: string, attachmentIds: string[]) => void;
+  // No chat existed yet -- a chat was just created. The caller navigates there.
+  // `content` non-null: attachments were uploaded against the new chat id, so
+  // the message still has to be sent from the client (chat-page's
+  // initialMessage handoff) to carry its attachment_ids.
+  // `content` null: the message was persisted server-side by POST /chats
+  // (first_message), so there is nothing to hand off -- just navigate, and
+  // chat-page's resume effect streams the reply.
+  onNewChat: (chatId: string, content: string | null, attachmentIds: string[]) => void;
   pendingFiles: PendingAttachment[];
   clearPending: () => void;
 }
@@ -52,11 +56,26 @@ export function useSendMessage({
             setError('Still loading your workspace — please try again in a moment.');
             return;
           }
+          // No attachments: persist the opening turn WITH the chat, so it
+          // cannot be lost between create and send (a reload in that window
+          // used to drop it and leave an empty "New chat"). chat-page's
+          // resume effect streams the reply once it lands.
+          // With attachments we must create first, upload against the real
+          // chat id, then send -- the message has to carry attachment_ids, so
+          // it can't be persisted before the uploads exist.
+          const withoutAttachments = pendingFiles.length === 0;
           try {
-            const chat = await createChat({ workspace_id: workspaceId });
+            const chat = await createChat({
+              workspace_id: workspaceId,
+              ...(withoutAttachments ? { first_message: content } : {}),
+            });
             targetChatId = chat.id;
           } catch {
             setError('Could not start a new chat. Please try again.');
+            return;
+          }
+          if (withoutAttachments) {
+            onNewChat(targetChatId, null, []); // already persisted: navigate only
             return;
           }
         }

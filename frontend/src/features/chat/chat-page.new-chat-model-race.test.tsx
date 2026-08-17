@@ -29,8 +29,36 @@ const createChatMock = vi.fn(async () => ({ id: 'new-1' }));
 // Mutable models data: starts undefined (query pending), flipped on later.
 let modelsData: { id: string; display_name: string; default_reasoning_effort: string }[] | undefined;
 
+// The opening turn is persisted by POST /chats, so the server holds it while
+// the models query is still in flight -- the row the resume effect acts on.
+const persistedFirstMessage = {
+  id: 'm-1',
+  parent_message_id: null,
+  sibling_index: 0,
+  role: 'user',
+  content: 'top 10 broker api in india',
+  model_id: null,
+  prompt_tokens: null,
+  completion_tokens: null,
+  created_at: '2026-08-17T00:00:00Z',
+  stopped: false,
+  no_answer: false,
+  grounding: 'documents',
+  validation_failed: false,
+  citations: [],
+  feedback: null,
+  blocks: null,
+  children: [],
+};
+
 vi.mock('./queries', () => ({
-  useChat: () => ({ data: { messages: [], has_summary: false }, isPending: false }),
+  useChat: (chatId: string | null) => ({
+    data: {
+      messages: chatId === 'new-1' ? [persistedFirstMessage] : [],
+      has_summary: false,
+    },
+    isPending: false,
+  }),
   useCreateChat: () => ({ mutateAsync: createChatMock, isPending: false }),
   useSetMessageFeedback: () => ({ mutate: vi.fn() }),
   useClearMessageFeedback: () => ({ mutate: vi.fn() }),
@@ -103,6 +131,7 @@ test('the first message is not sent model-less while models are still loading, t
   await waitFor(() => expect(streamCalls.length).toBeGreaterThan(0));
   const last = streamCalls[streamCalls.length - 1];
   if (!last) throw new Error('expected a stream send');
+  expect(last.url).toContain('/messages/m-1/answer');
   expect((last.body as { model_id?: string }).model_id).toBe('gpt');
   expect(last.signal.aborted).toBe(false);
 });

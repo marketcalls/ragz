@@ -1216,3 +1216,94 @@ async def test_general_knowledge_fallback_threads_existing_summary(
     assert done["grounding"] == "general"  # confirms we actually hit the fallback branch
     sent = fake.calls[-1]["messages"]
     assert any("Priya" in m["content"] for m in sent)  # type: ignore[index]
+
+
+# --- ChatCreate.first_message + POST /messages/{id}/answer -------------------
+# The opening turn used to live only in the browser between "chat created" and
+# "message sent": a reload in that window lost it and left an empty chat behind.
+# These cover the atomic-create half and the resumable-answer half.
+
+
+async def test_create_chat_persists_first_message_without_answering_it(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_superadmin: User,
+) -> None:
+    h = await auth(chat_client, "a@acme.com")
+    await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+
+    r = await chat_client.post(
+        "/api/v1/chats",
+        json={
+            "workspace_id": str(chat_env["workspace"].id),
+            "first_message": "what was revenue?",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201
+    chat_id = UUID(r.json()["id"])
+
+    rows = (
+        await session.execute(select(Message).where(Message.chat_id == chat_id))
+    ).scalars().all()
+    # Persisted immediately, and NOT answered -- create doesn't stream.
+    assert [(m.role, m.content) for m in rows] == [("user", "what was revenue?")]
+
+
+async def test_answer_streams_the_reply_to_a_persisted_first_message(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_superadmin: User,
+) -> None:
+    h = await auth(chat_client, "a@acme.com")
+    await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+    r = await chat_client.post(
+        "/api/v1/chats",
+        json={
+            "workspace_id": str(chat_env["workspace"].id),
+            "first_message": "what was revenue?",
+        },
+        headers=h,
+    )
+    chat_id = UUID(r.json()["id"])
+    user_msg = (
+        await session.execute(select(Message).where(Message.chat_id == chat_id))
+    ).scalars().one()
+
+    r = await chat_client.post(f"/api/v1/messages/{user_msg.id}/answer", headers=h)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    names = [n for n, _ in parse_sse(r.text)]
+    assert names[0] == "retrieval_started"
+    assert names[-1] == "done"
+
+    session.expire_all()
+    rows = (
+        await session.execute(select(Message).where(Message.chat_id == chat_id))
+    ).scalars().all()
+    roles = sorted(m.role for m in rows)
+    assert roles == ["assistant", "user"]
+    reply = next(m for m in rows if m.role == "assistant")
+    assert reply.parent_message_id == user_msg.id  # answered THAT turn, not a new root
+
+
+async def test_answer_refuses_a_second_answer_and_a_non_user_message(
+    chat_client: httpx.AsyncClient, chat_env: dict[str, Any], session: AsyncSession,
+    seeded_superadmin: User,
+) -> None:
+    h = await auth(chat_client, "a@acme.com")
+    chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
+    r = await chat_client.post(f"/api/v1/chats/{chat_id}/messages",
+                               json={"content": "what was revenue?"}, headers=h)
+    assert r.status_code == 200
+    rows = (
+        await session.execute(select(Message).where(Message.chat_id == UUID(chat_id)))
+    ).scalars().all()
+    user_msg = next(m for m in rows if m.role == "user")
+    assistant_msg = next(m for m in rows if m.role == "assistant")
+
+    # Already answered -> refuse, so a reload racing the first stream can't
+    # fork a duplicate reply under the same question.
+    r = await chat_client.post(f"/api/v1/messages/{user_msg.id}/answer", headers=h)
+    assert r.status_code == 409
+    # An assistant message is regenerate's job, not answer's.
+    r = await chat_client.post(f"/api/v1/messages/{assistant_msg.id}/answer", headers=h)
+    assert r.status_code == 409
