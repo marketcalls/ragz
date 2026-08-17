@@ -3749,6 +3749,8 @@ export interface components {
             tavily_key_set: boolean;
             /** Default Chunk Method */
             default_chunk_method: string;
+            /** Default Embedding Model Id */
+            default_embedding_model_id: string | null;
             /** Llamaparse Key Set */
             llamaparse_key_set: boolean;
             /** Cohere Key Set */
@@ -3779,6 +3781,8 @@ export interface components {
             generative_ui_images?: ("off" | "web_results") | null;
             /** Generative Ui Enabled */
             generative_ui_enabled?: boolean | null;
+            /** Default Embedding Model Id */
+            default_embedding_model_id?: string | null;
             /** Llamaparse Api Key */
             llamaparse_api_key?: string | null;
             /** Cohere Api Key */

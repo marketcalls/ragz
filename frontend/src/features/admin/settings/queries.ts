@@ -25,6 +25,8 @@ export interface ProviderSettings {
   llamaparse_key_set: boolean;
   cohere_key_set: boolean;
   tavily_key_set: boolean;
+  /** Global default NEW workspaces inherit. null → the built-in local TEI model. */
+  default_embedding_model_id: string | null;
 }
 
 export interface ProviderSettingsUpdate {
@@ -39,6 +41,7 @@ export interface ProviderSettingsUpdate {
   llamaparse_api_key?: string;
   cohere_api_key?: string;
   tavily_api_key?: string;
+  default_embedding_model_id?: string;
 }
 
 const KEY = ['admin', 'settings'];

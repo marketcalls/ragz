@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { TopBar } from '@/components/layout/top-bar';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,8 @@ import { QueryError } from '@/components/ui/query-error';
 import { NativeSelect } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 
+import { useAdminModels } from '../models/queries';
+import { RegisteredModelsTable } from '../models/registered-models-table';
 import {
   useProviderSettings,
   useUpdateProviderSettings,
@@ -17,9 +19,27 @@ import {
   type WebSearchProvider,
 } from './queries';
 
+/** Providers offerable as the global default embedding model. Deliberately not
+ * every registered embedder: these are the two paths the install actually
+ * supports end to end — the built-in local TEI (bge-m3) and OpenAI's hosted
+ * embeddings. Anything else registered stays visible and editable in the table
+ * below, it just isn't offered as the install-wide default. */
+const DEFAULTABLE_EMBEDDING_PROVIDERS = ['tei', 'openai'];
+
 export function SettingsPage() {
   const settings = useProviderSettings();
   const update = useUpdateProviderSettings();
+  const models = useAdminModels();
+
+  const embeddingChoices = useMemo(
+    () =>
+      (models.data ?? []).filter(
+        (m) =>
+          m.modality === 'embedding' &&
+          DEFAULTABLE_EMBEDDING_PROVIDERS.includes(m.provider_kind),
+      ),
+    [models.data],
+  );
 
   const [parser, setParser] = useState<'anydoc' | 'docling' | 'llamaparse' | 'liteparse'>(
     'liteparse',
@@ -31,6 +51,9 @@ export function SettingsPage() {
   const [generativeUiImages, setGenerativeUiImages] = useState<GenerativeUiImages>('off');
   const [generativeUiEnabled, setGenerativeUiEnabled] = useState(true);
   const [defaultChunk, setDefaultChunk] = useState<ChunkMethod>('heading');
+  // '' = never set → new workspaces fall back to the built-in local TEI model,
+  // which is what every workspace was hardcoded to before this setting existed.
+  const [defaultEmbedding, setDefaultEmbedding] = useState('');
   // API keys are write-only: never populated from the query response, always
   // start blank, and are cleared again after every save attempt.
   const [llamaKey, setLlamaKey] = useState('');
@@ -47,6 +70,7 @@ export function SettingsPage() {
       setGenerativeUiImages(settings.data.generative_ui_images);
       setGenerativeUiEnabled(settings.data.generative_ui_enabled);
       setDefaultChunk(settings.data.default_chunk_method);
+      setDefaultEmbedding(settings.data.default_embedding_model_id ?? '');
     }
   }, [settings.data]);
 
@@ -70,6 +94,9 @@ export function SettingsPage() {
       generative_ui_images: generativeUiImages,
       generative_ui_enabled: generativeUiEnabled,
       default_chunk_method: defaultChunk,
+      // Omitted while '' so a fresh install that never picked one keeps
+      // "unset" rather than being pinned to whatever happens to be first.
+      ...(defaultEmbedding ? { default_embedding_model_id: defaultEmbedding } : {}),
       // Only sent when Cohere is the selected reranker — matches the spec
       // intent (cohere_rerank_model is a Cohere-only knob) and avoids
       // clobbering a stored choice while previewing the local-reranker path.
@@ -89,7 +116,10 @@ export function SettingsPage() {
           <QueryError error={settings.error} onRetry={() => settings.refetch()} />
         ) : null}
         {settings.data ? (
-          <div className="mx-auto max-w-xl space-y-8">
+          // 3xl, not xl: the Embedding section hosts the model registry table,
+          // whose Enabled/Utility/action columns are clipped at xl. Form
+          // controls stay xl-width via the max-w-xl clamp on each field div.
+          <div className="mx-auto max-w-3xl space-y-8 [&_section>div]:max-w-xl">
             <section className="space-y-3">
               <h3 className="text-sm font-semibold text-ink">Document parser</h3>
               <div>
@@ -168,6 +198,37 @@ export function SettingsPage() {
                   onChange={(e) => setCohereKey(e.target.value)}
                   placeholder={settings.data.cohere_key_set ? '••••••••' : 'ck-…'}
                 />
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold text-ink">Embedding</h3>
+              <div>
+                <Label htmlFor="defaultembedding">Default embedding model</Label>
+                <NativeSelect
+                  id="defaultembedding"
+                  value={defaultEmbedding}
+                  onChange={(e) => setDefaultEmbedding(e.target.value)}
+                >
+                  <option value="">Not set — new workspaces use the built-in local model</option>
+                  {embeddingChoices.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.display_name}
+                      {m.dimension != null ? ` — ${m.dimension}` : ''}
+                    </option>
+                  ))}
+                </NativeSelect>
+                <p className="mt-1 text-[12px] text-muted">
+                  New workspaces inherit this. Existing workspaces keep their own model — their
+                  vectors live in a collection built at that model&apos;s dimension, so changing
+                  one is a re-embed, not a setting.
+                </p>
+              </div>
+              {/* !max-w-none, not max-w-none: the parent's [&_section>div] clamp
+                  is a two-element selector and outranks a plain utility class,
+                  so opting out needs the important modifier. */}
+              <div className="!max-w-none overflow-x-auto">
+                <RegisteredModelsTable modality="embedding" showAdd />
               </div>
             </section>
 

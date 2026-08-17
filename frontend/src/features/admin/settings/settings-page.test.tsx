@@ -10,6 +10,19 @@ vi.mock('./queries', () => ({
   useUpdateProviderSettings: () => useUpdateProviderSettings(),
 }));
 
+// The Embedding section feeds its dropdown from the model registry and renders
+// the registry table itself. Both reach TanStack Query, which this suite has no
+// provider for — stub them so these tests stay about the settings form.
+const useAdminModels = vi.fn();
+vi.mock('../models/queries', () => ({
+  useAdminModels: () => useAdminModels(),
+}));
+vi.mock('../models/registered-models-table', () => ({
+  RegisteredModelsTable: ({ modality }: { modality: string }) => (
+    <div data-testid={`registry-${modality}`} />
+  ),
+}));
+
 import { SettingsPage } from './settings-page';
 
 const settings: ProviderSettings = {
@@ -24,11 +37,13 @@ const settings: ProviderSettings = {
   llamaparse_key_set: false,
   cohere_key_set: false,
   tavily_key_set: false,
+  default_embedding_model_id: null,
 };
 
 const putSpy = vi.fn();
 
 beforeEach(() => {
+  useAdminModels.mockReturnValue({ data: [], isPending: false, isError: false });
   useProviderSettings.mockReturnValue({
     data: settings,
     isPending: false,
@@ -244,4 +259,59 @@ test('shows an error message and retry button when the settings query fails', as
   expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load/i);
   await userEvent.click(screen.getByRole('button', { name: /retry/i }));
   expect(refetch).toHaveBeenCalledTimes(1);
+});
+
+test('the default embedding dropdown offers local and OpenAI embedders only', () => {
+  useAdminModels.mockReturnValue({
+    data: [
+      { id: 'e1', display_name: 'Local Embeddings (bge-m3)', provider_kind: 'tei',
+        modality: 'embedding', dimension: 1024 },
+      { id: 'e2', display_name: 'text-embedding-3-large', provider_kind: 'openai',
+        modality: 'embedding', dimension: 3072 },
+      // Neither of these may be offered as the install-wide default.
+      { id: 'e3', display_name: 'Cohere Embed', provider_kind: 'cohere',
+        modality: 'embedding', dimension: 1024 },
+      { id: 'c1', display_name: 'GPT-4o', provider_kind: 'openai',
+        modality: 'chat', dimension: null },
+    ],
+    isPending: false,
+    isError: false,
+  });
+  render(<SettingsPage />);
+  const select = screen.getByLabelText('Default embedding model');
+  const labels = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
+  // Dimensions are surfaced because a mismatched one only shows up as a failed
+  // ingestion much later.
+  expect(labels).toEqual([
+    'Not set — new workspaces use the built-in local model',
+    'Local Embeddings (bge-m3) — 1024',
+    'text-embedding-3-large — 3072',
+  ]);
+});
+
+test('saving sends the chosen default embedding model', async () => {
+  const user = userEvent.setup();
+  useAdminModels.mockReturnValue({
+    data: [
+      { id: 'e2', display_name: 'text-embedding-3-large', provider_kind: 'openai',
+        modality: 'embedding', dimension: 3072 },
+    ],
+    isPending: false,
+    isError: false,
+  });
+  render(<SettingsPage />);
+  await user.selectOptions(screen.getByLabelText('Default embedding model'), 'e2');
+  await user.click(screen.getByRole('button', { name: /save/i }));
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ default_embedding_model_id: 'e2' }),
+  );
+});
+
+test('an unset default is omitted from the payload rather than sent empty', async () => {
+  const user = userEvent.setup();
+  render(<SettingsPage />);
+  await user.click(screen.getByRole('button', { name: /save/i }));
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.not.objectContaining({ default_embedding_model_id: expect.anything() }),
+  );
 });

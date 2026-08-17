@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 
 import type { ModelOut } from '@/api/types';
@@ -19,6 +20,9 @@ vi.mock('./queries', () => ({
 }));
 
 import { ModelsPage } from './models-page';
+
+/** ModelsPage renders a <Link> to Settings > Embedding, so it needs a router. */
+const renderPage = () => render(<ModelsPage />, { wrapper: MemoryRouter });
 
 const modelA: ModelOut = {
   id: 'm1',
@@ -97,7 +101,7 @@ afterEach(() => {
 });
 
 test('the designated utility model renders its radio checked, the other unchecked', () => {
-  render(<ModelsPage />);
+  renderPage();
   const aRadio = screen.getByLabelText('Use GPT-4o mini as the utility model');
   const bRadio = screen.getByLabelText('Use Llama 3 as the utility model');
   expect(aRadio).toBeChecked();
@@ -106,7 +110,7 @@ test('the designated utility model renders its radio checked, the other unchecke
 
 test('clicking another row\'s radio PATCHes only that row with is_utility: true', async () => {
   const user = userEvent.setup();
-  render(<ModelsPage />);
+  renderPage();
   await user.click(screen.getByLabelText('Use Llama 3 as the utility model'));
   expect(patchMutate).toHaveBeenCalledTimes(1);
   // Exactly { modelId: 'm2', body: { is_utility: true } } -- no `false` body
@@ -118,29 +122,30 @@ test('clicking another row\'s radio PATCHes only that row with is_utility: true'
 });
 
 test('a short caption explains the utility model designation', () => {
-  render(<ModelsPage />);
+  renderPage();
   expect(
     screen.getByText(/powers answer-quality scoring, evals, and \(later\) enrichment/),
   ).toBeInTheDocument();
 });
 
 test('the chat tab is selected by default and shows only chat-modality rows', () => {
-  render(<ModelsPage />);
+  renderPage();
   expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
   expect(screen.getByText('Llama 3')).toBeInTheDocument();
   expect(screen.queryByText('TEI embeddings')).not.toBeInTheDocument();
 });
 
-test('switching to the embedding tab shows only embedding-modality rows, with the built-in tei row unremovable', async () => {
-  const user = userEvent.setup();
-  render(<ModelsPage />);
-  await user.click(screen.getByRole('button', { name: 'embedding models' }));
-  expect(screen.queryByText('GPT-4o mini')).not.toBeInTheDocument();
-  expect(screen.queryByText('Llama 3')).not.toBeInTheDocument();
-  expect(screen.getByText('TEI embeddings')).toBeInTheDocument();
-  expect(screen.queryByLabelText('Edit TEI embeddings')).not.toBeInTheDocument();
-  expect(screen.queryByLabelText('Remove TEI embeddings')).not.toBeInTheDocument();
-  expect(screen.getByText('Built-in')).toBeInTheDocument();
+test('lists only chat rows, and points at Settings for the embedding registry', () => {
+  // The chat/embedding tab switch is gone: embedding models moved to
+  // Settings > Embedding, next to the global default that selects from them.
+  renderPage();
+  expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+  expect(screen.queryByText('TEI embeddings')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'embedding models' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /Settings . Embedding/ })).toHaveAttribute(
+    'href',
+    '/admin/settings',
+  );
 });
 
 test('shows an error message and retry button when the query fails', async () => {
@@ -152,31 +157,27 @@ test('shows an error message and retry button when the query fails', async () =>
     error: new Error('failed to load models'),
     refetch,
   });
-  render(<ModelsPage />);
+  renderPage();
   expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load/i);
   await userEvent.click(screen.getByRole('button', { name: /retry/i }));
   expect(refetch).toHaveBeenCalledTimes(1);
 });
 
-test('the Type column displays the modality of each model', async () => {
-  const user = userEvent.setup();
-  render(<ModelsPage />);
-  // On chat tab, verify chat models show 'chat' modality
+test('the Type column displays the modality of each model', () => {
+  renderPage();
   expect(screen.getAllByText('chat', { selector: 'td' }).length).toBeGreaterThan(0);
-  // Switch to embedding tab
-  await user.click(screen.getByRole('button', { name: 'embedding models' }));
-  // On embedding tab, verify embedding models show 'embedding' modality
-  expect(screen.getByText('embedding', { selector: 'td' })).toBeInTheDocument();
+  // The embedding half of this now lives in registered-models-table.test.tsx.
+  expect(screen.queryByText('embedding', { selector: 'td' })).not.toBeInTheDocument();
 });
 
 test('renders a searchable provider-card grid (e.g. an Anthropic card)', () => {
-  render(<ModelsPage />);
+  renderPage();
   expect(screen.getByRole('button', { name: /anthropic/i })).toBeInTheDocument();
 });
 
 test('typing in the provider search narrows the grid', async () => {
   const user = userEvent.setup();
-  render(<ModelsPage />);
+  renderPage();
   expect(screen.getByText('Cohere')).toBeInTheDocument();
   await user.type(screen.getByLabelText('Search providers'), 'anthropic');
   expect(screen.queryByText('Cohere')).not.toBeInTheDocument();
@@ -185,7 +186,7 @@ test('typing in the provider search narrows the grid', async () => {
 
 test('registers a suggested model from a provider card with a prefilled body', async () => {
   const user = userEvent.setup();
-  render(<ModelsPage />);
+  renderPage();
   await user.click(screen.getByRole('button', { name: /anthropic/i }));
   const claudeCheckboxes = await screen.findAllByRole('checkbox', { name: /claude/i });
   await user.click(claudeCheckboxes[0]!);
@@ -199,7 +200,7 @@ test('registers a suggested model from a provider card with a prefilled body', a
 
 test('registering a suggested embedding model sends modality and the entered dimension', async () => {
   const user = userEvent.setup();
-  render(<ModelsPage />);
+  renderPage();
   await user.click(screen.getByRole('button', { name: /jina/i }));
   const jinaCheckboxes = await screen.findAllByRole('checkbox', { name: /jina-embeddings/i });
   await user.click(jinaCheckboxes[0]!);
@@ -216,7 +217,7 @@ test('registering a suggested embedding model sends modality and the entered dim
 
 test('checking a suggested embedding model without a dimension blocks submission', async () => {
   const user = userEvent.setup();
-  render(<ModelsPage />);
+  renderPage();
   await user.click(screen.getByRole('button', { name: /jina/i }));
   const jinaCheckboxes = await screen.findAllByRole('checkbox', { name: /jina-embeddings/i });
   await user.click(jinaCheckboxes[0]!);
@@ -235,7 +236,7 @@ test('a suggested model already registered renders checked and disabled', async 
   };
   useAdminModels.mockReturnValue({ data: [modelA, modelB, modelC, anthropicModel], isPending: false });
   const user = userEvent.setup();
-  render(<ModelsPage />);
+  renderPage();
   await user.click(screen.getByRole('button', { name: /anthropic/i }));
   const registeredCheckbox = await screen.findByRole('checkbox', { name: /claude-opus-4-8/i });
   expect(registeredCheckbox).toBeChecked();
