@@ -44,7 +44,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: "3.12"
+          # NOT "3.12": the runner's system CPython is 3.12.3 and
+          # pyproject requires >=3.12.4, so the minor line resolves to an
+          # interpreter uv then rejects. A full version makes uv download
+          # its own, independent of whatever the runner image ships.
+          python-version: "3.12.11"
           enable-cache: true
 
       - run: uv sync --locked
@@ -73,7 +77,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: "3.12"
+          # NOT "3.12": the runner's system CPython is 3.12.3 and
+          # pyproject requires >=3.12.4, so the minor line resolves to an
+          # interpreter uv then rejects. A full version makes uv download
+          # its own, independent of whatever the runner image ships.
+          python-version: "3.12.11"
           enable-cache: true
 
       - run: uv sync --locked
@@ -95,7 +103,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: "3.12"
+          # NOT "3.12": the runner's system CPython is 3.12.3 and
+          # pyproject requires >=3.12.4, so the minor line resolves to an
+          # interpreter uv then rejects. A full version makes uv download
+          # its own, independent of whatever the runner image ships.
+          python-version: "3.12.11"
           enable-cache: true
 
       - run: uv sync --locked
@@ -117,7 +129,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: "3.12"
+          # NOT "3.12": the runner's system CPython is 3.12.3 and
+          # pyproject requires >=3.12.4, so the minor line resolves to an
+          # interpreter uv then rejects. A full version makes uv download
+          # its own, independent of whatever the runner image ships.
+          python-version: "3.12.11"
           enable-cache: true
 
       - run: uv sync --locked
@@ -143,7 +159,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: "3.12"
+          # NOT "3.12": the runner's system CPython is 3.12.3 and
+          # pyproject requires >=3.12.4, so the minor line resolves to an
+          # interpreter uv then rejects. A full version makes uv download
+          # its own, independent of whatever the runner image ships.
+          python-version: "3.12.11"
           enable-cache: true
 
       # package_json_file is REQUIRED here: with no version input the action
@@ -209,7 +229,9 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version-file: .nvmrc
+          # Repo-root relative: defaults.run.working-directory does NOT
+          # apply to action inputs, only to `run:` steps.
+          node-version-file: frontend/.nvmrc
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -250,7 +272,9 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version-file: .nvmrc
+          # Repo-root relative: defaults.run.working-directory does NOT
+          # apply to action inputs, only to `run:` steps.
+          node-version-file: frontend/.nvmrc
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
 

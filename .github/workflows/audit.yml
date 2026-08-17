@@ -60,7 +60,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
-          python-version: "3.12"
+          # NOT "3.12": the runner's system CPython is 3.12.3 and
+          # pyproject requires >=3.12.4, so the minor line resolves to an
+          # interpreter uv then rejects. A full version makes uv download
+          # its own, independent of whatever the runner image ships.
+          python-version: "3.12.11"
 
       - name: Install dependencies
         run: uv sync --locked
