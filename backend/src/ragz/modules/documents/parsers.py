@@ -157,6 +157,17 @@ class AnydocParser:
         return blocks
 
 
+#: liteparse defaults to max_pages=1000 and truncates SILENTLY past it -- no
+#: error, no warning, the document just ends. A 1518-page manual ingested as
+#: its first 1000 pages, so every later section (for a reference manual, the
+#: back-of-book function index) was absent from retrieval while the document
+#: looked fully indexed. Ragz never wants a partial document: a truncated
+#: corpus produces confidently wrong "not in the sources" answers, which is
+#: worse than a slow ingest. Set far above any real document rather than
+#: unbounded so a corrupt page count still terminates.
+_MAX_PAGES = 10_000_000
+
+
 class LiteParseParser:
     """run-llama liteparse (PDFium, self-hosted, offline): per-page markdown
     with a real page_num -> blocks. Fast like anydoc, page-accurate like
@@ -166,7 +177,10 @@ class LiteParseParser:
         from liteparse import LiteParse
 
         def _convert() -> list[PageBlock]:
-            res = LiteParse(ocr_enabled=False, quiet=True, output_format="markdown").parse(data)
+            res = LiteParse(
+                ocr_enabled=False, quiet=True, output_format="markdown",
+                max_pages=_MAX_PAGES,
+            ).parse(data)
             blocks: list[PageBlock] = []
             for page in res.pages:
                 blocks.extend(_markdown_to_blocks(page.markdown or "", page=page.page_num))
