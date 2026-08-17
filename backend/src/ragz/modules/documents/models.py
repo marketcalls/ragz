@@ -37,6 +37,13 @@ class Folder(UUIDPk, Base):
             "uq_folders_workspace_root_name", "workspace_id", "name",
             unique=True, postgresql_where=text("parent_folder_id IS NULL"),
         ),
+        # Composite-FK target, so documents.folder_id and this table's own
+        # parent_folder_id can prove a referenced folder is in the SAME org.
+        UniqueConstraint("id", "org_id", name="uq_folders_id_org_id"),
+        ForeignKeyConstraint(
+            ["parent_folder_id", "org_id"], ["folders.id", "folders.org_id"],
+            name="fk_folders_parent_folder_id_org", ondelete="CASCADE",
+        ),
         # Same-tenant composite FKs (e4f7c1a83b26) -- see Document.
         ForeignKeyConstraint(
             ["workspace_id", "org_id"], ["workspaces.id", "workspaces.org_id"],
@@ -50,9 +57,9 @@ class Folder(UUIDPk, Base):
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
-    parent_folder_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("folders.id", ondelete="CASCADE"), default=None, index=True
-    )
+    # No single-column ForeignKey: the composite one in __table_args__ carries
+    # both the reference and the ondelete, paired with org_id.
+    parent_folder_id: Mapped[UUID | None] = mapped_column(default=None, index=True)
     name: Mapped[str]
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
 
@@ -85,10 +92,25 @@ class Document(UUIDPk, Base):
             ["created_by", "org_id"], ["users.id", "users.org_id"],
             name="fk_documents_created_by_org",
         ),
+        # f5a8d2e91c47: a document must not be filed under another org's folder.
+        # SET NULL (folder_id) names the column deliberately -- a bare SET NULL
+        # nulls every column of the composite FK, including the NOT NULL org_id,
+        # which makes any folder delete fail. Must match the migration.
+        ForeignKeyConstraint(
+            ["folder_id", "org_id"], ["folders.id", "folders.org_id"],
+            name="fk_documents_folder_id_org", ondelete="SET NULL (folder_id)",
+        ),
         # Mirrors migration b1c4e7a20d31's ck_documents_index_state.
         CheckConstraint(
             "index_state IN ('active', 'pending', 'failed')",
             name="ck_documents_index_state",
+        ),
+        # Mirrors b1c4e7a20d31's ix_documents_unprojected. Without it, ORM-built
+        # schemas (tests, dev) full-scan documents on every retrieval, since
+        # unprojected_document_ids runs on the hot path.
+        Index(
+            "ix_documents_unprojected", "workspace_id",
+            postgresql_where=text("index_state <> 'active'"),
         ),
         # Mirrors d3e6a9c42f15. The security invariant, enforced by the database
         # rather than trusted from application code: a document may only claim
@@ -151,9 +173,7 @@ class Document(UUIDPk, Base):
     # existing single-document delete pipeline for every document found,
     # never a raw DB cascade straight onto Document (that would skip Qdrant/
     # MinIO cleanup entirely).
-    folder_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("folders.id", ondelete="SET NULL"), default=None, index=True
-    )
+    folder_id: Mapped[UUID | None] = mapped_column(default=None, index=True)
     # Chunk-methods plan Task 2: NULL = inherit Workspace.chunk_method.
     chunk_method_override: Mapped[str | None] = mapped_column(default=None)
 
