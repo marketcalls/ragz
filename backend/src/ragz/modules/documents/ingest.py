@@ -164,6 +164,13 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         if doc is None:
             return None  # deleted before we started: nothing was written, nothing to clean up
         org_id = doc.org_id  # captured now: doc may be gone by the time we re-check below
+        # A re-index enters HERE, not at run_parse, so nothing else would move
+        # the row off its previous status: a retried failure kept showing
+        # "failed" for the whole (succeeding) run, and re-indexing a healthy
+        # doc showed no in-flight state at all. _start_stage commits below, so
+        # this rides along on that same commit and is visible immediately.
+        doc.status = "processing"
+        doc.error = None
         embed_job = await _start_stage(session, document_id, "embed")
         upsert_job = await _start_stage(session, document_id, "upsert")
         raw = await _storage().get(doc.storage_key + ".chunks.json")
