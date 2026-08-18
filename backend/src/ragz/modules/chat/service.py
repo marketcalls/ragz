@@ -1394,6 +1394,16 @@ async def stream_reply(
                 )
 
             convo_usage: LLMUsage | None = None
+            # Close the read unit of work BEFORE the model stream. An
+            # AsyncSession holds a pooled connection for as long as its
+            # transaction is open, and the reads above opened one implicitly;
+            # without this commit that connection stays checked out for the
+            # entire stream -- seconds to minutes -- doing nothing. N concurrent
+            # chats pinned N connections and starved every other request,
+            # including cheap ones. The loop below touches no session, and
+            # expire_on_commit=False keeps chat/user_message/model usable, so
+            # the post-stream writes simply open a fresh transaction.
+            await session.commit()
             # aclosing (not a bare async-for): on client abort, GeneratorExit
             # is thrown into THIS frame at the `yield token_event` below, not
             # into streamer.stream()'s frame - a bare async-for only drops
@@ -1724,6 +1734,16 @@ async def stream_reply(
                     user_message.content, image_data_uris
                 )
             gk_usage: LLMUsage | None = None
+            # Close the read unit of work BEFORE the model stream. An
+            # AsyncSession holds a pooled connection for as long as its
+            # transaction is open, and the reads above opened one implicitly;
+            # without this commit that connection stays checked out for the
+            # entire stream -- seconds to minutes -- doing nothing. N concurrent
+            # chats pinned N connections and starved every other request,
+            # including cheap ones. The loop below touches no session, and
+            # expire_on_commit=False keeps chat/user_message/model usable, so
+            # the post-stream writes simply open a fresh transaction.
+            await session.commit()
             # aclosing: same deterministic-cleanup-on-abort reasoning as the
             # conversational branch.
             async with contextlib.aclosing(
