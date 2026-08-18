@@ -1,82 +1,205 @@
 import { createBrowserRouter } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { AccountPage } from '@/features/account/account-page';
-import { AdminHubPage } from '@/features/admin/admin-hub-page';
-import { ApiKeysPage } from '@/features/admin/api-keys/api-keys-page';
-import { AuditPage } from '@/features/admin/audit/audit-page';
-import { BotsPage } from '@/features/admin/bots/bots-page';
-import { DashboardPage } from '@/features/admin/dashboard/dashboard-page';
-import { EmailSettingsPage } from '@/features/admin/email/email-settings-page';
-import { FeedbackPage } from '@/features/admin/feedback/feedback-page';
-import { HealthPage } from '@/features/admin/health/health-page';
-import { ModelsPage } from '@/features/admin/models/models-page';
-import { OrganizationsPage } from '@/features/admin/organizations/organizations-page';
-import { RolesPage } from '@/features/admin/roles/roles-page';
-import { SettingsPage } from '@/features/admin/settings/settings-page';
-import { SsoSettingsPage } from '@/features/admin/sso/sso-settings-page';
-import { UsersPage } from '@/features/admin/users/users-page';
-import { AcceptInvitePage } from '@/features/auth/accept-invite-page';
-import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
-import { LoginPage } from '@/features/auth/login-page';
-import { ResetPasswordPage } from '@/features/auth/reset-password-page';
-import { ChatPage } from '@/features/chat/chat-page';
-import { DocumentsPage } from '@/features/documents/documents-page';
-import { ReportsPage } from '@/features/reports/reports-page';
-import { UsagePage } from '@/features/usage/usage-page';
 
 import { LandingGate } from './landing-gate';
 import { RequireAction } from './require-action';
 import { RequireAuth } from './require-auth';
 import { RequireRole } from './require-role';
 
+/**
+ * Route components are loaded on demand (Phase 3 item 4). Every page used to be
+ * a static import here, so one chunk carried the whole app -- 1.56 MB, 433 kB
+ * gzipped, past Vite's own 500 kB warning. A user signing in downloaded the
+ * superadmin health dashboard, the audit log and all of recharts before the
+ * login form could paint, and every deploy invalidated that single chunk in
+ * full.
+ *
+ * Only the pages are lazy. The wrappers below (LandingGate, RequireAuth,
+ * RequireRole, RequireAction, AppShell) stay eager on purpose: they decide
+ * WHICH route renders, so deferring them would only add a round-trip before
+ * the redirect they exist to perform.
+ *
+ * The `import()` specifiers must stay string literals -- that is what lets Vite
+ * see the split points at build time. Do not refactor them into a helper that
+ * takes the path as a variable; it silently collapses the chunks back into one.
+ */
 export const router = createBrowserRouter([
   { path: '/', element: <LandingGate /> },
-  { path: '/login', element: <LoginPage /> },
-  { path: '/invite', element: <AcceptInvitePage /> },
-  { path: '/forgot-password', element: <ForgotPasswordPage /> },
-  { path: '/reset-password', element: <ResetPasswordPage /> },
+  {
+    path: '/login',
+    lazy: async () => ({ Component: (await import('@/features/auth/login-page')).LoginPage }),
+  },
+  {
+    path: '/invite',
+    lazy: async () => ({
+      Component: (await import('@/features/auth/accept-invite-page')).AcceptInvitePage,
+    }),
+  },
+  {
+    path: '/forgot-password',
+    lazy: async () => ({
+      Component: (await import('@/features/auth/forgot-password-page')).ForgotPasswordPage,
+    }),
+  },
+  {
+    path: '/reset-password',
+    lazy: async () => ({
+      Component: (await import('@/features/auth/reset-password-page')).ResetPasswordPage,
+    }),
+  },
   {
     element: <RequireAuth />,
     children: [
       {
         element: <AppShell />,
         children: [
-          { path: '/chat', element: <ChatPage /> },
-          { path: '/chat/:chatId', element: <ChatPage /> },
-          { path: '/documents', element: <DocumentsPage /> },
-          { path: '/usage', element: <UsagePage /> },
-          { path: '/reports', element: <ReportsPage /> },
-          { path: '/account', element: <AccountPage /> },
-          { path: '/admin', element: <AdminHubPage /> },
+          {
+            path: '/chat',
+            lazy: async () => ({
+              Component: (await import('@/features/chat/chat-page')).ChatPage,
+            }),
+          },
+          {
+            path: '/chat/:chatId',
+            lazy: async () => ({
+              Component: (await import('@/features/chat/chat-page')).ChatPage,
+            }),
+          },
+          {
+            path: '/documents',
+            lazy: async () => ({
+              Component: (await import('@/features/documents/documents-page')).DocumentsPage,
+            }),
+          },
+          {
+            path: '/usage',
+            lazy: async () => ({
+              Component: (await import('@/features/usage/usage-page')).UsagePage,
+            }),
+          },
+          {
+            path: '/reports',
+            lazy: async () => ({
+              Component: (await import('@/features/reports/reports-page')).ReportsPage,
+            }),
+          },
+          {
+            path: '/account',
+            lazy: async () => ({
+              Component: (await import('@/features/account/account-page')).AccountPage,
+            }),
+          },
+          {
+            path: '/admin',
+            lazy: async () => ({
+              Component: (await import('@/features/admin/admin-hub-page')).AdminHubPage,
+            }),
+          },
           {
             element: <RequireRole role="admin" />,
             children: [
-              { path: '/admin/dashboard', element: <DashboardPage /> },
-              { path: '/admin/users', element: <UsersPage /> },
-              { path: '/admin/feedback', element: <FeedbackPage /> },
+              {
+                path: '/admin/dashboard',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/dashboard/dashboard-page'))
+                    .DashboardPage,
+                }),
+              },
+              {
+                path: '/admin/users',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/users/users-page')).UsersPage,
+                }),
+              },
+              {
+                path: '/admin/feedback',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/feedback/feedback-page'))
+                    .FeedbackPage,
+                }),
+              },
             ],
           },
           {
             element: <RequireRole role="superadmin" />,
             children: [
-              { path: '/admin/models', element: <ModelsPage /> },
-              { path: '/admin/organizations', element: <OrganizationsPage /> },
-              { path: '/admin/settings', element: <SettingsPage /> },
-              { path: '/admin/api-keys', element: <ApiKeysPage /> },
-              { path: '/admin/bots', element: <BotsPage /> },
-              { path: '/admin/email', element: <EmailSettingsPage /> },
-              { path: '/admin/sso', element: <SsoSettingsPage /> },
-              { path: '/admin/health', element: <HealthPage /> },
+              {
+                path: '/admin/models',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/models/models-page')).ModelsPage,
+                }),
+              },
+              {
+                path: '/admin/organizations',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/organizations/organizations-page'))
+                    .OrganizationsPage,
+                }),
+              },
+              {
+                path: '/admin/settings',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/settings/settings-page'))
+                    .SettingsPage,
+                }),
+              },
+              {
+                path: '/admin/api-keys',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/api-keys/api-keys-page'))
+                    .ApiKeysPage,
+                }),
+              },
+              {
+                path: '/admin/bots',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/bots/bots-page')).BotsPage,
+                }),
+              },
+              {
+                path: '/admin/email',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/email/email-settings-page'))
+                    .EmailSettingsPage,
+                }),
+              },
+              {
+                path: '/admin/sso',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/sso/sso-settings-page'))
+                    .SsoSettingsPage,
+                }),
+              },
+              {
+                path: '/admin/health',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/health/health-page')).HealthPage,
+                }),
+              },
             ],
           },
           {
             element: <RequireAction action="roles.read" />,
-            children: [{ path: '/admin/roles', element: <RolesPage /> }],
+            children: [
+              {
+                path: '/admin/roles',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/roles/roles-page')).RolesPage,
+                }),
+              },
+            ],
           },
           {
             element: <RequireAction action="audit.read" />,
-            children: [{ path: '/admin/audit', element: <AuditPage /> }],
+            children: [
+              {
+                path: '/admin/audit',
+                lazy: async () => ({
+                  Component: (await import('@/features/admin/audit/audit-page')).AuditPage,
+                }),
+              },
+            ],
           },
         ],
       },

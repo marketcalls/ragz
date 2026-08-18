@@ -251,6 +251,14 @@ jobs:
       - name: Production build
         run: pnpm build
 
+      # Guards the INITIAL download, not dist/ as a whole: once routes are
+      # code-split, total size stops tracking what a visitor actually waits
+      # for. Reads Vite's manifest to follow only static imports, so adding a
+      # lazy route is free here and an eager one is not. Runs after the build
+      # because it measures the build's output.
+      - name: Bundle budget
+        run: pnpm bundle-budget
+
   e2e-smoke:
     name: frontend · playwright smoke (compiles)
     runs-on: ubuntu-latest

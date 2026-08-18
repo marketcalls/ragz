@@ -19,6 +19,12 @@ export default tseslint.config(
     },
   },
   {
+    // Build tooling, not app code: these run under Node, so the browser globals
+    // applied above are the wrong set and flag `console`/`process` as undefined.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
     files: ['src/features/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-syntax': [
