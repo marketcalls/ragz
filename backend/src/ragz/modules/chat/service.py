@@ -49,6 +49,9 @@ from ragz.modules.chat.analytics import (
     list_feedback_queue as list_feedback_queue,
 )
 from ragz.modules.chat.attachments import (
+    AttachmentExtractionView as AttachmentExtractionView,
+)
+from ragz.modules.chat.attachments import (
     create_attachment as create_attachment,
 )
 from ragz.modules.chat.attachments import (
@@ -56,6 +59,9 @@ from ragz.modules.chat.attachments import (
 )
 from ragz.modules.chat.attachments import (
     get_attachment_for_chat as get_attachment_for_chat,
+)
+from ragz.modules.chat.attachments import (
+    get_attachment_for_extraction as get_attachment_for_extraction,
 )
 from ragz.modules.chat.attachments import (
     link_attachments_to_message as link_attachments_to_message,

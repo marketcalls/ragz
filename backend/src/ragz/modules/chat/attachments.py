@@ -6,6 +6,7 @@ so a photo/screenshot attachment extracts text through the identical call
 as a text document; no branching on `kind` happens here."""
 
 from collections import defaultdict
+from dataclasses import dataclass
 from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
@@ -91,6 +92,42 @@ async def get_attachment_for_chat(
     if attachment is None or attachment.chat_id != chat_id:
         raise NotFoundError("attachment not found")
     return attachment
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentExtractionView:
+    """The three fields the extraction worker reads off an attachment.
+
+    Same reasoning as tenancy's WorkspaceView: the worker is an entrypoint, and
+    entrypoints call module services rather than query another module's ORM
+    (Phase 2 item 1). It used to `session.get(ChatAttachment, ...)` itself,
+    which coupled it to chat's schema and handed it a live, mutable, lazily
+    loading row it only ever read three scalars from.
+    """
+
+    id: UUID
+    storage_key: str
+    filename: str
+
+
+async def get_attachment_for_extraction(
+    session: AsyncSession, attachment_id: UUID
+) -> AttachmentExtractionView | None:
+    """Load the fields the extraction task needs, or None if the row is gone.
+
+    Unchecked by design: the task runs behind an authenticated upload that
+    already authorized this attachment, and it holds no TenantContext. None
+    (rather than NotFoundError) because a deleted attachment is a normal race
+    for a queued task, not an error worth retrying.
+    """
+    attachment = await session.get(ChatAttachment, attachment_id)
+    if attachment is None:
+        return None
+    return AttachmentExtractionView(
+        id=attachment.id,
+        storage_key=attachment.storage_key,
+        filename=attachment.filename,
+    )
 
 
 async def mark_attachment_processing(session: AsyncSession, attachment_id: UUID) -> None:

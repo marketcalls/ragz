@@ -18,15 +18,13 @@ from ragz.core.storage import build_storage
 from ragz.modules.chat import service as chat_service
 from ragz.modules.chat.attachments import extract_text
 from ragz.modules.chat.llm import LiteLLMStreamer
-from ragz.modules.chat.models import ChatAttachment
 from ragz.modules.documents import ingest
 from ragz.modules.documents.pipeline import IngestFailure
 from ragz.modules.evals.runner import run_eval
 from ragz.modules.evals.service import workspace_ids_with_golden_queries
 from ragz.modules.models import catalog
 from ragz.modules.retrieval.service import delete_ephemeral_points, retrieve
-from ragz.modules.tenancy.models import Workspace
-from ragz.modules.tenancy.views import WorkspaceView
+from ragz.modules.tenancy import service as tenancy_service
 from ragz.worker import loop as worker_loop
 from ragz.worker.celery_app import celery_app
 
@@ -265,7 +263,9 @@ def process_attachment_task(attachment_id: str) -> None:
         try:
             factory = build_session_factory(engine)
             async with factory() as session:
-                attachment = await session.get(ChatAttachment, UUID(attachment_id))
+                attachment = await chat_service.get_attachment_for_extraction(
+                    session, UUID(attachment_id)
+                )
                 if attachment is None:
                     return
                 await chat_service.mark_attachment_processing(session, attachment.id)
@@ -325,14 +325,16 @@ def run_eval_task(workspace_id: str, triggered_by: str, dispatch_id: str | None 
         try:
             factory = build_session_factory(engine)
             async with factory() as session:
-                ws = await session.get(Workspace, UUID(workspace_id))
+                ws = await tenancy_service.get_workspace_view(
+                    session, UUID(workspace_id)
+                )
                 if ws is None:
                     return
                 completer = LiteLLMStreamer(
                     base_url=settings.litellm_url, master_key=settings.litellm_master_key
                 )
                 await run_eval(
-                    session, WorkspaceView.of(ws), triggered_by=triggered_by,
+                    session, ws, triggered_by=triggered_by,
                     retriever=retrieve,
                     completer=completer,
                     dispatch_id=UUID(dispatch_id) if dispatch_id else None,

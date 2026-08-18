@@ -28,6 +28,7 @@ from ragz.modules.tenancy.models import (
     WorkspaceMember,
 )
 from ragz.modules.tenancy.permissions import PERMISSIONS
+from ragz.modules.tenancy.views import WorkspaceView
 
 
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
@@ -173,6 +174,24 @@ async def get_workspace(
     if ws is None or (ctx.role == "user" and workspace_id not in ctx.workspace_ids):
         raise NotFoundError("workspace not found")
     return ws
+
+
+async def get_workspace_view(
+    session: AsyncSession, workspace_id: UUID
+) -> WorkspaceView | None:
+    """The workspace's settings, for a caller that has already crossed the
+    trust boundary and has no TenantContext to check against -- today that is
+    the worker, dispatching work an authenticated request already authorized.
+
+    Deliberately unchecked and deliberately NOT a Workspace: entrypoints must
+    call module services rather than query another module's ORM themselves
+    (Phase 2 item 1), and a detached view is what the consumers of this data
+    already take. `get_workspace` remains the checked, request-path accessor.
+    """
+    ws = (
+        await session.execute(select(Workspace).where(Workspace.id == workspace_id))
+    ).scalar_one_or_none()
+    return None if ws is None else WorkspaceView.of(ws)
 
 
 async def set_default_model(

@@ -412,3 +412,54 @@ forbidden_modules = [
   "ragz.modules.secrets.models",
 ]
 allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# The audit: "API routes and workers import ORM models directly and execute
+# queries, despite the stated rule that entrypoints call public services only."
+# worker/ is now clean of that: it used to session.get(ChatAttachment) and
+# session.get(Workspace) itself, and now calls chat_service
+# .get_attachment_for_extraction and tenancy_service.get_workspace_view, which
+# hand back frozen views instead of live rows.
+#
+# One exception, and it is not an ORM import: `from ragz.modules.models import
+# catalog` binds the module namespace to call catalog.refresh_catalog(), a
+# service function. catalog.py happens to also define ModelCatalogEntry, and
+# import-linter cannot tell the two apart. Splitting that file would remove the
+# exception; until then it is listed rather than silently permitted.
+name = "worker entrypoints do not import module ORM"
+type = "forbidden"
+source_modules = ["ragz.worker"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Same rule for api/. Still 14 ORM imports across 8 route modules, so this
+# contract pins only the ORM the routes do NOT reach for today and lists the
+# rest as exceptions -- the same shrinking-backlog shape as the per-module
+# contracts above. Most are type annotations on FastAPI dependencies that hand
+# routes a live ORM row (`current_user: User`); removing them means the
+# dependency returns a view, which is a wider change than this one.
+name = "api entrypoints do not import module ORM"
+type = "forbidden"
+source_modules = ["ragz.api"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+]
+allow_indirect_imports = true
