@@ -1,0 +1,204 @@
+# Single-node production stack: the backing stores AND the application.
+#
+# Review item 7: deploy/compose.yaml is a DEVELOPMENT stack -- it runs Postgres,
+# Redis, Qdrant, MinIO and LiteLLM and nothing else, so calling it "the
+# reference deployment" was wrong; it never ran the API, worker, beat, frontend
+# or migrations. This file is the deployment.
+#
+# Still explicitly single-node: every store here is a single point of failure.
+# It is a reproducible deployment, NOT a highly-available one. HA (replicated
+# Postgres, Qdrant cluster, object-store redundancy) is a separate topology.
+#
+# Usage:
+#   cp .env.example .env && edit it   # KEK path, DB password, LiteLLM keys
+#   docker compose -f deploy/compose.prod.yaml up -d
+#
+# Secrets arrive as env or mounts. Nothing secret is baked into an image.
+
+name: ragz
+
+x-app-env: &app-env
+  RAGZ_DATABASE_URL: postgresql+asyncpg://ragz:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ragz
+  RAGZ_REDIS_URL: redis://redis:6379/0
+  RAGZ_QDRANT_URL: http://qdrant:6333
+  RAGZ_LITELLM_URL: http://litellm:4000
+  RAGZ_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+  RAGZ_MINIO_ENDPOINT: http://minio:9000
+  RAGZ_MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-ragz}
+  RAGZ_MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+  RAGZ_MINIO_BUCKET: ragz-documents
+  # The one secret that lives outside the database. Mounted read-only below;
+  # losing it makes every encrypted secret unrecoverable, so it is the thing to
+  # back up first.
+  RAGZ_KEK_FILE: /run/secrets/ragz_kek
+  RAGZ_ENVIRONMENT: prod
+
+# Applied to every application container. Defence in depth: even a compromised
+# process cannot write outside its declared tmpfs or gain privileges.
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+
+services:
+  # --- one-shot: schema must be current BEFORE anything serves -------------
+  migrate:
+    build: { context: ../backend }
+    image: ragz/backend:${RAGZ_VERSION:-dev}
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    volumes: ["${RAGZ_KEK_HOST_PATH:-./data/ragz_kek}:/run/secrets/ragz_kek:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"  # a migration that failed must NOT be retried blindly
+    <<: *hardening
+
+  api:
+    build: { context: ../backend }
+    image: ragz/backend:${RAGZ_VERSION:-dev}
+    environment: *app-env
+    volumes: ["${RAGZ_KEK_HOST_PATH:-./data/ragz_kek}:/run/secrets/ragz_kek:ro"]
+    tmpfs: ["/tmp"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+    healthcheck:
+      # /readyz, not /healthz: readiness proves the stores are reachable, which
+      # is what should gate traffic.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/readyz').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 2G }
+    <<: *hardening
+
+  worker:
+    build: { context: ../backend }
+    image: ragz/backend:${RAGZ_VERSION:-dev}
+    command:
+      - celery
+      - -A
+      - ragz.worker.celery_app:celery_app
+      - worker
+      - -Q
+      # maintenance included: the beat-scheduled outbox sweep, the reconcilers
+      # and the retention purge all route there. A worker without it leaves
+      # that work queued forever, with no error anywhere.
+      - interactive,default,maintenance
+      - -l
+      - info
+    environment: *app-env
+    volumes: ["${RAGZ_KEK_HOST_PATH:-./data/ragz_kek}:/run/secrets/ragz_kek:ro"]
+    tmpfs: ["/tmp"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    deploy:
+      resources:
+        # Parsing and embedding are the memory-hungry paths; a 168-page PDF is
+        # ordinary here.
+        limits: { cpus: "4", memory: 4G }
+    <<: *hardening
+
+  beat:
+    build: { context: ../backend }
+    image: ragz/backend:${RAGZ_VERSION:-dev}
+    # EXACTLY ONE beat instance. Two schedulers means every periodic job --
+    # outbox dispatch, both reconcilers, the nightly evals -- fires twice.
+    command: ["celery", "-A", "ragz.worker.celery_app:celery_app", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    environment: *app-env
+    volumes: ["${RAGZ_KEK_HOST_PATH:-./data/ragz_kek}:/run/secrets/ragz_kek:ro"]
+    tmpfs: ["/tmp"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    deploy:
+      replicas: 1
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+    <<: *hardening
+
+  web:
+    build: { context: ../frontend }
+    image: ragz/frontend:${RAGZ_VERSION:-dev}
+    ports: ["${RAGZ_HTTP_PORT:-8080}:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+    tmpfs: ["/tmp", "/var/cache/nginx", "/var/run"]
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 256M }
+    <<: *hardening
+
+  # --- stores ---------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+    environment:
+      POSTGRES_USER: ragz
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ragz
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    # Broker AND quota store: appendonly so a restart cannot lose in-flight
+    # counters. Outbox events survive regardless -- they are in Postgres.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.0@sha256:b3063c673f3973877c038eeecc392bad5011f072ee7892b56c9a8e204a3bdea9
+    volumes: ["qdrantdata:/qdrant/storage"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-ragz}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+    volumes: ["miniodata:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable@sha256:154e23bb5f31b1f10e16392a8ef299bd2cde08de3a64a6849002cfcc25ce3c63
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set LITELLM_SALT_KEY}
+      DATABASE_URL: postgresql://ragz:${POSTGRES_PASSWORD}@postgres:5432/ragz
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  qdrantdata:
+  miniodata:
