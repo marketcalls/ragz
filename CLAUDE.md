@@ -52,7 +52,7 @@ Review bar: OWASP ASVS L2 + OWASP LLM Top 10.
 | `audit` | append-only event log |
 | `outbox` | durable intent to run background work; committed with the domain change that justifies it |
 
-Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.py` only. Direction: `api`/`worker` → `modules` → `core` — this part IS enforced by import-linter in CI (the `Layered architecture` contract). **Not implemented:** the rest of the rule — that modules import other modules' public services only, never internals or ORM models — is convention, not a gate. import-linter checks layer direction, not module-to-module reach, and there are **29 cross-module ORM model imports** today (chat 8, quotas 6, documents 5, evals 3, tenancy 3, auth 2, bots 1, retrieval 1). Phase 2 item 2 of the architecture review covers closing them; until a `forbidden` contract exists to hold the line, treat this as an aspiration.
+Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.py` only. Direction (`api`/`worker` → `modules` → `core`) is enforced by import-linter's `Layered architecture` contract, and `chat` is additionally forbidden from importing tenancy's ORM (`chat does not reach into tenancy's ORM`) — it takes `tenancy.views.WorkspaceView` instead. **Partly implemented:** no ORM *object* crosses a module boundary any more, but 27 ORM classes are still imported across modules to JOIN or query another module's tables (documents←tenancy 5, chat←models 4, auth←tenancy 3, and so on). That is cross-module data access rather than an entity crossing a boundary; closing it needs bulk accessors on the owning modules, and Phase 2 item 2 covers it. Until then only the gated boundary above is guaranteed.
 
 ## Stack & Tooling
 

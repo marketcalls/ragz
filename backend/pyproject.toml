@@ -109,3 +109,24 @@ layers = ["ragz.api", "ragz.worker", "ragz.modules", "ragz.core"]
 # the layer violation it required simply stopped existing. Adding an entry here
 # should be a last resort -- the outbox is usually the answer.
 ignore_imports = []
+
+[[tool.importlinter.contracts]]
+# Locks in Phase 2 item 2's result rather than trusting it to stay true.
+# chat used to take tenancy's ORM Workspace into stream_reply and the agent --
+# an ORM entity crossing a module boundary, which the Never Do list forbids and
+# which also let a session-attached row lazily load mid-stream. It now takes
+# tenancy.views.WorkspaceView, so this boundary is clean and stays clean.
+#
+# Deliberately narrow: it names the boundary actually cleaned. Other modules
+# still import tenancy's models to JOIN against them for org scoping, which is
+# cross-module data access rather than an ORM object crossing a boundary, and
+# a wider contract here would simply fail.
+name = "chat does not reach into tenancy's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.chat"]
+forbidden_modules = ["ragz.modules.tenancy.models", "ragz.modules.tenancy.reembed_models"]
+# Direct imports only. Forbidden contracts are transitive by default, which
+# flags chat -> documents.service -> tenancy.reembed_models: a chain through
+# another module's public service, not chat reaching for an ORM class. The rule
+# being enforced is about what chat itself imports.
+allow_indirect_imports = true
