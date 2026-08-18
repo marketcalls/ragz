@@ -13,6 +13,7 @@ deterministic point ids, delete is idempotent by design, and the security
 projection re-reads current Postgres state rather than applying a delta.
 """
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID
@@ -33,7 +34,7 @@ log = structlog.get_logger()
 #: Topic -> the call that actually publishes to the broker. Payload keys are
 #: part of the contract with the publishing service; a change here needs the
 #: matching change at the publish site and a migration for in-flight rows.
-#: Handlers take (payload, queue). The queue comes from the EVENT, so the value a
+#: Handlers take (payload, queue, event_id). The queue comes from the EVENT, so the value a
 #: publisher stored is the value that routes -- it used to be persisted and then
 #: ignored here, which is a misleading contract: a caller could set queue= and
 #: silently get default routing. documents.ingest is the exception and says so:
@@ -98,7 +99,14 @@ async def dispatch_pending(limit: int = 100) -> int:
                 log.error("outbox_unknown_topic", topic=event.topic, event_id=str(event.id))
                 continue
             try:
-                handler(event.payload, event.queue, event.id)
+                # to_thread, not a direct call: .apply_async() is synchronous
+                # Redis I/O, and dispatch_pending runs on the FastAPI event
+                # loop via nudge() after every upload/delete. A slow or
+                # unreachable broker therefore stalled the whole loop -- every
+                # other in-flight request with it -- while this batch's rows
+                # sat locked by claim_due's FOR UPDATE. Off-loop, a broker
+                # timeout costs this request latency and nothing else.
+                await asyncio.to_thread(handler, event.payload, event.queue, event.id)
             except Exception as exc:  # noqa: BLE001 - broker errors must not kill the sweep
                 await outbox_service.mark_failed(session, event, str(exc))
                 continue

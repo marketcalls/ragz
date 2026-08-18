@@ -439,3 +439,38 @@ async def test_retention_is_batched(session: AsyncSession) -> None:
     assert await outbox_service.purge_dispatched(session, limit=2) == 2
     assert await outbox_service.purge_dispatched(session, limit=2) == 1
     assert await outbox_service.purge_dispatched(session, limit=2) == 0
+
+
+async def test_the_broker_publish_runs_off_the_event_loop(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cubic P2: .apply_async() is synchronous Redis I/O.
+
+    dispatch_pending runs on the FastAPI event loop via nudge() after every
+    upload and delete, so publishing inline stalled the entire loop -- every
+    other in-flight request with it -- whenever the broker was slow, while this
+    batch's rows sat locked by claim_due's FOR UPDATE SKIP LOCKED.
+    """
+    import threading
+
+    from ragz.modules.documents import ingest
+    from ragz.worker import outbox as worker_outbox
+
+    loop_thread = threading.get_ident()
+    handler_threads: list[int] = []
+    monkeypatch.setitem(
+        worker_outbox._HANDLERS,
+        "documents.ingest",
+        lambda _p, _q, _e: handler_threads.append(threading.get_ident()),
+    )
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+
+    outbox_service.publish(
+        session, topic="documents.ingest", payload={"document_id": str(uuid4()), "size_bytes": 1}
+    )
+    await session.commit()
+
+    assert await worker_outbox.dispatch_pending() == 1
+    assert handler_threads and loop_thread not in handler_threads, (
+        "the broker publish must not run on the event loop thread"
+    )
