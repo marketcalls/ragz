@@ -180,6 +180,11 @@ class Document(UUIDPk, Base):
 
 class IngestJob(UUIDPk, Base):
     __tablename__ = "ingest_jobs"
+    __table_args__ = (
+        # Mirrors migration d21fa2c66844: the reconciler's hot path is
+        # "newest job per stuck document".
+        Index("ix_ingest_jobs_document_id_updated_at", "document_id", "updated_at"),
+    )
 
     document_id: Mapped[UUID] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), index=True
@@ -189,6 +194,12 @@ class IngestJob(UUIDPk, Base):
     error: Mapped[str | None] = mapped_column(default=None)
     started_at: Mapped[datetime | None] = mapped_column(default=None)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    #: Worker liveness, not a bookkeeping timestamp. run_embed_upsert commits
+    #: `progress` after every batch, so onupdate turns that existing write into
+    #: a heartbeat at no extra cost: a live run touches this row continuously
+    #: even though Document.updated_at goes untouched for the whole stage.
+    #: reconcile_stuck_documents reads it to tell a dead worker from a slow one.
+    updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
 
 
 class MetadataField(UUIDPk, Base):

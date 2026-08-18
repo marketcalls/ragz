@@ -12,7 +12,7 @@ from uuid import UUID
 import structlog
 from qdrant_client import models as qdrant_models
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
@@ -714,7 +714,12 @@ async def reconcile_security_projections(limit: int = 500) -> int:
                         | (
                             Document.projected_security_revision
                             != Document.security_revision
-                        )
+                        ),
+                        # Cubic P1: never re-activate a document on its way out.
+                        # Retrieval excludes only non-active rows, so projecting
+                        # a deleting document back to active would make its
+                        # vectors searchable again until the delete lands.
+                        Document.status != "deleting",
                     )
                     .order_by(Document.updated_at)
                     .limit(limit)
@@ -733,7 +738,15 @@ async def reconcile_security_projections(limit: int = 500) -> int:
                     security_revision=doc.security_revision,
                 )
                 continue
-            recovered += 1
+            # Only count a genuine recovery (Cubic P2). A projection superseded
+            # mid-flight deliberately leaves the row pending, and counting that
+            # as recovered would report a draining backlog while it stands still.
+            await session.refresh(doc)
+            if (
+                doc.index_state == "active"
+                and doc.projected_security_revision == doc.security_revision
+            ):
+                recovered += 1
     if stale:
         log.info(
             "security_projection_reconciled",
@@ -744,10 +757,15 @@ async def reconcile_security_projections(limit: int = 500) -> int:
     return recovered
 
 
-#: A document that has been mid-flight longer than this is not "slow", it is
-#: abandoned -- its worker died, or its message was lost before the outbox
-#: existed. Generous enough that a genuinely large parse+embed is never
-#: disturbed.
+#: A document whose worker has been SILENT longer than this is treated as
+#: abandoned: the worker died, or its message was lost before the outbox existed.
+#:
+#: Silence is measured against IngestJob.updated_at, not Document.updated_at
+#: (Cubic P1). Nothing touches the document row while a stage runs, but
+#: run_embed_upsert commits IngestJob.progress after every batch, so a live run
+#: -- however long -- keeps stamping a heartbeat. Judging by the document row
+#: made a slow parse+embed indistinguishable from a dead worker and re-published
+#: work that was actively running.
 _STUCK_AFTER_SECONDS = 3 * 60 * 60
 
 
@@ -770,15 +788,29 @@ async def reconcile_stuck_documents(limit: int = 200) -> dict[str, int]:
     cutoff = naive_utc() - timedelta(seconds=_STUCK_AFTER_SECONDS)
     counts = {"queued": 0, "processing": 0, "deleting": 0}
     async with _session() as session:
+        # Newest worker heartbeat per document. COALESCE falls back to the
+        # document row for statuses that legitimately have no job yet --
+        # "queued" before the first stage starts, and "deleting", which never
+        # gets one -- so those keep their original behaviour exactly.
+        last_beat = (
+            select(
+                IngestJob.document_id.label("document_id"),
+                func.max(IngestJob.updated_at).label("beat"),
+            )
+            .group_by(IngestJob.document_id)
+            .subquery()
+        )
+        liveness = func.coalesce(last_beat.c.beat, Document.updated_at)
         stuck = (
             (
                 await session.execute(
                     select(Document)
+                    .outerjoin(last_beat, last_beat.c.document_id == Document.id)
                     .where(
                         Document.status.in_(("queued", "processing", "deleting")),
-                        Document.updated_at < cutoff,
+                        liveness < cutoff,
                     )
-                    .order_by(Document.updated_at)
+                    .order_by(liveness)
                     .limit(limit)
                 )
             )
@@ -802,6 +834,14 @@ async def reconcile_stuck_documents(limit: int = 200) -> dict[str, int]:
                     topic="documents.ingest",
                     payload={"document_id": str(doc.id), "size_bytes": doc.size_bytes},
                 )
+            # Touch updated_at so this row is not re-published on the NEXT
+            # sweep (Cubic P2). Without it each hour adds another outbox event
+            # for the same document until its status finally changes -- the
+            # recovery mechanism becomes an amplifier. updated_at doubles as the
+            # retry lease: the row only becomes eligible again after another
+            # full cutoff has elapsed, which is exactly the retry interval we
+            # want for work that may legitimately still be running.
+            doc.updated_at = naive_utc()
             counts[doc.status] += 1
         await session.commit()
     if stuck:

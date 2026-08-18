@@ -233,3 +233,86 @@ async def test_a_recently_updated_document_is_left_alone(
 
     assert counts == {"queued": 0, "processing": 0, "deleting": 0}
     assert await outbox_service.claim_due(session) == []
+
+
+async def test_the_stuck_sweep_does_not_republish_the_same_document_every_hour(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cubic P2: the recovery mechanism must not become an amplifier.
+
+    Without a lease, every sweep re-publishes the same stranded document,
+    stacking one outbox event per hour until its status finally changes.
+    Stamping updated_at makes the row ineligible until another full cutoff has
+    elapsed, so it is retried at most once per cutoff.
+    """
+    from datetime import timedelta
+
+    from ragz.modules.documents import ingest
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+    stale = naive_utc() - timedelta(seconds=ingest._STUCK_AFTER_SECONDS + 60)
+    await _seed_document(session, seeded_user, status="queued", updated_at=stale)
+
+    assert (await ingest.reconcile_stuck_documents())["queued"] == 1
+    assert len(await outbox_service.claim_due(session)) == 1
+
+    # Immediately re-running must find nothing: the lease has not expired.
+    assert (await ingest.reconcile_stuck_documents())["queued"] == 0
+    assert len(await outbox_service.claim_due(session)) == 1, "no duplicate event"
+
+
+async def test_a_live_worker_mid_stage_is_not_republished(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cubic P1: a slow stage must not look like a dead worker.
+
+    Nothing touches the DOCUMENT row while a stage runs -- run_embed_upsert
+    commits IngestJob.progress per batch and leaves the document alone. So a
+    parse+embed genuinely running for longer than the cutoff had a stale
+    Document.updated_at and was re-published while still working, duplicating
+    the whole embed. Liveness is the newest IngestJob heartbeat instead.
+    """
+    from datetime import timedelta
+
+    from ragz.modules.documents import ingest
+    from ragz.modules.documents.models import IngestJob
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+    stale = naive_utc() - timedelta(seconds=ingest._STUCK_AFTER_SECONDS + 60)
+    doc = await _seed_document(session, seeded_user, status="processing", updated_at=stale)
+
+    # The worker is alive: it committed a batch a moment ago.
+    session.add(IngestJob(document_id=doc.id, stage="embed", progress=0.4,
+                          started_at=stale, updated_at=naive_utc()))
+    await session.commit()
+
+    counts = await ingest.reconcile_stuck_documents()
+
+    assert counts == {"queued": 0, "processing": 0, "deleting": 0}
+    assert await outbox_service.claim_due(session) == []
+
+
+async def test_a_document_whose_worker_died_mid_stage_is_still_requeued(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half: a heartbeat that stopped is exactly what recovery is for,
+    so keying off IngestJob must not make dead workers unrecoverable."""
+    from datetime import timedelta
+
+    from ragz.modules.documents import ingest
+    from ragz.modules.documents.models import IngestJob
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+    stale = naive_utc() - timedelta(seconds=ingest._STUCK_AFTER_SECONDS + 60)
+    doc = await _seed_document(session, seeded_user, status="processing", updated_at=stale)
+
+    # Started, then went silent: the heartbeat is as old as the document.
+    session.add(IngestJob(document_id=doc.id, stage="embed", progress=0.4,
+                          started_at=stale, updated_at=stale))
+    await session.commit()
+
+    counts = await ingest.reconcile_stuck_documents()
+
+    assert counts["processing"] == 1
+    due = await outbox_service.claim_due(session)
+    assert [e.payload["document_id"] for e in due] == [str(doc.id)]
