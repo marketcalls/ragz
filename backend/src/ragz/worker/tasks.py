@@ -10,6 +10,7 @@ from uuid import UUID
 
 import structlog
 from celery import Task, chain
+from celery.exceptions import SoftTimeLimitExceeded
 
 from ragz.core.config import get_settings
 from ragz.core.db import build_engine, build_session_factory, naive_utc
@@ -28,6 +29,11 @@ from ragz.modules.tenancy.models import Workspace
 from ragz.worker.celery_app import celery_app
 
 _MAX_RETRIES = 3
+# Maintenance work is small and bounded (a 30s sweep, capped reconciler scans, a
+# batched purge). Running for minutes means stuck, not busy -- so these get a
+# much tighter pair than the bulk ingest default in celery_app.py.
+_MAINT_SOFT = get_settings().celery_maintenance_soft_time_limit_seconds
+_MAINT_HARD = get_settings().celery_maintenance_time_limit_seconds
 
 
 class IngestTask(Task):
@@ -62,6 +68,13 @@ def _run(self: Task, coro_factory: Any) -> Any:
         return asyncio.run(coro_factory())
     except IngestFailure:
         raise  # terminal: already recorded on the document; stops the chain, no retry
+    except SoftTimeLimitExceeded:
+        # Terminal, like IngestFailure. SoftTimeLimitExceeded is an ordinary
+        # Exception, so without this branch the generic retry below would give a
+        # task that is merely too slow three MORE full-length attempts -- four
+        # times the wasted work, on the very worker slot the limit exists to
+        # free. on_failure records it on the document instead.
+        raise
     except Exception as exc:
         raise self.retry(exc=exc, countdown=2 ** self.request.retries) from exc
 
@@ -338,7 +351,8 @@ def enqueue_eval_run(
     ).apply_async(queue="default")
 
 
-@celery_app.task(name="evals.run_all_workspaces")
+@celery_app.task(name="evals.run_all_workspaces",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def run_all_workspaces_task() -> None:
     """Nightly fan-out (Task 12, §6; Plan G Task 12 precedent: interval-based,
     not true crontab). Only workspaces with >=1 golden query get a run -
@@ -359,7 +373,8 @@ def run_all_workspaces_task() -> None:
     asyncio.run(_run())
 
 
-@celery_app.task(name="attachments.cleanup_stale")
+@celery_app.task(name="attachments.cleanup_stale",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def cleanup_stale_attachments_task() -> None:
     """Task 7 (DOC-9): daily Beat sweep deleting ephemeral chat attachments
     past the 24h TTL -- DB row (chat_service.delete_attachment), MinIO blob
@@ -402,7 +417,8 @@ def cleanup_stale_attachments_task() -> None:
     asyncio.run(_run())
 
 
-@celery_app.task(name="models.refresh_catalog")
+@celery_app.task(name="models.refresh_catalog",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def refresh_model_catalog() -> None:
     """Beat-scheduled daily; refresh_catalog's own 3-day cache makes redundant
     runs a cheap no-op (MODEL-10/G7)."""
@@ -422,7 +438,8 @@ def refresh_model_catalog() -> None:
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
-                 name="documents.reconcile_security_projections")
+                 name="documents.reconcile_security_projections",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def reconcile_security_projections_task(self: Task) -> int:
     """Re-drive documents whose committed ACL never reached Qdrant (review P0).
 
@@ -435,7 +452,8 @@ def reconcile_security_projections_task(self: Task) -> int:
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
-                 name="outbox.dispatch_pending")
+                 name="outbox.dispatch_pending",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def outbox_dispatch_task(self: Task) -> int:
     """Sweep undispatched outbox events (review P1).
 
@@ -450,7 +468,8 @@ def outbox_dispatch_task(self: Task) -> int:
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
-                 name="outbox.purge_dispatched")
+                 name="outbox.purge_dispatched",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def outbox_purge_task(self: Task) -> int:
     """Bounded retention for outbox_events (Cubic P2).
 
@@ -470,7 +489,8 @@ def outbox_purge_task(self: Task) -> int:
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
-                 name="documents.reconcile_stuck")
+                 name="documents.reconcile_stuck",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def reconcile_stuck_documents_task(self: Task) -> dict[str, int]:
     """Re-drive documents stranded mid-pipeline (review P1).
 

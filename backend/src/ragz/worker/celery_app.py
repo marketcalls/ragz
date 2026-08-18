@@ -28,25 +28,37 @@ def build_celery() -> Celery:
         task_acks_late=True,  # a killed worker re-delivers, pairs with idempotent upserts
         worker_prefetch_multiplier=1,  # long tasks: no hoarding
         task_default_queue="default",
-        task_queues=(Queue("default"), Queue("interactive")),
+        # "maintenance" is separate so the beat-scheduled safety nets do not
+        # queue behind bulk ingestion. The outbox sweep exists to bound how late
+        # owed work can start; sharing a queue with a multi-minute embed meant a
+        # 30s sweep could wait minutes, defeating its own purpose. Workers must
+        # consume it -- see the -Q argument in README.md.
+        task_queues=(Queue("default"), Queue("interactive"), Queue("maintenance")),
+        # Default limits apply to the bulk/ingest family; maintenance tasks
+        # override them per-task with the tighter pair.
+        task_soft_time_limit=settings.celery_soft_time_limit_seconds,
+        task_time_limit=settings.celery_time_limit_seconds,
         broker_connection_retry_on_startup=True,
         # Plan G Task 12 (MODEL-10/G7): daily catalog sync; the 3-day cache
         # inside refresh_catalog makes retries/redundant runs cheap.
         beat_schedule={
             "refresh-model-catalog": {
                 "task": "models.refresh_catalog",
+                "options": {"queue": "maintenance"},
                 "schedule": 24 * 60 * 60,
             },
             # Task 12 (Plan J, §6): nightly eval fan-out, same interval-seconds
             # style as the entry above (not a crontab).
             "nightly-eval-run": {
                 "task": "evals.run_all_workspaces",
+                "options": {"queue": "maintenance"},
                 "schedule": 24 * 60 * 60,
             },
             # Task 7 (DOC-9): daily TTL sweep for ephemeral chat attachments,
             # same interval-seconds style as the two entries above.
             "attachment-ttl-cleanup": {
                 "task": "attachments.cleanup_stale",
+                "options": {"queue": "maintenance"},
                 "schedule": 24 * 60 * 60,
             },
             # Review P0: fail-closed ACL projection hides a document when Qdrant
@@ -56,6 +68,7 @@ def build_celery() -> Celery:
             # so the recovery time IS the user-visible outage.
             "reconcile-security-projections": {
                 "task": "documents.reconcile_security_projections",
+                "options": {"queue": "maintenance"},
                 "schedule": 5 * 60,
             },
             # Review P1: the safety net behind the API's inline nudge. Frequent,
@@ -64,6 +77,7 @@ def build_celery() -> Celery:
             # job can be when the nudge could not run.
             "outbox-dispatch": {
                 "task": "outbox.dispatch_pending",
+                "options": {"queue": "maintenance"},
                 "schedule": 30,
             },
             # Cubic P2: bounded retention for the same table. Daily, because
@@ -71,6 +85,7 @@ def build_celery() -> Celery:
             # locks on the table the dispatcher reads every 30s for nothing.
             "outbox-purge": {
                 "task": "outbox.purge_dispatched",
+                "options": {"queue": "maintenance"},
                 "schedule": 24 * 60 * 60,
             },
             # Review P1: recovers documents stranded mid-pipeline -- rows from
@@ -79,6 +94,7 @@ def build_celery() -> Celery:
             # tighter schedule would only re-scan the same rows.
             "reconcile-stuck-documents": {
                 "task": "documents.reconcile_stuck",
+                "options": {"queue": "maintenance"},
                 "schedule": 60 * 60,
             },
         },

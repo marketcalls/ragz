@@ -52,7 +52,7 @@ RAGZ_BOOTSTRAP_EMAIL=admin@example.com RAGZ_BOOTSTRAP_PASSWORD=changeme12345 \
 uv run uvicorn --factory ragz.api.app:create_app --port 8000
 
 # 3. Worker — second terminal, from backend/  (add --pool=solo on macOS)
-uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default -l info
+uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default,maintenance -l info
 
 # 4. Scheduler — third terminal, from backend/  (syncs the model catalog)
 uv run celery -A ragz.worker.celery_app:celery_app beat -l info
