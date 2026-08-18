@@ -201,6 +201,9 @@ export function RegisteredModelsTable({
         open={formTarget !== null}
         onOpenChange={(o) => !o && setFormTarget(null)}
         model={formTarget === 'create' ? null : formTarget}
+        // Add from the embedding registry starts on Embedding, so the catalog
+        // picker lists embedders rather than chat models.
+        defaultModality={modality}
       />
       <Dialog open={removing !== null} onOpenChange={(o) => !o && setRemoving(null)}>
         <DialogContent

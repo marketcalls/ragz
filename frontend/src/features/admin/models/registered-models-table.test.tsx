@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import type { ModelOut } from '@/api/types';
 
@@ -110,4 +111,24 @@ test('the add button is opt-in', () => {
 
   render(<RegisteredModelsTable modality="embedding" showAdd />);
   expect(screen.getByRole('button', { name: /add embedding model/i })).toBeInTheDocument();
+});
+
+test('adding from the embedding registry starts the form on Embedding', async () => {
+  // The catalog picker filters by Type, so opening on Chat would have the user
+  // searching chat models while trying to register an embedder.
+  const user = userEvent.setup();
+  render(<RegisteredModelsTable modality="embedding" showAdd />);
+
+  await user.click(screen.getByRole('button', { name: /add embedding model/i }));
+
+  expect(await screen.findByLabelText(/type/i)).toHaveValue('embedding');
+});
+
+test('adding from the chat registry still starts on Chat', async () => {
+  const user = userEvent.setup();
+  render(<RegisteredModelsTable modality="chat" showAdd />);
+
+  await user.click(screen.getByRole('button', { name: /add embedding model/i }));
+
+  expect(await screen.findByLabelText(/type/i)).toHaveValue('chat');
 });
