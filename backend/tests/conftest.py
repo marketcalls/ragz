@@ -157,16 +157,41 @@ async def storage(minio_config: dict[str, str]) -> ObjectStorage:
     return s
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def stack_env(
     pg_url: str,
+    redis_url: str,
     qdrant_url: str,
     minio_config: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """Point ambient settings at the test containers; dense backend = deterministic
-    hash (no TEI, no model downloads)."""
+    hash (no TEI, no model downloads).
+
+    AUTOUSE, because opt-in kept failing open. Any test that forgot to request
+    it silently read the DEVELOPER'S dev stack -- Redis on :56379 and Qdrant on
+    :56333, the ports deploy/compose.yaml publishes -- so the suite passed on a
+    machine running `docker compose up` and failed on a CI runner. That is how
+    19 tests could be green locally and red in CI. Opt-in isolation is only as
+    good as the last person who remembered to opt in.
+    """
     monkeypatch.setenv("RAGZ_DATABASE_URL", pg_url)
+    # Redis was the one backing service NOT redirected here. Settings.redis_url
+    # defaults to redis://localhost:56379/0 -- the port deploy/compose.yaml
+    # publishes -- so any code resolving Redis from settings (rather than from
+    # the injected client) talked to the DEVELOPER'S dev stack. That container
+    # is running on a developer box and absent on a CI runner, which is why the
+    # bots and attachment tests passed locally and failed in CI.
+    monkeypatch.setenv("RAGZ_REDIS_URL", redis_url)
+    # Celery is the reason the env var alone is not enough. build_celery() reads
+    # get_settings() when ragz.worker.celery_app is IMPORTED, so its broker and
+    # result backend are already bound to the ambient redis_url before any
+    # fixture runs -- pointing at the dev stack's :56379. Rewriting the live
+    # conf is what actually redirects it.
+    from ragz.worker.celery_app import celery_app
+
+    monkeypatch.setitem(celery_app.conf, "broker_url", redis_url)
+    monkeypatch.setitem(celery_app.conf, "result_backend", redis_url)
     monkeypatch.setenv("RAGZ_QDRANT_URL", qdrant_url)
     monkeypatch.setenv("RAGZ_MINIO_ENDPOINT", minio_config["endpoint"])
     monkeypatch.setenv("RAGZ_MINIO_ACCESS_KEY", minio_config["access_key"])
