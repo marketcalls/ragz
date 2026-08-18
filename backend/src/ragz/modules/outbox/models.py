@@ -37,6 +37,15 @@ class OutboxEvent(UUIDPk, Base):
             "available_at",
             postgresql_where=text("status = 'pending'"),
         ),
+        # The retention sweep's only query. Partial for the same reason as the
+        # one above, inverted: it reads exactly the dispatched rows the
+        # dispatcher never looks at, and without this the daily purge would seq
+        # scan the largest table in the database.
+        Index(
+            "ix_outbox_events_dispatched_at",
+            "dispatched_at",
+            postgresql_where=text("status = 'dispatched'"),
+        ),
     )
 
     #: Logical event name, mapped to a Celery task by the worker's registry.

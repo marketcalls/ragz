@@ -450,6 +450,26 @@ def outbox_dispatch_task(self: Task) -> int:
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="outbox.purge_dispatched")
+def outbox_purge_task(self: Task) -> int:
+    """Bounded retention for outbox_events (Cubic P2).
+
+    One row per upload/delete/reindex/eval accumulated forever, making the
+    busiest insert path in the system also the largest table -- in storage,
+    backups and vacuum work. Only dispatched rows past the window are removed;
+    pending rows are owed work and failed rows are parked for a human.
+    """
+    async def _purge() -> int:
+        from ragz.modules.documents.ingest import _session
+        from ragz.modules.outbox import service as outbox_service
+
+        async with _session() as session:
+            return await outbox_service.purge_dispatched(session)
+
+    return _run(self, _purge)  # type: ignore[no-any-return]
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
                  name="documents.reconcile_stuck")
 def reconcile_stuck_documents_task(self: Task) -> dict[str, int]:
     """Re-drive documents stranded mid-pipeline (review P1).

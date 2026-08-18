@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Any
 
 import structlog
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,3 +113,43 @@ async def pending_backlog(session: AsyncSession) -> int:
         select(func.count()).select_from(OutboxEvent).where(OutboxEvent.status == "pending")
     )
     return int(count or 0)
+
+
+#: How long a successfully dispatched event is kept before purging. Long enough
+#: to debug "did that actually fire?" against a recent incident, short enough
+#: that the table does not become the largest one in the database.
+_RETENTION = timedelta(days=7)
+
+
+async def purge_dispatched(
+    session: AsyncSession, *, older_than: timedelta = _RETENTION, limit: int = 10_000
+) -> int:
+    """Delete dispatched events past their retention window. Returns the count.
+
+    Every successful dispatch left its row behind forever, so outbox_events grew
+    without bound in storage, backups and vacuum work -- and it is the busiest
+    insert path in the system, one row per upload/delete/reindex/eval.
+
+    ONLY status='dispatched' is purged. A 'pending' row is owed work, and a
+    'failed' one was parked for a human to look at -- deleting either would
+    destroy the durability guarantee this whole module exists to provide.
+
+    Batched via a subquery on the primary key: an unbounded DELETE over a large
+    backlog holds locks for as long as it takes, on the table the dispatcher
+    needs every 30 seconds.
+    """
+    cutoff = naive_utc() - older_than
+    doomed = (
+        select(OutboxEvent.id)
+        .where(OutboxEvent.status == "dispatched", OutboxEvent.dispatched_at < cutoff)
+        .limit(limit)
+        .scalar_subquery()
+    )
+    result = await session.execute(
+        sa_delete(OutboxEvent).where(OutboxEvent.id.in_(doomed)).returning(OutboxEvent.id)
+    )
+    purged = len(result.scalars().all())
+    await session.commit()
+    if purged:
+        log.info("outbox_purged", purged=purged, older_than_days=older_than.days)
+    return purged

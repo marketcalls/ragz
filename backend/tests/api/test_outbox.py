@@ -384,3 +384,58 @@ async def test_a_legacy_stranded_delete_replays_with_no_actor_rather_than_a_wron
 
     due = await outbox_service.claim_due(session)
     assert due[0].payload["actor_id"] is None
+
+
+async def test_retention_purges_old_dispatched_events_only(session: AsyncSession) -> None:
+    """Cubic P2: outbox_events is the busiest insert path in the system -- one
+    row per upload/delete/reindex/eval -- and every dispatched row stayed
+    forever, so it grew without bound in storage, backups and vacuum work.
+
+    What must NOT be purged matters more than what must: a 'pending' row is
+    owed work and a 'failed' row was parked for a human. Deleting either would
+    destroy the durability guarantee the module exists to provide.
+    """
+    from datetime import timedelta
+
+    old = naive_utc() - timedelta(days=30)
+
+    def _seed(status: str, dispatched_at: "datetime | None") -> OutboxEvent:
+        ev = OutboxEvent(
+            topic="documents.ingest", payload={"document_id": str(uuid4())},
+            status=status, dispatched_at=dispatched_at,
+        )
+        session.add(ev)
+        return ev
+
+    stale_dispatched = _seed("dispatched", old)
+    fresh_dispatched = _seed("dispatched", naive_utc())
+    old_pending = _seed("pending", None)
+    old_failed = _seed("failed", None)
+    await session.commit()
+    survivors = {fresh_dispatched.id, old_pending.id, old_failed.id}
+    doomed = stale_dispatched.id
+
+    purged = await outbox_service.purge_dispatched(session)
+
+    assert purged == 1
+    remaining = {e.id for e in (await session.execute(select(OutboxEvent))).scalars()}
+    assert doomed not in remaining
+    assert survivors <= remaining, "owed and parked work must never be purged"
+
+
+async def test_retention_is_batched(session: AsyncSession) -> None:
+    """An unbounded DELETE holds locks on the table the dispatcher reads every
+    30 seconds, for as long as the backlog takes."""
+    from datetime import timedelta
+
+    old = naive_utc() - timedelta(days=30)
+    for _ in range(5):
+        session.add(OutboxEvent(
+            topic="documents.ingest", payload={}, status="dispatched", dispatched_at=old,
+        ))
+    await session.commit()
+
+    assert await outbox_service.purge_dispatched(session, limit=2) == 2
+    assert await outbox_service.purge_dispatched(session, limit=2) == 2
+    assert await outbox_service.purge_dispatched(session, limit=2) == 1
+    assert await outbox_service.purge_dispatched(session, limit=2) == 0

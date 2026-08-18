@@ -66,6 +66,13 @@ def build_celery() -> Celery:
                 "task": "outbox.dispatch_pending",
                 "schedule": 30,
             },
+            # Cubic P2: bounded retention for the same table. Daily, because
+            # the window is 7 days -- sweeping more often would just take
+            # locks on the table the dispatcher reads every 30s for nothing.
+            "outbox-purge": {
+                "task": "outbox.purge_dispatched",
+                "schedule": 24 * 60 * 60,
+            },
             # Review P1: recovers documents stranded mid-pipeline -- rows from
             # before the outbox existed, and any whose worker died after
             # claiming the message. Hourly, because its own cutoff is hours: a
