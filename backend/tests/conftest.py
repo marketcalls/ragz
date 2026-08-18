@@ -132,16 +132,48 @@ async def storage(minio_config: dict[str, str]) -> ObjectStorage:
     return s
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ambient_kek(kek_file: str) -> Iterator[None]:
+    """Point the AMBIENT KEK at a per-session temp file, for every test.
+
+    Settings.kek_file defaults to ./data/ragz_kek. Any test that builds
+    Settings(_env_file=None) -- or drives the API, which resolves settings
+    itself -- therefore read whatever KEK happened to be on the machine. On a
+    developer box the app has usually been bootstrapped, so that file exists and
+    the tests pass; on a CI runner it does not, and the isolation job failed
+    with "KEK file missing" while the same tests were green locally.
+
+    Session-scoped and autouse deliberately: the tests that broke never request
+    stack_env, so fixing it there only covered the ones that were already fine.
+    A test needing its own KEK still passes kek_file= explicitly.
+    """
+    mp = pytest.MonkeyPatch()
+    mp.setenv("RAGZ_KEK_FILE", kek_file)
+    _clear_caches()
+    yield
+    mp.undo()
+    _clear_caches()
+
+
 @pytest.fixture
 def stack_env(
     pg_url: str,
     qdrant_url: str,
     minio_config: dict[str, str],
+    kek_file: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """Point ambient settings at the test containers; dense backend = deterministic
     hash (no TEI, no model downloads)."""
     monkeypatch.setenv("RAGZ_DATABASE_URL", pg_url)
+    # Every other backing service is redirected here, but the KEK was not, so a
+    # test constructing Settings(_env_file=None) fell back to ./data/ragz_kek --
+    # a file that exists on any machine where the app has been bootstrapped, and
+    # on no CI runner. That is why the isolation job failed with "KEK file
+    # missing" while the same tests passed locally: they were reading a
+    # developer artifact. Redirecting it here fixes every such call site at once
+    # rather than one Settings(...) at a time.
+    monkeypatch.setenv("RAGZ_KEK_FILE", kek_file)
     monkeypatch.setenv("RAGZ_QDRANT_URL", qdrant_url)
     monkeypatch.setenv("RAGZ_MINIO_ENDPOINT", minio_config["endpoint"])
     monkeypatch.setenv("RAGZ_MINIO_ACCESS_KEY", minio_config["access_key"])
@@ -210,7 +242,7 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
         yield s
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
     path = tmp_path_factory.mktemp("kek") / "ragz_kek"
     ensure_kek(str(path))
