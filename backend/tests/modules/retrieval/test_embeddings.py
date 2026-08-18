@@ -143,7 +143,7 @@ async def test_litellm_embedder_non_200_raises_upstream_error() -> None:
         await embedder.embed(["hello"])
 
 
-def test_get_dense_embedder_routes_tei_vs_litellm() -> None:
+def test_get_dense_embedder_routes_tei_vs_litellm(pristine_env) -> None:
     tei_id = uuid4()
     other_id = uuid4()
     tei = get_dense_embedder(tei_id, provider_kind="tei", litellm_model_name="local-embeddings")

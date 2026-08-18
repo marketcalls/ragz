@@ -8,7 +8,7 @@ def test_settings_reads_env(monkeypatch) -> None:  # type: ignore[no-untyped-def
     assert s.access_token_ttl_seconds == 900
 
 
-def test_ingestion_settings_defaults(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_ingestion_settings_defaults(pristine_env, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     s = Settings(_env_file=None)
     assert s.qdrant_url == "http://localhost:56333"
     assert s.minio_endpoint == "http://localhost:59000"

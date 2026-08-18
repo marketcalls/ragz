@@ -157,6 +157,23 @@ async def storage(minio_config: dict[str, str]) -> ObjectStorage:
     return s
 
 
+@pytest.fixture
+def pristine_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Strip every RAGZ_* variable so Settings() shows its CLASS defaults.
+
+    stack_env is autouse, which is what stops tests silently reading the
+    developer's dev stack -- but it also means the ambient environment is never
+    empty. A test asserting "the default qdrant_url is localhost:56333" must
+    therefore opt out explicitly, rather than depending on the environment
+    happening to be unset, which is how it passed before.
+    """
+    for key in [k for k in os.environ if k.startswith("RAGZ_")]:
+        monkeypatch.delenv(key, raising=False)
+    _clear_caches()
+    yield
+    _clear_caches()
+
+
 @pytest.fixture(autouse=True)
 def stack_env(
     pg_url: str,
