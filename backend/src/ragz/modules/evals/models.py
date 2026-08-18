@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -34,10 +34,22 @@ class EvalRun(UUIDPk, Base):
     computed, avg_faithfulness only when a utility model is designated."""
 
     __tablename__ = "eval_runs"
+    __table_args__ = (
+        # Idempotency key for outbox delivery. The dispatcher sends to the
+        # broker and only then marks the event dispatched; a crash in between
+        # leaves it pending and it is redelivered. Most topics are idempotent
+        # by construction, but an eval run is not -- a second delivery would
+        # add a duplicate row AND re-spend the LLM/quota budget. UNIQUE turns
+        # the second claim into an IntegrityError the runner treats as "already
+        # handled". NULL for runs with no outbox event behind them (the nightly
+        # fan-out and direct calls), and NULLs do not collide in Postgres.
+        UniqueConstraint("dispatch_id", name="uq_eval_runs_dispatch_id"),
+    )
 
     workspace_id: Mapped[UUID] = mapped_column(
         ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
     )
+    dispatch_id: Mapped[UUID | None] = mapped_column(default=None)
     triggered_by: Mapped[str] = mapped_column(default="manual")  # manual|settings_change|nightly
     query_count: Mapped[int] = mapped_column(default=0)
     hit_rate: Mapped[float | None] = mapped_column(default=None)

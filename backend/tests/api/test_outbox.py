@@ -114,8 +114,10 @@ async def test_the_dispatcher_delivers_pending_work_to_the_broker(
     from ragz.worker import outbox as worker_outbox
 
     sent: list[dict[str, Any]] = []
+    # Handlers take (payload, queue, event_id) -- the id is there so a handler
+    # whose work is not idempotent can use it as an idempotency key.
     monkeypatch.setitem(
-        worker_outbox._HANDLERS, "documents.ingest", lambda p, _q: sent.append(p)
+        worker_outbox._HANDLERS, "documents.ingest", lambda p, _q, _e: sent.append(p)
     )
     monkeypatch.setattr(ingest, "_session", _FixedSession(session))
 

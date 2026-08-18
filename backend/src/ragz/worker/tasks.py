@@ -300,7 +300,7 @@ def enqueue_attachment_processing(attachment_id: UUID) -> None:
 
 
 @celery_app.task(name="evals.run")
-def run_eval_task(workspace_id: str, triggered_by: str) -> None:
+def run_eval_task(workspace_id: str, triggered_by: str, dispatch_id: str | None = None) -> None:
     """Minimal trigger for Task 11 (the admin on-demand button); Task 12 adds
     the nightly/settings-change triggers alongside this same task."""
 
@@ -319,6 +319,7 @@ def run_eval_task(workspace_id: str, triggered_by: str) -> None:
                 await run_eval(
                     session, ws, triggered_by=triggered_by, retriever=retrieve,
                     completer=completer,
+                    dispatch_id=UUID(dispatch_id) if dispatch_id else None,
                 )
         finally:
             await engine.dispose()
@@ -326,8 +327,15 @@ def run_eval_task(workspace_id: str, triggered_by: str) -> None:
     asyncio.run(_run())
 
 
-def enqueue_eval_run(workspace_id: UUID, triggered_by: str) -> None:
-    run_eval_task.si(str(workspace_id), triggered_by).apply_async(queue="default")
+def enqueue_eval_run(
+    workspace_id: UUID, triggered_by: str, dispatch_id: UUID | None = None
+) -> None:
+    """`dispatch_id` is the outbox event id, carried through so the runner can
+    recognise a redelivery of the SAME event and refuse to run it twice. None
+    for callers with no event behind them (the nightly fan-out)."""
+    run_eval_task.si(
+        str(workspace_id), triggered_by, str(dispatch_id) if dispatch_id else None
+    ).apply_async(queue="default")
 
 
 @celery_app.task(name="evals.run_all_workspaces")
