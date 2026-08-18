@@ -41,6 +41,7 @@ from ragz.modules.tenancy.context import (
     require_action,
 )
 from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
 from ragz.worker.tasks import enqueue_attachment_processing, enqueue_audit_message
 
 router = APIRouter(tags=["chat"])
@@ -260,7 +261,8 @@ async def send_message(
     if completer is None and isinstance(streamer, LiteLLMStreamer):
         completer = streamer  # same gateway client, non-streaming endpoint
     return _sse(service.stream_reply(
-        session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
+        session, ctx, chat=chat,
+        workspace=WorkspaceView.of(workspace), user_message=user_msg, model=model,
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
@@ -306,7 +308,8 @@ async def regenerate(
     if completer is None and isinstance(streamer, LiteLLMStreamer):
         completer = streamer  # same gateway client, non-streaming endpoint
     return _sse(service.stream_reply(
-        session, ctx, chat=chat, workspace=workspace, user_message=user_msg, model=model,
+        session, ctx, chat=chat,
+        workspace=WorkspaceView.of(workspace), user_message=user_msg, model=model,
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,
@@ -364,7 +367,8 @@ async def answer(
     if completer is None and isinstance(streamer, LiteLLMStreamer):
         completer = streamer  # same gateway client, non-streaming endpoint
     return _sse(service.stream_reply(
-        session, ctx, chat=chat, workspace=workspace, user_message=msg, model=model,
+        session, ctx, chat=chat,
+        workspace=WorkspaceView.of(workspace), user_message=msg, model=model,
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,

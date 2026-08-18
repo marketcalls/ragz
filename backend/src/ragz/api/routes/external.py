@@ -39,6 +39,7 @@ from ragz.modules.models import service as models_service
 from ragz.modules.quotas import service as quota_service
 from ragz.modules.tenancy import service as tenancy_service
 from ragz.modules.tenancy.context import TenantContext, build_verified_principal_context
+from ragz.modules.tenancy.views import WorkspaceView
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -159,7 +160,8 @@ async def _run_external_answer(
     if completer is None and isinstance(streamer, LiteLLMStreamer):
         completer = streamer  # same gateway client, non-streaming endpoint
     collected = await service.collect_reply(service.stream_reply(
-        session, ctx, chat=chat, workspace=workspace, user_message=user_message, model=model,
+        session, ctx, chat=chat,
+        workspace=WorkspaceView.of(workspace), user_message=user_message, model=model,
         streamer=streamer, retriever=request.app.state.retriever,
         chunk_reader=request.app.state.chunk_reader, settings=settings,
         session_factory=request.app.state.session_factory, completer=completer,

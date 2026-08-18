@@ -201,7 +201,7 @@ from ragz.modules.retrieval.service import (
     search_ephemeral_attachments,
 )
 from ragz.modules.tenancy.context import TenantContext
-from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
 
 NO_ANSWER_TEXT = (
     "I couldn't find anything in this workspace's documents that answers that. "
@@ -629,7 +629,7 @@ async def stream_reply(
     ctx: TenantContext,
     *,
     chat: Chat,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     user_message: Message,
     model: Model,
     streamer: LLMStreamer,
