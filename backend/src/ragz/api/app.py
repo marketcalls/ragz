@@ -46,7 +46,7 @@ from ragz.api.security_middleware import (
     trusted_hosts_for,
 )
 from ragz.core.config import Settings, get_settings
-from ragz.core.db import build_engine, build_session_factory
+from ragz.core.db import build_engine, build_session_factory, dispose_loop_engine
 from ragz.core.errors import RagzError
 from ragz.core.logging import configure_logging
 from ragz.core.middleware import RequestIDMiddleware
@@ -76,6 +76,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # char-estimate fallback a real request would hit anyway.
     await asyncio.to_thread(warm_token_encoder)
     yield
+    # ADR-0006: routes nudge the outbox dispatcher, which opens a session via
+    # ingest._session, which caches an engine for THIS loop. The worker disposes
+    # its equivalent on worker_process_shutdown; the API had no teardown at all,
+    # so that pool outlived the app.
+    #
+    # Only the loop-cached engine is disposed. app.state.session_factory may be
+    # supplied by the caller -- the test suite shares one factory across every
+    # app it builds -- so disposing that would tear down a pool this app never
+    # created and other callers still hold.
+    await dispose_loop_engine()
 
 
 def create_app(
