@@ -6,8 +6,8 @@ so a photo/screenshot attachment extracts text through the identical call
 as a text document; no branching on `kind` happens here."""
 
 from collections import defaultdict
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
