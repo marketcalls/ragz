@@ -290,15 +290,11 @@ async def set_document_approved(
     # enqueueing itself -- this route is the entrypoint layer allowed to
     # import worker.tasks without a layering exception, so it performs the
     # actual enqueue.
+    # set_approved publishes the reindex event itself, next to the promotion it
+    # belongs to (Cubic P1) -- publishing from here committed separately, so a
+    # crash in between left the promoted version without vectors.
     doc, needs_reindex = await service.set_approved(session, ctx, document_id, body.approved)
     if needs_reindex is not None:
-        outbox_service.publish(
-            session,
-            topic="documents.reindex",
-            payload={"document_id": str(needs_reindex)},
-            queue="interactive",
-        )
-        await session.commit()
         await nudge()
     return _serialize_document(doc, ctx)
 
@@ -361,23 +357,10 @@ async def preview_folder_delete(
 async def delete_folder(
     folder_id: UUID, session: SessionDep, ctx: FolderDeleteDep
 ) -> dict[str, int]:
-    # Task 3: folders_service.delete_folder never enqueues itself (modules/
-    # must never import worker/, Plan K Task 11's inversion) -- it returns
-    # the document ids whose status it already flipped to "deleting".
-    #
-    # This was the worst of the publication gaps: delete_folder makes TWO
-    # commits before returning, so a crash here could leave a whole folder's
-    # documents at "deleting" with no work queued for any of them. The events
-    # go in one transaction, so the cascade is now all-or-nothing.
+    # delete_folder publishes the per-document delete events in the SAME
+    # transaction as the status flips (Cubic P1) -- the route no longer
+    # publishes anything, so there is no window where the cascade is half done.
     document_ids = await folders_service.delete_folder(session, ctx, folder_id)
-    for document_id in document_ids:
-        outbox_service.publish(
-            session,
-            topic="documents.delete",
-            payload={"document_id": str(document_id), "actor_id": str(ctx.user_id)},
-            queue="interactive",
-        )
-    await session.commit()
     await nudge()
     return {"documents_deleted": len(document_ids)}
 

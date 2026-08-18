@@ -125,3 +125,60 @@ async def test_the_same_tenant_case_still_works(session: AsyncSession) -> None:
     )
     await session.commit()
     assert doc.id is not None
+
+
+async def test_a_document_cannot_be_filed_under_another_orgs_folder(
+    session: AsyncSession,
+) -> None:
+    """Cubic P1: folder_id was not paired with org_id.
+
+    e4f7c1a83b26 paired workspace_id and created_by but left the folder
+    references single-column, so a bypassed write could still file one org's
+    document under another org's folder.
+    """
+    org_a, org_b, ws_a, _ws_b, user_a = await _two_orgs(session)
+    user_b = User(org_id=org_b.id, email=f"b{uuid4().hex[:6]}@b.com",
+                  password_hash="x", role="user")  # noqa: S106
+    session.add(user_b)
+    await session.flush()
+    ws_b_folder = Folder(org_id=org_b.id, workspace_id=_ws_b.id, name="theirs",
+                         created_by=user_b.id)
+    session.add(ws_b_folder)
+    await session.commit()
+
+    session.add(
+        Document(
+            org_id=org_a.id, workspace_id=ws_a.id,
+            filename="leak.pdf", mime="application/pdf", size_bytes=1,
+            content_hash=uuid4().hex, storage_key="k",
+            created_by=user_a.id, lineage_id=uuid4(),
+            folder_id=ws_b_folder.id,  # <-- the other org's folder
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
+
+
+async def test_a_folder_cannot_nest_under_another_orgs_folder(
+    session: AsyncSession,
+) -> None:
+    """A cross-tenant parent would also let one org's delete cascade into
+    another org's subtree."""
+    org_a, org_b, ws_a, _ws_b, user_a = await _two_orgs(session)
+    user_b = User(org_id=org_b.id, email=f"b{uuid4().hex[:6]}@b.com",
+                  password_hash="x", role="user")  # noqa: S106
+    session.add(user_b)
+    await session.flush()
+    parent_b = Folder(org_id=org_b.id, workspace_id=_ws_b.id, name="parent",
+                      created_by=user_b.id)
+    session.add(parent_b)
+    await session.commit()
+
+    session.add(
+        Folder(org_id=org_a.id, workspace_id=ws_a.id, name="child",
+               created_by=user_a.id, parent_folder_id=parent_b.id)
+    )
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()

@@ -493,6 +493,19 @@ async def set_approved(
     )
     await session.commit()
     needs_reindex = await promote_lineage(session, ctx.org_id, doc.lineage_id)
+    if needs_reindex is not None:
+        # Published HERE, not by the route (Cubic P1). promote_lineage has
+        # already committed the promotion, so a route-side publish committed
+        # separately -- a crash in between left the newly-current version
+        # without vectors and no event to recover from. This lands in
+        # promote_lineage's own transaction boundary instead.
+        outbox_service.publish(
+            session,
+            topic="documents.reindex",
+            payload={"document_id": str(needs_reindex)},
+            queue="interactive",
+        )
+        await session.commit()
     await session.refresh(doc)
     return doc, needs_reindex
 
