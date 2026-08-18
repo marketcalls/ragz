@@ -318,3 +318,69 @@ async def test_a_document_whose_worker_died_mid_stage_is_still_requeued(
     assert counts["processing"] == 1
     due = await outbox_service.claim_due(session)
     assert [e.payload["document_id"] for e in due] == [str(doc.id)]
+
+
+async def test_a_stranded_delete_replays_with_the_real_requester_not_the_creator(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cubic P2: the replayed audit must not name an unrelated user.
+
+    The creator of a document is frequently not the person who asked for it to
+    be deleted. Replaying documents.delete with created_by wrote a
+    document.deleted audit naming the uploader -- a false record in an
+    append-only log.
+    """
+    from datetime import timedelta
+
+    from ragz.modules.auth.models import User as UserModel
+    from ragz.modules.documents import ingest
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+    stale = naive_utc() - timedelta(seconds=ingest._STUCK_AFTER_SECONDS + 60)
+    doc = await _seed_document(session, seeded_user, status="deleting", updated_at=stale)
+
+    # A DIFFERENT user asked for the deletion.
+    deleter = UserModel(
+        org_id=seeded_user.org_id, email=f"deleter-{uuid4().hex[:6]}@x.com",
+        password_hash="x", role="admin",  # noqa: S106
+    )
+    session.add(deleter)
+    await session.flush()
+    doc.deleted_by = deleter.id
+    await session.commit()
+    # Restore staleness AFTER that commit, exactly as _seed_document does:
+    # onupdate=naive_utc refreshed updated_at when deleted_by was written, and
+    # re-assigning the same value in that same flush is not a change, so it has
+    # to be a second update or the row no longer looks stranded.
+    doc.updated_at = stale
+    await session.commit()
+    deleter_id = deleter.id
+    creator_id = seeded_user.id
+
+    assert (await ingest.reconcile_stuck_documents())["deleting"] == 1
+
+    due = await outbox_service.claim_due(session)
+    assert [e.topic for e in due] == ["documents.delete"]
+    assert due[0].payload["actor_id"] == str(deleter_id)
+    assert due[0].payload["actor_id"] != str(creator_id)
+
+
+async def test_a_legacy_stranded_delete_replays_with_no_actor_rather_than_a_wrong_one(
+    session: AsyncSession, seeded_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rows that entered "deleting" before deleted_by existed have no
+    recoverable actor. NULL is honest; created_by would be a false attribution.
+    run_delete and record_audit both accept a null actor."""
+    from datetime import timedelta
+
+    from ragz.modules.documents import ingest
+
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+    stale = naive_utc() - timedelta(seconds=ingest._STUCK_AFTER_SECONDS + 60)
+    await _seed_document(session, seeded_user, status="deleting", updated_at=stale)
+    await session.commit()
+
+    assert (await ingest.reconcile_stuck_documents())["deleting"] == 1
+
+    due = await outbox_service.claim_due(session)
+    assert due[0].payload["actor_id"] is None

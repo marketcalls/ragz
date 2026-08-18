@@ -134,6 +134,14 @@ class Document(UUIDPk, Base):
     storage_key: Mapped[str]
     page_count: Mapped[int | None] = mapped_column(default=None)
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    #: Who asked for the deletion, recorded WITH the flip to status="deleting".
+    #: The stuck-document reconciler has to republish documents.delete for rows
+    #: stranded mid-delete, and it used doc.created_by as the actor -- but the
+    #: creator is frequently not the deleter, so the replayed document.deleted
+    #: audit named an unrelated user. NULL where it is genuinely unknown (rows
+    #: that entered "deleting" before this column existed): an absent actor is
+    #: honest, a wrong one is not.
+    deleted_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
     updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
     pinned: Mapped[bool] = mapped_column(default=False, index=True)
     # None = unrestricted (every pre-Phase-2 document); a list = only members of

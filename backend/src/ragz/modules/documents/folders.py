@@ -305,6 +305,9 @@ async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UU
     # cascade genuinely all-or-nothing; the route only nudges the dispatcher.
     for doc in docs:
         doc.status = "deleting"
+        # Same as the single-document route: record the requester with the flip
+        # so a reconciler replay attributes the audit correctly.
+        doc.deleted_by = ctx.user_id
         outbox_service.publish(
             session,
             topic="documents.delete",

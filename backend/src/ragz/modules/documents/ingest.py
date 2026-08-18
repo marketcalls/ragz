@@ -819,10 +819,19 @@ async def reconcile_stuck_documents(limit: int = 200) -> dict[str, int]:
         )
         for doc in stuck:
             if doc.status == "deleting":
+                # deleted_by, NOT created_by (Cubic P2). Replaying with the
+                # creator attributed the document.deleted audit to whoever
+                # uploaded the file, who is frequently not the person who asked
+                # for it to go. None for rows that entered "deleting" before
+                # deleted_by existed -- an unknown actor is honest, a wrong one
+                # is a false audit record.
                 outbox_service.publish(
                     session,
                     topic="documents.delete",
-                    payload={"document_id": str(doc.id), "actor_id": str(doc.created_by)},
+                    payload={
+                        "document_id": str(doc.id),
+                        "actor_id": str(doc.deleted_by) if doc.deleted_by else None,
+                    },
                     queue="interactive",
                 )
             else:

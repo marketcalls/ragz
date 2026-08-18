@@ -201,6 +201,9 @@ async def delete_document(
     # document is left in a clearly-broken state rather than silently
     # looking untouched forever.
     doc.status = "deleting"
+    # Recorded WITH the flip, so a replay by reconcile_stuck_documents can name
+    # the real requester instead of falling back to the document's creator.
+    doc.deleted_by = ctx.user_id
     # Outbox (review P1): the "deleting" flag and the work that acts on it commit
     # together. Previously a crash here left a document parked at "deleting"
     # forever -- visibly broken, as the comment above intends, but with nothing
