@@ -1,7 +1,7 @@
 # ADR-0006: One Event Loop per Worker Process
 
 **Date:** 2026-08-18
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
@@ -39,7 +39,7 @@ decision "revisitable if Celery's asyncio story becomes a real constraint."
 
 ## Decision
 
-**Proposed, not yet implemented.** Give each Celery worker process one
+Give each Celery worker process one
 long-lived event loop, created on `worker_process_init` and reused by every
 task, so a single engine (and any other loop-bound client) can live for the
 process. `_run` would submit coroutines to that loop instead of calling

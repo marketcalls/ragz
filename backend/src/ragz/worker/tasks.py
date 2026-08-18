@@ -26,6 +26,7 @@ from ragz.modules.evals.service import workspace_ids_with_golden_queries
 from ragz.modules.models import catalog
 from ragz.modules.retrieval.service import delete_ephemeral_points, retrieve
 from ragz.modules.tenancy.models import Workspace
+from ragz.worker import loop as worker_loop
 from ragz.worker.celery_app import celery_app
 
 _MAX_RETRIES = 3
@@ -50,7 +51,7 @@ class IngestTask(Task):
                 "scheduled_task_failed", task=self.name, error=str(exc)
             )
             return
-        asyncio.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
+        worker_loop.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
 
 
 class DeleteTask(Task):
@@ -60,12 +61,12 @@ class DeleteTask(Task):
 
     def on_failure(self, exc: Exception, task_id: str, args: tuple[Any, ...],
                    kwargs: dict[str, Any], einfo: Any) -> None:
-        asyncio.run(ingest.mark_failed(UUID(str(args[0])), f"delete failed: {exc}"))
+        worker_loop.run(ingest.mark_failed(UUID(str(args[0])), f"delete failed: {exc}"))
 
 
 def _run(self: Task, coro_factory: Any) -> Any:
     try:
-        return asyncio.run(coro_factory())
+        return worker_loop.run(coro_factory())
     except IngestFailure:
         raise  # terminal: already recorded on the document; stops the chain, no retry
     except SoftTimeLimitExceeded:
@@ -109,7 +110,7 @@ def delete_task(self: Task, document_id: str, actor_id: str | None = None) -> No
     try:
         # Plan K Task 11: same inversion as embed_upsert_task above -- run_delete
         # returns the needs-reindex id, this entrypoint enqueues it.
-        needs_reindex = asyncio.run(ingest.run_delete(UUID(document_id),
+        needs_reindex = worker_loop.run(ingest.run_delete(UUID(document_id),
                                                        UUID(actor_id) if actor_id else None))
         if needs_reindex is not None:
             enqueue_reindex(needs_reindex)
@@ -227,7 +228,7 @@ def audit_message_task(message_id: str) -> None:
             await engine.dispose()
 
     try:
-        asyncio.run(_run())
+        worker_loop.run(_run())
     except Exception:
         structlog.get_logger().warning("audit_message_failed", message_id=message_id, exc_info=True)
 
@@ -283,7 +284,7 @@ def process_attachment_task(attachment_id: str) -> None:
             await engine.dispose()
 
     try:
-        asyncio.run(_run())
+        worker_loop.run(_run())
     except Exception:
         # Review fix (DOC-9 Task 2): mirror audit_message_task's outer guard
         # exactly -- nothing may escape this task, or a transient DB error
@@ -297,7 +298,7 @@ def process_attachment_task(attachment_id: str) -> None:
             "attachment_processing_outer_failed", attachment_id=attachment_id, exc_info=True
         )
         try:
-            asyncio.run(_mark_attachment_failed_best_effort(attachment_id))
+            worker_loop.run(_mark_attachment_failed_best_effort(attachment_id))
         except Exception:
             # Best-effort write on top of a best-effort write: the DB itself
             # is likely unreachable here. Rare double-failure, not solved
@@ -337,7 +338,7 @@ def run_eval_task(workspace_id: str, triggered_by: str, dispatch_id: str | None 
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
 def enqueue_eval_run(
@@ -370,7 +371,7 @@ def run_all_workspaces_task() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
 @celery_app.task(name="attachments.cleanup_stale",
@@ -414,7 +415,7 @@ def cleanup_stale_attachments_task() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
 @celery_app.task(name="models.refresh_catalog",
@@ -434,7 +435,7 @@ def refresh_model_catalog() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
 @celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,

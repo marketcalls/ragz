@@ -1,5 +1,5 @@
 from celery import Celery
-from celery.signals import worker_process_init
+from celery.signals import worker_process_init, worker_process_shutdown
 from kombu import Queue
 
 from ragz.core.config import get_settings
@@ -12,6 +12,24 @@ def _warm_token_encoder_on_worker_start(**kwargs: object) -> None:
     per worker process, off the task path, mirroring the API's startup
     warmup. Never raises - see warm_token_encoder."""
     warm_token_encoder()
+    # ADR-0006: create this process's task loop up front rather than on the
+    # first task, so the cost lands at startup and every task afterwards
+    # shares one engine (see worker/loop.py and core.db.get_loop_engine).
+    from ragz.worker.loop import get_loop
+
+    get_loop()
+
+
+@worker_process_shutdown.connect  # type: ignore[untyped-decorator]  # blinker Signal.connect
+def _close_worker_loop(**kwargs: object) -> None:
+    """Dispose the process-lifetime engine and close the loop.
+
+    Without this a worker exits still holding Postgres connections, which is
+    the cost of keeping them open across tasks in the first place.
+    """
+    from ragz.worker.loop import shutdown
+
+    shutdown()
 
 
 def build_celery() -> Celery:

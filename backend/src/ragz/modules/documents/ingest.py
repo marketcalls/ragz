@@ -1,6 +1,8 @@
 """Async ingestion runners: orchestration + job status around the pure pipeline
-stages. Called from Celery via asyncio.run (ADR-0001), so each runner owns its
-engine lifecycle instead of sharing a loop-bound pool."""
+stages. Called from Celery on the worker process's single event loop
+(ADR-0006), so runners share one process-lifetime engine rather than building
+and disposing a pool each. The engine is still keyed by loop, because the API
+reaches _session too (nudge -> dispatch_pending) on a different one."""
 
 import json
 from collections.abc import AsyncIterator
@@ -16,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
-from ragz.core.db import build_engine, build_session_factory, naive_utc
+from ragz.core.db import build_session_factory, get_loop_engine, naive_utc
 from ragz.core.storage import ObjectStorage, build_storage
 from ragz.modules.audit.service import record_audit
 from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter
@@ -54,12 +56,20 @@ _BATCH_SIZE = 32
 
 @asynccontextmanager
 async def _session() -> AsyncIterator[AsyncSession]:
-    engine = build_engine(get_settings().database_url)
-    try:
-        async with build_session_factory(engine)() as session:
-            yield session
-    finally:
-        await engine.dispose()
+    """A session on the CURRENT loop's process-lifetime engine (ADR-0006).
+
+    This used to build an engine and dispose it around every single use. That
+    was correct -- asyncio.run gave each task its own loop, and an asyncpg pool
+    cannot cross loops -- but it meant a TCP connect, TLS handshake and auth
+    round trip per parse, chunk, embed, delete AND per outbox sweep, which runs
+    every 30 seconds. get_loop_engine caches per running loop, so with one loop
+    per worker process that is one engine per process, while the API (a
+    different loop, reaching here through nudge -> dispatch_pending) keeps its
+    own. Disposal moves to process shutdown.
+    """
+    engine = get_loop_engine(get_settings().database_url)
+    async with build_session_factory(engine)() as session:
+        yield session
 
 
 async def _get_document(session: AsyncSession, document_id: UUID) -> Document:
