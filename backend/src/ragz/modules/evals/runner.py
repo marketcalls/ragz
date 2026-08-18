@@ -26,7 +26,7 @@ from ragz.modules.evals.service import list_golden_queries_for_run
 from ragz.modules.models import service as models_service
 from ragz.modules.models.utility import get_utility_model
 from ragz.modules.tenancy.context import TenantContext
-from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
 
 log = structlog.get_logger(__name__)
 
@@ -66,7 +66,7 @@ def parse_faithfulness_score(text: str) -> int | None:
 
 async def _score_one(
     session: AsyncSession,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     gq: GoldenQuery,
     *,
     retriever: Retriever,
@@ -136,7 +136,7 @@ async def _score_one(
 
 async def run_eval(
     session: AsyncSession,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     *,
     triggered_by: str,
     retriever: Retriever,
@@ -157,10 +157,11 @@ async def run_eval(
     """
     run: EvalRun | None = None
     if dispatch_id is not None:
-        # Read the id BEFORE the claim: rollback() below expires every ORM
-        # object in the session, so touching workspace.id afterwards would
-        # trigger a lazy refresh -- IO from inside the exception handler, which
-        # raises MissingGreenlet and masks the duplicate we are handling.
+        # workspace is a frozen WorkspaceView, detached from the session, so the
+        # rollback below cannot expire it and reading .id afterwards cannot
+        # trigger a lazy refresh. That refresh used to raise MissingGreenlet
+        # from inside the exception handler and mask the duplicate being
+        # handled; the view removes the hazard rather than working around it.
         workspace_id = workspace.id
         # Claim BEFORE any scoring. Deduplicating at the end would still pay for
         # the entire run, which is the expensive half of the bug.

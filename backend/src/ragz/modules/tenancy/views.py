@@ -21,7 +21,7 @@ from ragz.modules.tenancy.models import Workspace
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceView:
-    """The workspace settings that shape a chat turn.
+    """The workspace settings other modules read.
 
     Exactly the attributes consumers read today -- deliberately not a mirror of
     the table. A field belongs here when another module needs it, not because
@@ -29,8 +29,14 @@ class WorkspaceView:
     """
 
     id: UUID
+    org_id: UUID
     embedding_model_id: UUID
+    default_model_id: UUID | None
     top_k: int
+    min_score: float
+    rerank_enabled: bool
+    chunk_method: str
+    enrichment_enabled: bool
     system_prompt_override: str | None
     fallback_policy: str
     web_search_enabled: bool
@@ -43,8 +49,14 @@ class WorkspaceView:
         keeps ownership of its own schema."""
         return cls(
             id=workspace.id,
+            org_id=workspace.org_id,
             embedding_model_id=workspace.embedding_model_id,
+            default_model_id=workspace.default_model_id,
             top_k=workspace.top_k,
+            min_score=workspace.min_score,
+            rerank_enabled=workspace.rerank_enabled,
+            chunk_method=workspace.chunk_method,
+            enrichment_enabled=workspace.enrichment_enabled,
             system_prompt_override=workspace.system_prompt_override,
             fallback_policy=workspace.fallback_policy,
             web_search_enabled=workspace.web_search_enabled,

@@ -26,6 +26,7 @@ from ragz.modules.evals.service import workspace_ids_with_golden_queries
 from ragz.modules.models import catalog
 from ragz.modules.retrieval.service import delete_ephemeral_points, retrieve
 from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
 from ragz.worker import loop as worker_loop
 from ragz.worker.celery_app import celery_app
 
@@ -331,7 +332,8 @@ def run_eval_task(workspace_id: str, triggered_by: str, dispatch_id: str | None 
                     base_url=settings.litellm_url, master_key=settings.litellm_master_key
                 )
                 await run_eval(
-                    session, ws, triggered_by=triggered_by, retriever=retrieve,
+                    session, WorkspaceView.of(ws), triggered_by=triggered_by,
+                    retriever=retrieve,
                     completer=completer,
                     dispatch_id=UUID(dispatch_id) if dispatch_id else None,
                 )
