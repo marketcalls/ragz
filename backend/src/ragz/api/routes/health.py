@@ -2,13 +2,23 @@
 Deliberately unauthenticated -- orchestrators poll these without credentials,
 so no `require_action`/session-cookie gate belongs here."""
 
+import secrets
 import time
+from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from ragz.core.config import Settings, get_settings
+from ragz.core.errors import NotFoundError
+
 router = APIRouter(tags=["health"])
+
+#: Same injection style as the auth routes, so a test can override it via
+#: app.dependency_overrides rather than mutating process env behind an
+#: lru_cache.
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 @router.get("/healthz")
@@ -64,3 +74,35 @@ async def readyz(request: Request) -> JSONResponse:
     if not is_ready:
         return JSONResponse(status_code=503, content={"status": "unavailable"})
     return JSONResponse(content={"status": "ready"})
+
+
+@router.get("/metrics", include_in_schema=False)
+async def metrics(request: Request, settings: SettingsDep) -> Response:
+    """Prometheus exposition (Phase 3 item 1).
+
+    Unlike /healthz and /readyz above, this is NOT unauthenticated. It reports
+    route inventory, traffic volumes and error rates, which is operational
+    intelligence rather than a liveness bit. Disabled entirely when
+    RAGZ_METRICS_TOKEN is unset, so a deployment cannot acquire an open metrics
+    endpoint by accident.
+
+    404 (not 401) when disabled: an unconfigured endpoint should be
+    indistinguishable from one that does not exist, so a scanner learns nothing
+    about whether this deployment has metrics to find. compare_digest for the
+    token check, so a wrong guess cannot be refined by timing.
+    """
+    from ragz.core.metrics import render
+
+    expected = settings.metrics_token
+    if not expected:
+        raise NotFoundError("not found")
+
+    header = request.headers.get("authorization", "")
+    scheme, _, presented = header.partition(" ")
+    if scheme.lower() != "bearer" or not secrets.compare_digest(presented, expected):
+        # Also 404 rather than 401: same reasoning, and there is no
+        # interactive credential for a caller to be prompted for.
+        raise NotFoundError("not found")
+
+    payload, content_type = render()
+    return Response(content=payload, media_type=content_type)

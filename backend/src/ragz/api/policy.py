@@ -94,6 +94,12 @@ def _iter_hidden_api_routes(
 #     required.
 PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/healthz"), ("GET", "/readyz"),
+    # Reason 1 (carries its own credential), NOT "no auth": /metrics enforces
+    # RAGZ_METRICS_TOKEN as a bearer token itself and 404s when that setting is
+    # unset, so it is off by default and never anonymous when on. It is here
+    # because it has no TenantContext to check an action against -- Prometheus
+    # scrapes it as infrastructure, not as a user. See routes/health.py.
+    ("GET", "/metrics"),
     ("POST", "/api/v1/auth/login"), ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/logout"), ("POST", "/api/v1/auth/invitations/accept"),
     # Self-service first-run (no TenantContext -- this IS the bootstrap path,

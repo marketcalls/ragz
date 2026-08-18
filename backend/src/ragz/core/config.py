@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     # validation instead of silently behaving like a truthy non-dev string.
     environment: Literal["dev", "test", "staging", "production"] = "dev"
     kek_file: str = "./data/ragz_kek"
+    # Prometheus exposition. Empty (the default) disables /metrics entirely;
+    # set it and the endpoint requires it as a bearer token. Metrics are
+    # operational intelligence -- route inventory, traffic, error rates -- so
+    # an unauthenticated endpoint would sit badly beside iron rule 4, and
+    # off-by-default means an operator opts in rather than inheriting an open
+    # endpoint from a deploy they did not read.
+    metrics_token: str = ""
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
     # Server-side pepper (HMAC key) for opaque bearer-token hashes: refresh
