@@ -39,9 +39,22 @@ API reference, and production deployment.
 **Prerequisites:** Docker, Python 3.12 + [uv](https://docs.astral.sh/uv/),
 Node 20+ + pnpm.
 
+> **The `--profile local-embeddings` flag below is required, not optional.**
+> A fresh install seeds `Local Embeddings (bge-m3)` and every new workspace
+> selects it, so without that profile the embedder is simply not running:
+> upload, parse and chunk all succeed and the document then fails at the
+> embedding step. Starting it costs a **~940 MB image pull and a ~2.3 GB model
+> download on first run** (cached in the `teidata` volume afterwards), roughly
+> **2-4 GB RAM**, and up to a minute before it reports healthy. On CPU-only
+> hardware a full batch takes 30-60s.
+>
+> Prefer not to run it? Register a hosted embedding model instead and set it as
+> the default in **Admin > Settings > Embedding** before uploading anything;
+> then drop the profile flag. See [issue #1](https://github.com/marketcalls/ragz/issues/1).
+
 ```bash
 # 1. Start infrastructure (Postgres, Qdrant, Redis, MinIO, LiteLLM, embeddings)
-docker compose -f deploy/compose.yaml up -d
+docker compose -f deploy/compose.yaml --profile local-embeddings up -d
 
 # 2. Backend — from backend/
 cd backend
@@ -52,7 +65,7 @@ RAGZ_BOOTSTRAP_EMAIL=admin@example.com RAGZ_BOOTSTRAP_PASSWORD=changeme12345 \
 uv run uvicorn --factory ragz.api.app:create_app --port 8000
 
 # 3. Worker — second terminal, from backend/  (add --pool=solo on macOS)
-uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default -l info
+uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default,maintenance -l info
 
 # 4. Scheduler — third terminal, from backend/  (syncs the model catalog)
 uv run celery -A ragz.worker.celery_app:celery_app beat -l info

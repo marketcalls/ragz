@@ -19,6 +19,6 @@ Celery with Redis as broker. Task entrypoints live in `backend/src/ragz/worker/`
 
 ## Consequences
 
-- Celery tasks are sync-first; async module code is invoked via `asyncio.run` (or an event-loop-per-worker pattern) inside tasks — an accepted seam.
+- Celery tasks are sync-first; async module code is invoked via an event loop inside tasks — an accepted seam. **Superseded in part by [ADR-0006](ADR-0006-worker-event-loop-per-process.md):** the `asyncio.run`-per-task half of this was replaced by one long-lived loop per worker process, because a per-task loop forced a per-task connection pool.
 - Redis becomes a required service (already needed for caching/quota counters).
 - Revisitable if Celery's asyncio story becomes a real constraint; the thin `worker/` entrypoint layer keeps a queue swap localized.

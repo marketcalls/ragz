@@ -40,7 +40,7 @@ from ragz.modules.documents.metadata import build_clauses
 from ragz.modules.models.models import Model
 from ragz.modules.retrieval.service import MetadataClause, RetrievalResult, RetrievedChunk
 from ragz.modules.tenancy.context import TenantContext
-from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
 
 AGENT_MAX_ITERATIONS = 4
 PLANNER_TOOLS = ("search", "search_by_metadata", "get_document", "web_search")
@@ -263,7 +263,7 @@ async def execute_tool(
     ctx: TenantContext,
     action: PlannerAction,
     *,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     retriever: RetrieverSeam,
     chunk_reader: ChunkReaderSeam,
     web_searcher: WebSearcher | None,
@@ -502,7 +502,7 @@ async def run_agent_gather(
     session: AsyncSession,
     ctx: TenantContext,
     *,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     question: str,
     model: Model,
     completer: LLMCompleter,

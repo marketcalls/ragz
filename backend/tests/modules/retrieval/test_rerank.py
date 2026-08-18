@@ -94,7 +94,7 @@ async def test_cohere_reranker_maps_http_error_to_rerank_unavailable() -> None:
         await r.rerank("q", ["a", "b"])
 
 
-async def test_resolver_defaults_to_local_tei(session, settings) -> None:
+async def test_resolver_defaults_to_local_tei(pristine_env, session, settings) -> None:
     # No app_setting set -> local path. settings.rerank_backend default "tei".
     r = await get_reranker(session, settings)
     assert isinstance(r, TeiReranker)

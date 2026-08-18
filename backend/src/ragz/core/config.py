@@ -122,6 +122,22 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_timeout_seconds: int = 30
+    # Celery task time limits. Nothing bounded task runtime before this, so a
+    # hung parse or embed held its worker slot indefinitely -- and with
+    # task_acks_late a killed worker re-delivers it, so one poisonous document
+    # could occupy a slot repeatedly.
+    #
+    # The bulk default is generous on purpose: CLAUDE.md's own benchmark has
+    # docling at 103s for a 168-page PDF, max_upload_mb is 100, and embedding
+    # adds many provider round-trips on top. A limit that fires on legitimate
+    # work is worse than none, because it fails uploads that would have
+    # succeeded.
+    celery_soft_time_limit_seconds: int = 1800  # 30min: parse/chunk/embed/reindex/eval
+    celery_time_limit_seconds: int = 1980  # hard kill 10% later, for a wedged process
+    # Maintenance is small, bounded work (a 30s sweep, capped reconciler scans,
+    # a batched purge). If one runs for minutes it is stuck, not busy.
+    celery_maintenance_soft_time_limit_seconds: int = 300
+    celery_maintenance_time_limit_seconds: int = 360
     redis_max_connections: int = 100
     httpx_max_connections: int = 100
     httpx_max_keepalive: int = 20

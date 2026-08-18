@@ -103,18 +103,30 @@ root_package = "ragz"
 name = "Layered architecture"
 type = "layers"
 layers = ["ragz.api", "ragz.worker", "ragz.modules", "ragz.core"]
-ignore_imports = [
-    # Task 12 (Plan J, §6): update_retrieval_settings's settings-change eval
-    # trigger needs worker.tasks.enqueue_eval_run, and importing it at module
-    # scope would be a real circular import (evals.service, which this
-    # function also imports locally, already imports tenancy.service at
-    # module scope). Plan K Task 11 removed the sibling documents.service
-    # exception (DOC-5's promote_lineage) by inverting control instead:
-    # promote_lineage/set_approved/the ingest.py runners now return a
-    # needs-reindex document id, and their ENTRYPOINT callers -- worker/
-    # tasks.py's Celery task wrappers (which define enqueue_reindex in the
-    # same module, no import needed) and the approve route (api -> worker is
-    # an allowed layer direction) -- perform the actual enqueue. This entry
-    # remains a live, narrow exception for the unrelated tenancy.service edge.
-    "ragz.modules.tenancy.service -> ragz.worker.tasks",
-]
+# No exceptions. The last one (tenancy.service -> worker.tasks, for the
+# settings-change eval trigger) died when that trigger moved to the
+# transactional outbox: publishing an event needs no knowledge of Celery, so
+# the layer violation it required simply stopped existing. Adding an entry here
+# should be a last resort -- the outbox is usually the answer.
+ignore_imports = []
+
+[[tool.importlinter.contracts]]
+# Locks in Phase 2 item 2's result rather than trusting it to stay true.
+# chat used to take tenancy's ORM Workspace into stream_reply and the agent --
+# an ORM entity crossing a module boundary, which the Never Do list forbids and
+# which also let a session-attached row lazily load mid-stream. It now takes
+# tenancy.views.WorkspaceView, so this boundary is clean and stays clean.
+#
+# Deliberately narrow: it names the boundary actually cleaned. Other modules
+# still import tenancy's models to JOIN against them for org scoping, which is
+# cross-module data access rather than an ORM object crossing a boundary, and
+# a wider contract here would simply fail.
+name = "chat does not reach into tenancy's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.chat"]
+forbidden_modules = ["ragz.modules.tenancy.models", "ragz.modules.tenancy.reembed_models"]
+# Direct imports only. Forbidden contracts are transitive by default, which
+# flags chat -> documents.service -> tenancy.reembed_models: a chain through
+# another module's public service, not chat reaching for an ORM class. The rule
+# being enforced is about what chat itself imports.
+allow_indirect_imports = true

@@ -1,0 +1,23 @@
+# The venv is host-built (macOS wheels here); the image resolves its own with
+# `uv sync --locked` in the builder stage. Shipping this one would both bloat
+# the context and risk platform-wrong binaries.
+.venv
+
+# Runtime state, not source. data/ holds the KEK on a dev box -- a secret that
+# must never enter a build context (iron rule 3).
+data
+*.db
+*.log
+
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+
+.env
+.env.*
+.git

@@ -1,0 +1,20 @@
+# COPY . . runs AFTER `pnpm install` in the builder, so without this the host's
+# node_modules would be copied straight over the container's -- replacing
+# Linux-native binaries (esbuild, rollup) with macOS ones and breaking the
+# build, or worse, producing an image that only works on the machine that
+# built it.
+node_modules
+dist
+.vite
+
+# Never belongs in a build context, let alone an image layer.
+.env
+.env.*
+*.log
+
+# Test/dev-only, and large.
+coverage
+playwright-report
+test-results
+e2e
+.git

@@ -15,6 +15,10 @@
     "generate:api": "openapi-typescript http://localhost:8000/api/openapi.json -o src/api/schema.d.ts",
     "e2e": "playwright test"
   },
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@radix-ui/react-dialog": "^1.1.19",

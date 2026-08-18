@@ -136,6 +136,13 @@ class ProviderSettingsOut(BaseModel):
     # Global default chunking strategy NEW workspaces inherit at creation.
     # The per-workspace override (Workspace.chunk_method) is unchanged.
     default_chunk_method: str
+    # Global default embedding model NEW workspaces inherit at creation.
+    # None -> the built-in local TEI model, which is what every workspace was
+    # hardcoded to before this setting existed: Workspace.embedding_model_id
+    # defaulted to LOCAL_EMBEDDING_MODEL_ID no matter which models were
+    # actually enabled, so enabling a hosted embedder did not change what a
+    # new workspace used and ingestion kept dialling a TEI that may not run.
+    default_embedding_model_id: UUID | None
     llamaparse_key_set: bool
     cohere_key_set: bool
     generative_ui_images: GenerativeUiImages
@@ -153,6 +160,10 @@ class ProviderSettingsUpdate(BaseModel):
     default_chunk_method: Literal["heading", "fixed", "page", "table_qa"] | None = None
     generative_ui_images: GenerativeUiImages | None = None
     generative_ui_enabled: bool | None = None
+    # Validated in settings_service against an existing modality=="embedding"
+    # model -- a stale or chat-model id here would silently break ingestion for
+    # every workspace created afterwards.
+    default_embedding_model_id: UUID | None = None
     # write-only: accepted on input, NEVER echoed back (ProviderSettingsOut has
     # no key fields, only *_key_set booleans).
     llamaparse_api_key: str | None = Field(default=None, max_length=8192)

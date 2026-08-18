@@ -8,7 +8,7 @@
    (gitignored; re-run any time to refresh it, e.g. before each acceptance run).
 4. Start the app: `uv run uvicorn --factory ragz.api.app:create_app --port 8000`
 5. Start a worker (only needed for the upload scenario):
-   `uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default -l warning`
+   `uv run celery -A ragz.worker.celery_app:celery_app worker -Q interactive,default,maintenance -l warning`
 
 ## Acceptance run (100 concurrent SSE chats, D2 gate)
 Procedure: seed (writes `.tokens.json`) → locust.

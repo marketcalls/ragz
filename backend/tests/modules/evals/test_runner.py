@@ -94,3 +94,86 @@ async def test_faithfulness_unavailable_without_default_model(
     assert run.avg_faithfulness is None
     assert run.hit_rate == 1.0
     assert run.citation_precision == 1.0
+
+
+async def test_a_redelivered_outbox_event_does_not_run_the_eval_twice(
+    session, ctx, ws, qdrant_collection,
+) -> None:  # type: ignore[no-untyped-def]
+    """Cubic P1: outbox delivery is at-least-once.
+
+    dispatch_pending sends to the broker and only then commits mark_dispatched,
+    so a crash in between redelivers the event. Unlike ingest (deterministic
+    point ids) and delete (idempotent), a second eval run would add a duplicate
+    row AND re-spend the workspace's whole LLM/quota budget. The dispatch_id
+    claim must make the redelivery a no-op.
+    """
+    from uuid import uuid4
+
+    from sqlalchemy import func, select
+
+    from ragz.modules.evals import service
+    from ragz.modules.evals.models import EvalRun
+
+    doc = await ingest_text(session, ctx, ws, "policy.txt", "Muster at gate B in an emergency.")
+    await service.create_golden_query(
+        session, ctx, ws.id, question="Where is the muster point?",
+        expected_document_ids=[doc.id],
+    )
+
+    # Read ids up front: the duplicate claim below rolls back, which expires
+    # every ORM object in this session, and a later attribute access would then
+    # lazy-refresh (MissingGreenlet) rather than assert.
+    ws_id = ws.id
+    event_id = uuid4()
+    first = await run_eval(
+        session, ws, triggered_by="manual", retriever=retrieve, completer=None,
+        dispatch_id=event_id,
+    )
+    assert first is not None
+    assert first.query_count == 1
+
+    # Same event delivered again: skipped, not re-run.
+    second = await run_eval(
+        session, ws, triggered_by="manual", retriever=retrieve, completer=None,
+        dispatch_id=event_id,
+    )
+    assert second is None
+
+    total = await session.scalar(
+        select(func.count()).select_from(EvalRun).where(EvalRun.workspace_id == ws_id)
+    )
+    assert total == 1, "the redelivery must not leave a second run in the history"
+
+
+async def test_distinct_events_and_unkeyed_runs_are_unaffected(
+    session, ctx, ws, qdrant_collection,
+) -> None:  # type: ignore[no-untyped-def]
+    """The claim must not over-deduplicate: two genuine triggers are two runs,
+    and callers with no outbox event behind them (the nightly fan-out) pass no
+    dispatch_id and keep working exactly as before -- NULLs do not collide."""
+    from uuid import uuid4
+
+    from sqlalchemy import func, select
+
+    from ragz.modules.evals.models import EvalRun
+
+    assert await run_eval(
+        session, ws, triggered_by="manual", retriever=retrieve, completer=None,
+        dispatch_id=uuid4(),
+    ) is not None
+    assert await run_eval(
+        session, ws, triggered_by="manual", retriever=retrieve, completer=None,
+        dispatch_id=uuid4(),
+    ) is not None
+    # No key at all, twice: the pre-existing contract.
+    assert await run_eval(
+        session, ws, triggered_by="nightly", retriever=retrieve, completer=None,
+    ) is not None
+    assert await run_eval(
+        session, ws, triggered_by="nightly", retriever=retrieve, completer=None,
+    ) is not None
+
+    total = await session.scalar(
+        select(func.count()).select_from(EvalRun).where(EvalRun.workspace_id == ws.id)
+    )
+    assert total == 4

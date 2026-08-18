@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.api.deps import get_session
 from ragz.modules.evals import service
 from ragz.modules.evals.schemas import EvalRunOut, GoldenQueryCreate, GoldenQueryOut
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext, require_action
-from ragz.worker.tasks import enqueue_eval_run
+from ragz.worker.outbox import nudge
 
 router = APIRouter(tags=["evals"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -58,7 +59,13 @@ async def trigger_eval_run(workspace_id: UUID, session: SessionDep, ctx: EvalsRu
     # check_workspace_for_trigger), otherwise a caller can burn another org's
     # LLM/quota budget by guessing a UUID.
     await service.check_workspace_for_trigger(session, ctx, workspace_id)
-    enqueue_eval_run(workspace_id, "manual")
+    outbox_service.publish(
+        session,
+        topic="evals.run",
+        payload={"workspace_id": str(workspace_id), "triggered_by": "manual"},
+    )
+    await session.commit()
+    await nudge()
 
 
 @router.get("/workspaces/{workspace_id}/evals/runs", response_model=list[EvalRunOut])

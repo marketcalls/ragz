@@ -5,19 +5,41 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.models import WorkspaceMember
 from tests.api.test_permissions_routes import make_templated_member
 
 
 @pytest.fixture
 def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:  # type: ignore[type-arg]
+    """Record enqueued background work.
+
+    Ingest is no longer a direct enqueue_ingest() call: create_from_upload
+    publishes an OUTBOX event inside its own transaction (review P1), and the
+    route only nudges the dispatcher afterwards. Spying on publish keeps these
+    assertions meaning what they always meant -- "uploading this document owed
+    ingest work" -- while going through the real durable path.
+    """
     calls: dict[str, list] = {"ingest": [], "delete": [], "reindex": []}  # type: ignore[type-arg]
-    monkeypatch.setattr("ragz.api.routes.documents.enqueue_ingest",
-                        lambda doc_id, size: calls["ingest"].append((doc_id, size)))
-    monkeypatch.setattr("ragz.api.routes.documents.enqueue_delete",
-                        lambda doc_id, actor_id: calls["delete"].append((doc_id, actor_id)))
-    monkeypatch.setattr("ragz.api.routes.documents.enqueue_reindex",
-                        lambda doc_id: calls["reindex"].append(doc_id))
+    real_publish = outbox_service.publish
+
+    def _spy_publish(session, *, topic, payload, queue="default"):  # type: ignore[no-untyped-def]
+        if topic == "documents.ingest":
+            calls["ingest"].append((UUID(payload["document_id"]), payload["size_bytes"]))
+        elif topic == "documents.delete":
+            calls["delete"].append(
+                (UUID(payload["document_id"]), UUID(payload["actor_id"]))
+            )
+        elif topic == "documents.reindex":
+            calls["reindex"].append(UUID(payload["document_id"]))
+        return real_publish(session, topic=topic, payload=payload, queue=queue)
+
+    monkeypatch.setattr(outbox_service, "publish", _spy_publish)
+    # The nudge is pure latency optimisation; the event is already durable.
+    async def _noop_dispatch(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr("ragz.api.routes.documents.nudge", _noop_dispatch)
     return calls
 
 

@@ -53,7 +53,22 @@ class TeiDenseEmbedder:
         ) as client:
             for i in range(0, len(texts), self._batch_size):
                 batch = texts[i : i + self._batch_size]
-                r = await client.post("/embed", json={"inputs": batch, "truncate": True})
+                try:
+                    r = await client.post("/embed", json={"inputs": batch, "truncate": True})
+                except httpx.ConnectError as exc:
+                    # Issue #1: the bare httpx message is
+                    # "All connection attempts failed", which names neither the
+                    # service nor the fix. This is the single most likely
+                    # first-run failure -- the workspace selects the built-in
+                    # local model, but TEI sits behind the local-embeddings
+                    # Compose profile, so it is simply not running.
+                    raise UpstreamError(
+                        f"the local embedding service (TEI) is unreachable at "
+                        f"{self._base_url}. Start it with `docker compose -f "
+                        f"deploy/compose.yaml --profile local-embeddings up -d tei`, "
+                        f"or select a hosted embedding model for this workspace in "
+                        f"Admin > Settings > Embedding."
+                    ) from exc
                 r.raise_for_status()
                 out.extend(r.json())
         return out

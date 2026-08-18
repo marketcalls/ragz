@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
@@ -161,17 +162,25 @@ async def test_subtree_delete_query_guard_rejects_forged_cross_tenant_document(
     any sanctioned code path).
 
     The adversarial row is built directly via the ORM, bypassing that
-    service-layer invariant entirely: a Document that legitimately belongs
-    to org B / workspace B, but whose folder_id is forged to point at a
-    folder living in org A / workspace A. Document.folder_id's own FK
-    constraint (ondelete=SET NULL) only requires the referenced folders.id
-    to exist -- it does NOT require the two rows to share an org_id or
-    workspace_id, so nothing at the DB layer stops this from being
-    constructed. Before the Finding-1 fix, `Document.folder_id.in_(folder_ids)`
-    ALONE would have matched this forged row on any count_subtree/
-    delete_folder call against org A's folder, letting org A's admin count
-    and destroy org B's document. The added `Document.workspace_id ==
-    workspace_id` predicate must exclude it."""
+    service-layer invariant entirely. Two forgeries are exercised, because
+    f5a8d2e91c47 moved half of this guarantee down into the schema:
+
+    1. CROSS-ORG (org B document -> org A folder) is now impossible to
+       construct at all. The composite FK fk_documents_folder_id_org pairs
+       (folder_id, org_id) against folders(id, org_id), so the insert is
+       rejected by Postgres. This test previously asserted the opposite --
+       that "nothing at the DB layer stops this" -- which was true before
+       that migration and is now false. Asserting the rejection keeps the
+       constraint honest: if someone weakens the FK back to single-column,
+       this fails.
+    2. CROSS-WORKSPACE within ONE org is still constructible, because the
+       composite FK pairs org_id only -- workspace_id is not part of it.
+       That is precisely the case the query-level guard exists for. Before
+       the Finding-1 fix, `Document.folder_id.in_(folder_ids)` ALONE would
+       have matched this row on any count_subtree/delete_folder call against
+       another workspace's folder, letting its admin count and destroy it.
+       The added `Document.workspace_id == workspace_id` predicate must
+       exclude it."""
     org_a = Organization(name="isoFolderGuardA")
     org_b = Organization(name="isoFolderGuardB")
     session.add_all([org_a, org_b])
@@ -203,15 +212,28 @@ async def test_subtree_delete_query_guard_rejects_forged_cross_tenant_document(
         data=b"own", folder_id=folder_a.id,
     )
 
-    # The forged adversarial row: org B's document, folder_id pointed at
-    # org A's folder. create_from_upload is bypassed on purpose -- this
-    # simulates a hypothetical future bug elsewhere ever letting a
-    # cross-tenant folder/document relationship exist, never something the
-    # real API can produce today.
+    # Forgery 1 -- CROSS-ORG. org B's document pointed at org A's folder.
+    # The composite FK must reject this outright. Wrapped in a SAVEPOINT so
+    # the expected IntegrityError doesn't poison the setup built above.
+    with pytest.raises(IntegrityError):
+        async with session.begin_nested():
+            session.add(Document(
+                org_id=org_b.id, workspace_id=ws_b.id, filename="leak.pdf",
+                mime="application/pdf", size_bytes=3, content_hash="deadbeef",
+                storage_key="leak-key", created_by=user_b.id, lineage_id=uuid4(),
+                folder_id=folder_a.id,
+            ))
+
+    # Forgery 2 -- CROSS-WORKSPACE inside org A. The composite FK permits this
+    # (same org), so the query-level workspace guard is the ONLY thing standing
+    # between a second workspace's document and org A's folder cascade.
+    ws_a2 = Workspace(org_id=org_a.id, name="ws-a2")
+    session.add(ws_a2)
+    await session.flush()
     cross_tenant_doc = Document(
-        org_id=org_b.id, workspace_id=ws_b.id, filename="leak.pdf", mime="application/pdf",
+        org_id=org_a.id, workspace_id=ws_a2.id, filename="leak.pdf", mime="application/pdf",
         size_bytes=3, content_hash="deadbeef", storage_key="leak-key",
-        created_by=user_b.id, lineage_id=uuid4(), folder_id=folder_a.id,
+        created_by=user_a.id, lineage_id=uuid4(), folder_id=folder_a.id,
     )
     session.add(cross_tenant_doc)
     await session.commit()
@@ -225,10 +247,11 @@ async def test_subtree_delete_query_guard_rejects_forged_cross_tenant_document(
     assert document_ids == [own_doc.id]  # the forged row was never selected for deletion
 
     await session.refresh(cross_tenant_doc)
-    # Untouched: never flipped to "deleting", so org A's admin can never get
+    # Untouched: never flipped to "deleting", so ws-a's admin can never get
     # it enqueue_delete'd. (Its folder_id may have been nulled by the DB's
-    # own ondelete=SET NULL FK action once folder_a's row was removed -- that
-    # FK fires for ANY referencing row regardless of tenant, and is harmless:
-    # it only clears an already-invalid cross-tenant reference. The security
-    # property that matters is the status/deletion outcome below.)
+    # own ondelete=SET NULL (folder_id) action once folder_a's row was removed
+    # -- that FK fires for ANY referencing row regardless of workspace, and is
+    # harmless: it only clears an already-invalid cross-workspace reference,
+    # and the column list keeps org_id intact. The security property that
+    # matters is the status/deletion outcome below.)
     assert cross_tenant_doc.status == "queued"

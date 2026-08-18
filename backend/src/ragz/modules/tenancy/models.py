@@ -24,6 +24,11 @@ class Organization(UUIDPk, Base):
 class Workspace(UUIDPk, Base):
     __tablename__ = "workspaces"
     __table_args__ = (
+        # Composite-FK target (fe047b5cdf08 / e4f7c1a83b26): lets dependent
+        # tables prove a referenced workspace belongs to the SAME org, which a
+        # plain FK on workspace_id alone cannot express. Mirrored here so
+        # create_all (tests/dev) enforces it, not just a migrated Postgres.
+        UniqueConstraint("id", "org_id", name="uq_workspaces_id_org_id"),
         CheckConstraint(
             "chunk_method IN ('heading', 'fixed', 'page', 'table_qa')",
             name="ck_workspaces_chunk_method",

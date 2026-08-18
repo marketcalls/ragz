@@ -33,8 +33,9 @@ from ragz.modules.documents.schemas import (
     MetadataFieldOut,
     MetadataValuesIn,
 )
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext, require_action
-from ragz.worker.tasks import enqueue_delete, enqueue_ingest, enqueue_reindex
+from ragz.worker.outbox import nudge
 
 router = APIRouter(tags=["documents"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -126,7 +127,13 @@ async def upload_document(
         mime=file.content_type or "application/octet-stream",
         data=data, folder_id=folder_id,
     )
-    enqueue_ingest(doc.id, doc.size_bytes)
+    # The work is already durable: create_from_upload committed an outbox event
+    # in the same transaction as the document. This is only a latency nudge so
+    # ingestion starts now rather than at the next sweep -- if it fails, or the
+    # process dies here, the sweep still picks the event up. That is the whole
+    # difference from the old enqueue_ingest call, which WAS the only record
+    # that the work was owed.
+    await nudge()
     return _serialize_document(doc, ctx)
 
 
@@ -194,8 +201,21 @@ async def delete_document(
     # document is left in a clearly-broken state rather than silently
     # looking untouched forever.
     doc.status = "deleting"
+    # Recorded WITH the flip, so a replay by reconcile_stuck_documents can name
+    # the real requester instead of falling back to the document's creator.
+    doc.deleted_by = ctx.user_id
+    # Outbox (review P1): the "deleting" flag and the work that acts on it commit
+    # together. Previously a crash here left a document parked at "deleting"
+    # forever -- visibly broken, as the comment above intends, but with nothing
+    # anywhere that would ever finish the job.
+    outbox_service.publish(
+        session,
+        topic="documents.delete",
+        payload={"document_id": str(doc.id), "actor_id": str(ctx.user_id)},
+        queue="interactive",
+    )
     await session.commit()
-    enqueue_delete(doc.id, ctx.user_id)
+    await nudge()
     return {"status": "deletion scheduled"}
 
 
@@ -226,7 +246,14 @@ async def reindex_document(
         raise ConflictError(
             "document is not in a reindexable state (must be indexed or failed)"
         )
-    enqueue_reindex(doc.id)
+    outbox_service.publish(
+        session,
+        topic="documents.reindex",
+        payload={"document_id": str(doc.id)},
+        queue="interactive",
+    )
+    await session.commit()
+    await nudge()
     return {"status": "reindexing"}
 
 
@@ -266,9 +293,12 @@ async def set_document_approved(
     # enqueueing itself -- this route is the entrypoint layer allowed to
     # import worker.tasks without a layering exception, so it performs the
     # actual enqueue.
+    # set_approved publishes the reindex event itself, next to the promotion it
+    # belongs to (Cubic P1) -- publishing from here committed separately, so a
+    # crash in between left the promoted version without vectors.
     doc, needs_reindex = await service.set_approved(session, ctx, document_id, body.approved)
     if needs_reindex is not None:
-        enqueue_reindex(needs_reindex)
+        await nudge()
     return _serialize_document(doc, ctx)
 
 
@@ -330,14 +360,11 @@ async def preview_folder_delete(
 async def delete_folder(
     folder_id: UUID, session: SessionDep, ctx: FolderDeleteDep
 ) -> dict[str, int]:
-    # Task 3: folders_service.delete_folder never enqueues itself (modules/
-    # must never import worker/, Plan K Task 11's inversion) -- it returns
-    # the document ids whose status it already flipped to "deleting"; this
-    # route is the entrypoint layer allowed to import worker.tasks, so it
-    # performs the actual enqueue_delete call for each one.
+    # delete_folder publishes the per-document delete events in the SAME
+    # transaction as the status flips (Cubic P1) -- the route no longer
+    # publishes anything, so there is no window where the cascade is half done.
     document_ids = await folders_service.delete_folder(session, ctx, folder_id)
-    for document_id in document_ids:
-        enqueue_delete(document_id, ctx.user_id)
+    await nudge()
     return {"documents_deleted": len(document_ids)}
 
 

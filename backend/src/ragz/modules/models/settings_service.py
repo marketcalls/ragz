@@ -10,12 +10,14 @@ here -- see modules/email/schemas.py's EmailConfig for the full field list."""
 
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_app_setting, set_app_setting
 from ragz.core.config import Settings
-from ragz.core.errors import ConflictError
+from ragz.core.errors import ConflictError, NotFoundError
 from ragz.modules.email.schemas import EmailConfig
+from ragz.modules.models.models import Model
 from ragz.modules.models.schemas import (
     GenerativeUiImages,
     ProviderSettingsOut,
@@ -32,6 +34,10 @@ _WEB_SEARCH_PROVIDER_KEY = "web_search_provider"
 # Default ON. Stored as a string; "false"/"0"/"off" -> False, unset/other -> True.
 _WEB_SEARCH_FULL_CONTENT_KEY = "web_search_full_content"
 _DEFAULT_CHUNK_METHOD_KEY = "default_chunk_method"
+# Global default embedding model for NEW workspaces. Stored as the model's UUID
+# string; absent/unparseable -> None, which callers read as "use the built-in
+# local TEI model" (the pre-setting behaviour).
+_DEFAULT_EMBEDDING_MODEL_KEY = "default_embedding_model_id"
 # Generative UI Task 8: gates the generative-UI image pipeline, default "off".
 _GENERATIVE_UI_IMAGES_KEY = "generative_ui_images"
 # Global superadmin gate for in-chat generative UI (the visualize step),
@@ -56,6 +62,23 @@ _EMAIL_SES_REGION_KEY = "email_ses_region"
 _EMAIL_SES_ACCESS_KEY_ID_KEY = "email_ses_access_key_id"
 
 
+async def get_default_embedding_model_id(session: AsyncSession) -> UUID | None:
+    """The superadmin-global default embedding model for NEW workspaces, or None
+    when unset. Also used by tenancy.create_workspace, which is why this is a
+    module-level helper rather than inlined into get_provider_settings.
+
+    A stored value that no longer parses as a UUID is treated as unset rather
+    than raised: this is read on the workspace-creation path, and a corrupt
+    app_settings row must not make creating a workspace impossible."""
+    raw = await get_app_setting(session, _DEFAULT_EMBEDDING_MODEL_KEY)
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
 async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
     parser = await get_app_setting(session, _PARSER_KEY) or "liteparse"
     rerank = await get_app_setting(session, _RERANK_KEY) or "local"
@@ -78,10 +101,12 @@ async def get_provider_settings(session: AsyncSession) -> ProviderSettingsOut:
         if _raw_generative_ui is not None
         else True
     )
+    default_embedding_model_id = await get_default_embedding_model_id(session)
     present = await secrets_service.existing_secret_names(
         session, [_LLAMA_SECRET, _COHERE_SECRET, _TAVILY_SECRET]
     )
     return ProviderSettingsOut(
+        default_embedding_model_id=default_embedding_model_id,
         document_parser=parser,
         rerank_provider=rerank,
         cohere_rerank_model=cohere_model,
@@ -123,6 +148,25 @@ async def update_provider_settings(
     if patch.default_chunk_method is not None:
         await set_app_setting(
             session, _DEFAULT_CHUNK_METHOD_KEY, patch.default_chunk_method, commit=False
+        )
+    if patch.default_embedding_model_id is not None:
+        # Validate BEFORE storing: an id that is missing, or that names a chat
+        # model, would be inherited by every workspace created afterwards and
+        # only surface as a failed ingestion much later.
+        target = (
+            await session.execute(
+                select(Model).where(Model.id == patch.default_embedding_model_id)
+            )
+        ).scalar_one_or_none()
+        if target is None:
+            raise NotFoundError("embedding model not found")
+        if target.modality != "embedding":
+            raise ConflictError("default embedding model must be an embedding model")
+        await set_app_setting(
+            session,
+            _DEFAULT_EMBEDDING_MODEL_KEY,
+            str(patch.default_embedding_model_id),
+            commit=False,
         )
     if patch.generative_ui_images is not None:
         await set_app_setting(

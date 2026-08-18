@@ -155,7 +155,7 @@ def test_strong_database_password_with_non_default_creds_constructs(
     assert s.database_url.endswith("db.internal:5432/ragz")
 
 
-def test_dev_default_db_password_still_permitted_in_dev() -> None:
+def test_dev_default_db_password_still_permitted_in_dev(pristine_env) -> None:
     # No regression: local dev's "ragz:ragz@localhost" URL is unaffected --
     # the whole validator is a no-op outside production/staging.
     s = Settings(_env_file=None)
@@ -233,7 +233,7 @@ def test_staging_shares_the_same_checks_as_production(safe_kwargs: dict[str, obj
         Settings(**kwargs)  # type: ignore[arg-type]
 
 
-def test_dev_defaults_still_construct_without_error() -> None:
+def test_dev_defaults_still_construct_without_error(pristine_env) -> None:
     # No regression: local dev / CI never sets these overrides.
     s = Settings(_env_file=None)
     assert s.environment == "dev"

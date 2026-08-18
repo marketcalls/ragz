@@ -162,11 +162,17 @@ export function ModelFormDialog({
   open,
   onOpenChange,
   model = null,
+  defaultModality = 'chat',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Present → edit an existing model (provider/model id become read-only, key stays write-only-and-blank). Absent → add a new model. */
   model?: ModelOut | null;
+  /** Which Type the add form starts on. Settings > Embedding opens this from an
+   * "Add embedding model" button, where starting on Chat shows the wrong
+   * catalog entirely — the picker filters by modality, so the user would search
+   * chat models while trying to add an embedder. */
+  defaultModality?: 'chat' | 'embedding';
 }) {
   const isEdit = model != null;
   const create = useCreateModel();
@@ -188,7 +194,7 @@ export function ModelFormDialog({
     model?.default_reasoning_effort ?? 'off',
   );
   const [supportsVision, setSupportsVision] = useState(model?.supports_vision ?? false);
-  const [modality, setModality] = useState<'chat' | 'embedding'>('chat');
+  const [modality, setModality] = useState<'chat' | 'embedding'>(defaultModality);
   const [dimension, setDimension] = useState('1536');
 
   const isCustom = catalogProvider === CUSTOM;

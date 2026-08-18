@@ -40,7 +40,12 @@ test('fetches the attachment as a blob and builds an object URL', async () => {
 
   await waitFor(() => expect(result.current.status).toBe('success'));
   expect(result.current.objectUrl).toBe('blob:mock-url');
-  expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+  // Assert the blob's observable shape, not `expect.any(Blob)`: Response.blob()
+  // returns undici's Blob, a different realm's constructor from jsdom's global,
+  // so an identity check fails even though the value is a perfectly good Blob.
+  const passed = vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob;
+  expect(passed.type).toBe('image/png');
+  expect(passed.size).toBeGreaterThan(0);
 
   expect(fetchMock.mock.calls[0]![0].url).toContain(
     '/api/v1/chats/c1/attachments/a1/content',

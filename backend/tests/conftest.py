@@ -1,4 +1,9 @@
+import atexit
+import os
+import shutil
+import tempfile
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
@@ -77,6 +82,26 @@ async def assign_contributor_role(
     return template
 
 
+# --- ambient KEK, set at IMPORT time (deliberately not a fixture) ------------
+# Settings.kek_file defaults to ./data/ragz_kek, so anything constructing
+# Settings() reads whatever KEK happens to be on the machine. On a developer box
+# the app has usually been bootstrapped so that file exists; on a CI runner it
+# does not. That is why the isolation job failed while the same tests passed
+# locally: they were reading a developer artifact.
+#
+# A fixture is too late. tests/modules/auth/test_service.py evaluates
+# `SETTINGS = Settings(_env_file=None)` at MODULE level, which happens during
+# collection, before any fixture runs. conftest is imported before test modules,
+# so setting the variable here covers those module-level constants too.
+#
+# A test that needs its own KEK still passes kek_file= explicitly.
+_KEK_TMPDIR = tempfile.mkdtemp(prefix="ragz-test-kek-")
+_AMBIENT_KEK = str(Path(_KEK_TMPDIR) / "kek")
+ensure_kek(_AMBIENT_KEK)
+os.environ["RAGZ_KEK_FILE"] = _AMBIENT_KEK
+atexit.register(lambda: shutil.rmtree(_KEK_TMPDIR, ignore_errors=True))
+
+
 @pytest.fixture(scope="session")
 def pg_url() -> Iterator[str]:
     with PostgresContainer("postgres:16-alpine") as pg:
@@ -133,15 +158,57 @@ async def storage(minio_config: dict[str, str]) -> ObjectStorage:
 
 
 @pytest.fixture
+def pristine_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Strip every RAGZ_* variable so Settings() shows its CLASS defaults.
+
+    stack_env is autouse, which is what stops tests silently reading the
+    developer's dev stack -- but it also means the ambient environment is never
+    empty. A test asserting "the default qdrant_url is localhost:56333" must
+    therefore opt out explicitly, rather than depending on the environment
+    happening to be unset, which is how it passed before.
+    """
+    for key in [k for k in os.environ if k.startswith("RAGZ_")]:
+        monkeypatch.delenv(key, raising=False)
+    _clear_caches()
+    yield
+    _clear_caches()
+
+
+@pytest.fixture(autouse=True)
 def stack_env(
     pg_url: str,
+    redis_url: str,
     qdrant_url: str,
     minio_config: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """Point ambient settings at the test containers; dense backend = deterministic
-    hash (no TEI, no model downloads)."""
+    hash (no TEI, no model downloads).
+
+    AUTOUSE, because opt-in kept failing open. Any test that forgot to request
+    it silently read the DEVELOPER'S dev stack -- Redis on :56379 and Qdrant on
+    :56333, the ports deploy/compose.yaml publishes -- so the suite passed on a
+    machine running `docker compose up` and failed on a CI runner. That is how
+    19 tests could be green locally and red in CI. Opt-in isolation is only as
+    good as the last person who remembered to opt in.
+    """
     monkeypatch.setenv("RAGZ_DATABASE_URL", pg_url)
+    # Redis was the one backing service NOT redirected here. Settings.redis_url
+    # defaults to redis://localhost:56379/0 -- the port deploy/compose.yaml
+    # publishes -- so any code resolving Redis from settings (rather than from
+    # the injected client) talked to the DEVELOPER'S dev stack. That container
+    # is running on a developer box and absent on a CI runner, which is why the
+    # bots and attachment tests passed locally and failed in CI.
+    monkeypatch.setenv("RAGZ_REDIS_URL", redis_url)
+    # Celery is the reason the env var alone is not enough. build_celery() reads
+    # get_settings() when ragz.worker.celery_app is IMPORTED, so its broker and
+    # result backend are already bound to the ambient redis_url before any
+    # fixture runs -- pointing at the dev stack's :56379. Rewriting the live
+    # conf is what actually redirects it.
+    from ragz.worker.celery_app import celery_app
+
+    monkeypatch.setitem(celery_app.conf, "broker_url", redis_url)
+    monkeypatch.setitem(celery_app.conf, "result_backend", redis_url)
     monkeypatch.setenv("RAGZ_QDRANT_URL", qdrant_url)
     monkeypatch.setenv("RAGZ_MINIO_ENDPOINT", minio_config["endpoint"])
     monkeypatch.setenv("RAGZ_MINIO_ACCESS_KEY", minio_config["access_key"])
@@ -210,7 +277,7 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
         yield s
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def kek_file(tmp_path_factory: pytest.TempPathFactory) -> str:
     path = tmp_path_factory.mktemp("kek") / "ragz_kek"
     ensure_kek(str(path))

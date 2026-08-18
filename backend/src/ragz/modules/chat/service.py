@@ -7,28 +7,99 @@ alternate parent->child, sibling_index is dense per (chat, parent).
 import asyncio
 import base64
 import contextlib
-from collections import defaultdict
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import structlog
 from redis.asyncio import Redis
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ragz.core.config import Settings, get_settings
-from ragz.core.db import naive_utc
-from ragz.core.errors import ConflictError, NotFoundError, UpstreamError
+from ragz.core.errors import UpstreamError
 from ragz.core.storage import build_storage
-from ragz.modules.auth.models import User
 from ragz.modules.chat import media
 from ragz.modules.chat.agent import AgentGathered, AgentStep, AgentToolResult, run_agent_gather
-from ragz.modules.chat.blocks import validate_blocks
+
+# Re-exported so api/routes/usage.py and admin_feedback.py keep importing these
+# from chat.service after the split (Phase 2 item 2). Analytics is a separate
+# module now, not a separate contract.
+from ragz.modules.chat.analytics import (
+    AnswerQualitySummary as AnswerQualitySummary,
+)
+from ragz.modules.chat.analytics import (
+    FeedbackQueueRow as FeedbackQueueRow,
+)
+from ragz.modules.chat.analytics import (
+    FeedbackSummary as FeedbackSummary,
+)
+from ragz.modules.chat.analytics import (
+    WorstAnswerRow as WorstAnswerRow,
+)
+from ragz.modules.chat.analytics import (
+    answer_quality_summary as answer_quality_summary,
+)
+from ragz.modules.chat.analytics import (
+    feedback_summary as feedback_summary,
+)
+from ragz.modules.chat.analytics import (
+    list_feedback_queue as list_feedback_queue,
+)
+from ragz.modules.chat.attachments import (
+    create_attachment as create_attachment,
+)
+from ragz.modules.chat.attachments import (
+    delete_attachment as delete_attachment,
+)
+from ragz.modules.chat.attachments import (
+    get_attachment_for_chat as get_attachment_for_chat,
+)
+from ragz.modules.chat.attachments import (
+    link_attachments_to_message as link_attachments_to_message,
+)
+from ragz.modules.chat.attachments import (
+    list_attachments_by_message as list_attachments_by_message,
+)
+from ragz.modules.chat.attachments import (
+    list_stale_attachments as list_stale_attachments,
+)
+from ragz.modules.chat.attachments import (
+    mark_attachment_failed as mark_attachment_failed,
+)
+from ragz.modules.chat.attachments import (
+    mark_attachment_processing as mark_attachment_processing,
+)
+from ragz.modules.chat.attachments import (
+    mark_attachment_ready as mark_attachment_ready,
+)
+from ragz.modules.chat.attachments import (
+    route_attachment as route_attachment,
+)
+from ragz.modules.chat.audit import (
+    audit_message as audit_message,
+)
 from ragz.modules.chat.blocks_emit import SourceInput, generate_blocks
+from ragz.modules.chat.chats import (
+    _auto_title as _auto_title,
+)
+from ragz.modules.chat.chats import (
+    create_chat as create_chat,
+)
+from ragz.modules.chat.chats import (
+    delete_chat as delete_chat,
+)
+from ragz.modules.chat.chats import (
+    get_chat as get_chat,
+)
+from ragz.modules.chat.chats import (
+    list_chats as list_chats,
+)
+from ragz.modules.chat.chats import (
+    rename_chat as rename_chat,
+)
 from ragz.modules.chat.events import (
     CitationRef,
     SourceRef,
@@ -44,14 +115,54 @@ from ragz.modules.chat.events import (
     token_event,
     tool_result_event,
 )
-from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
+from ragz.modules.chat.llm import LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
+from ragz.modules.chat.messages import (
+    ROLE_ASSISTANT as ROLE_ASSISTANT,
+)
+from ragz.modules.chat.messages import (
+    ROLE_USER as ROLE_USER,
+)
+from ragz.modules.chat.messages import (
+    active_leaf as active_leaf,
+)
+from ragz.modules.chat.messages import (
+    add_message as add_message,
+)
+from ragz.modules.chat.messages import (
+    add_user_message as add_user_message,
+)
+from ragz.modules.chat.messages import (
+    build_tree as build_tree,
+)
+from ragz.modules.chat.messages import (
+    clear_message_feedback as clear_message_feedback,
+)
+from ragz.modules.chat.messages import (
+    get_chat_tree as get_chat_tree,
+)
+from ragz.modules.chat.messages import (
+    get_message as get_message,
+)
+from ragz.modules.chat.messages import (
+    list_citations as list_citations,
+)
+from ragz.modules.chat.messages import (
+    list_feedback as list_feedback,
+)
+from ragz.modules.chat.messages import (
+    list_messages as list_messages,
+)
+from ragz.modules.chat.messages import (
+    resolve_parent as resolve_parent,
+)
+from ragz.modules.chat.messages import (
+    set_message_feedback as set_message_feedback,
+)
 from ragz.modules.chat.models import (
-    DEFAULT_CHAT_TITLE,
     Chat,
     ChatAttachment,
     Citation,
     Message,
-    MessageFeedback,
 )
 from ragz.modules.chat.prompting import (
     PromptSource,
@@ -67,23 +178,13 @@ from ragz.modules.chat.prompting import (
     split_budget,
 )
 from ragz.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
-from ragz.modules.chat.schemas import (
-    AttachmentOut,
-    ChatTreeOut,
-    CitationOut,
-    FeedbackOut,
-    MessageNode,
-)
 from ragz.modules.chat.validation import (
-    build_auditor_messages,
     classify_escalation,
-    parse_auditor_scores,
     synthesize_with_gatekeeper,
 )
 from ragz.modules.chat.web import WebResult, WebSearcher
 from ragz.modules.documents import metadata as metadata_service
 from ragz.modules.documents import service as documents_service
-from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch
 from ragz.modules.models import service as models_service
 from ragz.modules.models import settings_service
 from ragz.modules.models.models import (
@@ -97,511 +198,10 @@ from ragz.modules.retrieval.service import (
     MetadataClause,
     RetrievalResult,
     RetrievedChunk,
-    ensure_ephemeral_collection,
     search_ephemeral_attachments,
-    upsert_ephemeral_chunks,
 )
-from ragz.modules.tenancy import service as tenancy_service
 from ragz.modules.tenancy.context import TenantContext
-from ragz.modules.tenancy.models import Workspace
-
-ROLE_USER = "user"
-ROLE_ASSISTANT = "assistant"
-
-_TITLE_MAX_CHARS = 48
-
-
-def _auto_title(content: str) -> str:
-    """Derive a short, single-line chat title from the first user message.
-
-    Collapses whitespace/newlines, then truncates to _TITLE_MAX_CHARS at a
-    word boundary (falling back to a hard cut if there's no boundary),
-    appending an ellipsis only when truncation actually happened.
-    """
-    text = " ".join(content.split())
-    if len(text) <= _TITLE_MAX_CHARS:
-        return text
-    truncated = text[:_TITLE_MAX_CHARS].rsplit(" ", 1)[0]
-    return f"{truncated}…"
-
-
-async def create_chat(
-    session: AsyncSession, ctx: TenantContext, *, workspace_id: UUID, title: str | None = None
-) -> Chat:
-    await tenancy_service.get_workspace(session, ctx, workspace_id)
-    chat = Chat(org_id=ctx.org_id, workspace_id=workspace_id, user_id=ctx.user_id)
-    if title:
-        chat.title = title
-    session.add(chat)
-    await session.commit()
-    return chat
-
-
-async def list_chats(
-    session: AsyncSession, ctx: TenantContext, *, workspace_id: UUID | None = None
-) -> list[Chat]:
-    stmt = (
-        select(Chat)
-        .where(Chat.org_id == ctx.org_id, Chat.user_id == ctx.user_id)
-        .order_by(Chat.updated_at.desc())
-    )
-    if workspace_id is not None:
-        stmt = stmt.where(Chat.workspace_id == workspace_id)
-    return list((await session.execute(stmt)).scalars())
-
-
-async def get_chat(session: AsyncSession, ctx: TenantContext, chat_id: UUID) -> Chat:
-    chat = (
-        await session.execute(
-            select(Chat).where(
-                Chat.id == chat_id, Chat.org_id == ctx.org_id, Chat.user_id == ctx.user_id
-            )
-        )
-    ).scalar_one_or_none()
-    if chat is None:
-        raise NotFoundError("chat not found")
-    # RBAC-03: a chat's workspace membership can be revoked after the chat
-    # was created (offboarding); re-check on every read so historical chat
-    # access ends immediately, same posture as documents/workspaces -- never
-    # rely on the chat's own existence to imply current access. Mirrors
-    # tenancy.service.get_workspace_checked's own membership rule.
-    if ctx.role == "user" and chat.workspace_id not in ctx.workspace_ids:
-        raise NotFoundError("chat not found")
-    return chat
-
-
-async def rename_chat(
-    session: AsyncSession, ctx: TenantContext, chat_id: UUID, title: str
-) -> Chat:
-    chat = await get_chat(session, ctx, chat_id)
-    chat.title = title
-    await session.commit()
-    return chat
-
-
-async def delete_chat(session: AsyncSession, ctx: TenantContext, chat_id: UUID) -> None:
-    chat = await get_chat(session, ctx, chat_id)
-    await session.delete(chat)  # messages + citations cascade at the DB layer
-    await session.commit()
-
-
-_ATTACHMENT_KINDS = {
-    "text/plain", "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
-
-
-def _attachment_kind(mime: str) -> str:
-    return "image" if mime.startswith("image/") else "document"
-
-
-async def create_attachment(
-    session: AsyncSession, ctx: TenantContext, chat_id: UUID,
-    *, filename: str, mime: str, data: bytes,
-) -> ChatAttachment:
-    await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
-    kind = _attachment_kind(mime)
-    attachment = ChatAttachment(
-        chat_id=chat_id, kind=kind, filename=filename, mime=mime, storage_key="",
-    )
-    session.add(attachment)
-    await session.flush()  # assigns attachment.id for the storage key
-    attachment.storage_key = f"{ctx.org_id}/chats/{chat_id}/{attachment.id}/{filename}"
-    storage = build_storage(get_settings())
-    await storage.ensure_bucket()
-    await storage.put(attachment.storage_key, data, content_type=mime)
-    await session.commit()
-    return attachment
-
-
-async def get_attachment_for_chat(
-    session: AsyncSession, ctx: TenantContext, chat_id: UUID, attachment_id: UUID
-) -> ChatAttachment:
-    """Load a chat attachment for content read, gated by chat ownership.
-
-    get_chat enforces org_id + user_id (a chat belongs to exactly one user),
-    so this is not cross-user readable. The attachment must also belong to
-    THIS chat -- an attachment_id from another (even same-user) chat is a
-    non-leaking NotFound, same as an unknown id. Mirrors the documents
-    file-read gate (get_document_checked) in intent."""
-    await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is None or attachment.chat_id != chat_id:
-        raise NotFoundError("attachment not found")
-    return attachment
-
-
-async def mark_attachment_processing(session: AsyncSession, attachment_id: UUID) -> None:
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is not None:
-        attachment.status = "processing"
-        await session.commit()
-
-
-async def mark_attachment_ready(
-    session: AsyncSession, attachment_id: UUID, extracted_text: str
-) -> None:
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is not None:
-        attachment.extracted_text = extracted_text
-        attachment.status = "ready"
-        await session.commit()
-
-
-async def mark_attachment_failed(session: AsyncSession, attachment_id: UUID) -> None:
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is not None:
-        attachment.status = "failed"
-        await session.commit()
-
-
-async def list_stale_attachments(
-    session: AsyncSession, cutoff: datetime
-) -> list[ChatAttachment]:
-    """Task 7 (DOC-9): attachments older than the 24h TTL, for the daily Beat
-    sweep. Deletion itself (DB row + MinIO blob + Qdrant points) is the
-    caller's job (worker/tasks.py's cleanup_stale_attachments_task) so each
-    side-effect stays independently testable."""
-    stmt = select(ChatAttachment).where(ChatAttachment.created_at < cutoff)
-    return list((await session.execute(stmt)).scalars())
-
-
-async def delete_attachment(session: AsyncSession, attachment: ChatAttachment) -> None:
-    """Deletes the DB row only -- MinIO blob and Qdrant points are the
-    caller's responsibility (see list_stale_attachments)."""
-    await session.delete(attachment)
-    await session.commit()
-
-
-async def link_attachments_to_message(
-    session: AsyncSession, attachments: Sequence[ChatAttachment], message_id: UUID
-) -> None:
-    """Transcript rendering: stamp this turn's attachments with the user
-    Message they were actually sent on. Called from chats.py::send_message
-    AFTER add_user_message persists the message -- attachment resolution
-    happens first (fail-fast, same convention as the quota/model checks),
-    so the message id isn't known until now."""
-    for attachment in attachments:
-        attachment.message_id = message_id
-    await session.commit()
-
-
-async def list_attachments_by_message(
-    session: AsyncSession, chat_id: UUID
-) -> dict[UUID, list[ChatAttachment]]:
-    stmt = (
-        select(ChatAttachment)
-        .where(ChatAttachment.chat_id == chat_id, ChatAttachment.message_id.isnot(None))
-        .order_by(ChatAttachment.created_at)
-    )
-    by_message: dict[UUID, list[ChatAttachment]] = defaultdict(list)
-    for attachment in (await session.execute(stmt)).scalars():
-        by_message[attachment.message_id].append(attachment)  # type: ignore[index]
-    return by_message
-
-
-_ATTACHMENT_INLINE_TOKEN_BUDGET = 4000
-
-
-async def route_attachment(
-    session: AsyncSession, org_id: UUID, chat_id: UUID,
-    attachment: ChatAttachment, marker: int, model_hint: str | None,
-) -> "PromptSource | None":
-    """Inline if the attachment's extracted text fits the budget; otherwise
-    chunk+embed+upsert into the ephemeral collection and return None (the
-    caller's existing retrieval call picks it up via search_ephemeral_attachments,
-    merged like any other candidate chunk group)."""
-    text = attachment.extracted_text or ""
-    if not text.strip():
-        return None
-    if count_tokens(text, model_hint) <= _ATTACHMENT_INLINE_TOKEN_BUDGET:
-        attachment.routed_to = "inline"
-        await session.commit()
-        return PromptSource(marker=marker, filename=attachment.filename, page=1, text=text)
-
-    attachment.routed_to = "retrieval"
-    await session.commit()
-    chunks = chunk_blocks(
-        [PageBlock(page=1, text=text, kind="text")]
-    )
-    # DOC-10: the ephemeral attachments store has no per-workspace embedding
-    # choice (ensure_ephemeral_collection's own docstring) -- always the
-    # seeded local model, never the calling workspace's embedding_model_id.
-    ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
-    dense_embedder = get_dense_embedder(
-        ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
-        litellm_model_name=ephemeral_model.litellm_model_name,
-    )
-    dense, sparse = await embed_batch([c.text for c in chunks], dense_embedder)
-    await ensure_ephemeral_collection()
-    await upsert_ephemeral_chunks(
-        org_id=org_id, chat_id=chat_id, attachment_id=attachment.id,
-        chunks=chunks, dense=dense, sparse=sparse,
-    )
-    return None
-
-
-async def list_messages(session: AsyncSession, chat_id: UUID) -> list[Message]:
-    stmt = select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
-    return list((await session.execute(stmt)).scalars())
-
-
-async def get_message(
-    session: AsyncSession, ctx: TenantContext, message_id: UUID
-) -> tuple[Chat, Message]:
-    msg = (
-        await session.execute(select(Message).where(Message.id == message_id))
-    ).scalar_one_or_none()
-    if msg is None:
-        raise NotFoundError("message not found")
-    chat = await get_chat(session, ctx, msg.chat_id)  # NotFoundError if not the caller's
-    return chat, msg
-
-
-async def list_citations(
-    session: AsyncSession, chat_id: UUID
-) -> dict[UUID, list[Citation]]:
-    stmt = (
-        select(Citation)
-        .join(Message, Message.id == Citation.message_id)
-        .where(Message.chat_id == chat_id)
-        .order_by(Citation.marker)
-    )
-    by_message: dict[UUID, list[Citation]] = defaultdict(list)
-    for citation in (await session.execute(stmt)).scalars():
-        by_message[citation.message_id].append(citation)
-    return by_message
-
-
-async def list_feedback(
-    session: AsyncSession, chat_id: UUID
-) -> dict[UUID, MessageFeedback]:
-    stmt = (
-        select(MessageFeedback)
-        .join(Message, Message.id == MessageFeedback.message_id)
-        .where(Message.chat_id == chat_id)
-    )
-    return {fb.message_id: fb for fb in (await session.execute(stmt)).scalars()}
-
-
-async def set_message_feedback(
-    session: AsyncSession, ctx: TenantContext, message_id: UUID,
-    *, rating: str, comment: str | None,
-) -> MessageFeedback:
-    _, msg = await get_message(session, ctx, message_id)  # NotFoundError if not caller's
-    fb = (
-        await session.execute(
-            select(MessageFeedback).where(MessageFeedback.message_id == msg.id)
-        )
-    ).scalar_one_or_none()
-    if fb is None:
-        fb = MessageFeedback(
-            message_id=msg.id, rating=rating, comment=comment, created_by=ctx.user_id,
-        )
-        session.add(fb)
-    else:
-        fb.rating = rating
-        fb.comment = comment
-    await session.commit()
-    await session.refresh(fb)
-    return fb
-
-
-async def clear_message_feedback(
-    session: AsyncSession, ctx: TenantContext, message_id: UUID
-) -> None:
-    _, msg = await get_message(session, ctx, message_id)  # NotFoundError if not caller's
-    fb = (
-        await session.execute(
-            select(MessageFeedback).where(MessageFeedback.message_id == msg.id)
-        )
-    ).scalar_one_or_none()
-    if fb is not None:
-        await session.delete(fb)
-        await session.commit()
-
-
-def build_tree(
-    messages: list[Message], citations: dict[UUID, list[Citation]],
-    feedback: dict[UUID, MessageFeedback],
-    attachments: dict[UUID, list[ChatAttachment]] | None = None,
-) -> list[MessageNode]:
-    children: dict[UUID | None, list[Message]] = defaultdict(list)
-    for m in messages:
-        children[m.parent_message_id].append(m)
-    attachments = attachments or {}
-
-    def node(m: Message) -> MessageNode:
-        kids = sorted(children.get(m.id, []), key=lambda c: c.sibling_index)
-        fb = feedback.get(m.id)
-        msg_attachments = attachments.get(m.id, [])
-        return MessageNode(
-            id=m.id, parent_message_id=m.parent_message_id,
-            sibling_index=m.sibling_index, role=m.role, content=m.content,
-            model_id=m.model_id, prompt_tokens=m.prompt_tokens,
-            completion_tokens=m.completion_tokens, created_at=m.created_at,
-            stopped=m.stopped, no_answer=m.no_answer, grounding=m.grounding,
-            grounding_score=m.grounding_score, completeness_score=m.completeness_score,
-            validation_failed=m.validation_failed,
-            citations=[CitationOut.model_validate(c) for c in citations.get(m.id, [])],
-            feedback=FeedbackOut.model_validate(fb) if fb is not None else None,
-            # In-chat generative UI (design 2026-08-15, §4): re-validated on
-            # the way OUT too (not just trusted from storage) -- cheap,
-            # never raises, and keeps history GET on the exact same Iron
-            # Rule 5 boundary as the live SSE frame.
-            blocks=validate_blocks(m.blocks_json) if m.blocks_json else None,
-            # Transcript rendering (design 2026-08-15): metadata-only
-            # (AttachmentOut has no bytes/storage_key/extracted_text field) --
-            # never expose raw file content on the history read path.
-            attachments=(
-                [AttachmentOut.model_validate(a) for a in msg_attachments]
-                if msg_attachments else None
-            ),
-            children=[node(k) for k in kids],
-        )
-
-    roots = sorted(children.get(None, []), key=lambda m: m.sibling_index)
-    return [node(r) for r in roots]
-
-
-async def get_chat_tree(
-    session: AsyncSession, ctx: TenantContext, chat_id: UUID
-) -> ChatTreeOut:
-    chat = await get_chat(session, ctx, chat_id)
-    messages = await list_messages(session, chat_id)
-    citations = await list_citations(session, chat_id)
-    feedback = await list_feedback(session, chat_id)
-    attachments = await list_attachments_by_message(session, chat_id)
-    return ChatTreeOut(
-        id=chat.id, workspace_id=chat.workspace_id, title=chat.title,
-        has_summary=chat.summary is not None,
-        messages=build_tree(messages, citations, feedback, attachments),
-    )
-
-
-def active_leaf(messages: list[Message]) -> Message | None:
-    """Follow the newest sibling (highest sibling_index) at every branch point."""
-    children: dict[UUID | None, list[Message]] = defaultdict(list)
-    for m in messages:
-        children[m.parent_message_id].append(m)
-    node: Message | None = None
-    branch = children.get(None, [])
-    while branch:
-        node = max(branch, key=lambda m: m.sibling_index)
-        branch = children.get(node.id, [])
-    return node
-
-
-def resolve_parent(
-    messages: list[Message], parent_message_id: UUID | None, explicit: bool
-) -> Message | None:
-    """Resolve the parent for a NEW user message (send/edit semantics, spec 2.1).
-
-    explicit=False -> append to the active leaf; if that leaf is a dangling user
-    message (a previous stream died before the answer persisted), reuse ITS
-    parent so the new message becomes a retry sibling.
-    explicit=True  -> the caller chose: a message id (edit -> same parent as the
-    edited sibling) or None (edit of a root message -> new root sibling).
-    """
-    if explicit:
-        if parent_message_id is None:
-            return None
-        by_id = {m.id: m for m in messages}
-        parent = by_id.get(parent_message_id)
-        if parent is None:
-            raise NotFoundError("parent message not found in this chat")
-        return parent
-    leaf = active_leaf(messages)
-    if leaf is not None and leaf.role == ROLE_USER:
-        by_id = {m.id: m for m in messages}
-        return by_id.get(leaf.parent_message_id) if leaf.parent_message_id else None
-    return leaf
-
-
-async def add_message(
-    session: AsyncSession,
-    ctx: TenantContext,
-    chat: Chat,
-    *,
-    role: str,
-    content: str,
-    parent: Message | None,
-    model_id: UUID | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    stopped: bool = False,
-    no_answer: bool = False,
-    grounding: str = "documents",
-    validation_failed: bool = False,
-) -> Message:
-    if parent is None:
-        if role != ROLE_USER:
-            raise ConflictError("root messages must be user messages")
-    elif parent.role == role:
-        raise ConflictError("message roles must alternate")
-    elif parent.chat_id != chat.id:
-        raise NotFoundError("parent message not found in this chat")
-    # serializes sibling_index computation per chat; NULL-parent roots have no unique backstop
-    await session.execute(select(Chat).where(Chat.id == chat.id).with_for_update())
-    sibling_count = (
-        await session.execute(
-            select(func.count())
-            .select_from(Message)
-            .where(
-                Message.chat_id == chat.id,
-                Message.parent_message_id == (parent.id if parent else None),
-            )
-        )
-    ).scalar_one()
-    msg = Message(
-        chat_id=chat.id,
-        parent_message_id=parent.id if parent else None,
-        sibling_index=sibling_count,
-        role=role,
-        content=content,
-        model_id=model_id,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        stopped=stopped,
-        no_answer=no_answer,
-        grounding=grounding,
-        validation_failed=validation_failed,
-    )
-    session.add(msg)
-    if (
-        role == ROLE_USER
-        and parent is None
-        and sibling_count == 0
-        and chat.title == DEFAULT_CHAT_TITLE
-    ):
-        title = _auto_title(content)
-        if title:
-            chat.title = title
-    chat.updated_at = naive_utc()  # explicit: onupdate only fires when a column changes
-    await session.commit()
-    return msg
-
-
-async def add_user_message(
-    session: AsyncSession,
-    ctx: TenantContext,
-    chat: Chat,
-    content: str,
-    *,
-    parent_message_id: UUID | None = None,
-    explicit: bool = False,
-) -> Message:
-    """Shared parent-resolution + persist for a new user turn (Task 4, DOC-9's
-    sibling: factored out of `chats.py::send_message`'s inline block so
-    `/external/v1/chat` doesn't duplicate it). Defaults (`parent_message_id`
-    unset, `explicit=False`) match the external route's simpler contract --
-    no edit/branch concept, always append to the active leaf. `send_message`
-    passes its own body fields through unchanged, so its behavior is
-    byte-identical to before this refactor."""
-    messages = await list_messages(session, chat.id)
-    parent = resolve_parent(messages, parent_message_id, explicit=explicit)
-    return await add_message(session, ctx, chat, role=ROLE_USER, content=content, parent=parent)
-
+from ragz.modules.tenancy.views import WorkspaceView
 
 NO_ANSWER_TEXT = (
     "I couldn't find anything in this workspace's documents that answers that. "
@@ -930,284 +530,7 @@ async def _persist_assistant(
     return msg
 
 
-def _completer_for_audit(settings: Settings) -> LiteLLMStreamer:
-    """Own gateway client per audit run - the worker has no request-scoped
-    app.state to borrow one from (mirrors LiteLLMStreamer's construction in
-    chats.py's _streamer, minus the per-user virtual key: audit calls are
-    platform overhead, not a member's own usage)."""
-    return LiteLLMStreamer(base_url=settings.litellm_url, master_key=settings.litellm_master_key)
 
-
-async def audit_message(session: AsyncSession, message_id: UUID) -> bool:
-    """Phase 3 Auditor (§3): scores ONE already-persisted message. No ctx -
-    this runs from a worker-owned session with no request-scoped tenant
-    context; it only ever touches the single message_id the route already
-    resolved inside a real, ACL-checked request, so it needs no additional
-    tenant filtering of its own. Returns False (no-op, never raises) when
-    there is no utility model, the message is gone, or grounding != 'documents'
-    (nothing meaningful to check citations against on conversational/
-    general-knowledge/no-answer turns)."""
-    utility_model = await get_utility_model(session)
-    if utility_model is None:
-        return False
-    msg = (
-        await session.execute(select(Message).where(Message.id == message_id))
-    ).scalar_one_or_none()
-    if msg is None or msg.grounding != "documents" or msg.no_answer:
-        return False
-    user_msg = (
-        await session.execute(select(Message).where(Message.id == msg.parent_message_id))
-    ).scalar_one_or_none()
-    question = user_msg.content if user_msg else ""
-    citations = (
-        await session.execute(
-            select(Citation).where(Citation.message_id == msg.id).order_by(Citation.marker)
-        )
-    ).scalars()
-    sources = [
-        PromptSource(marker=c.marker, filename=c.chunk_ref, page=c.page, text="", section=c.section)
-        for c in citations
-    ]
-    settings = get_settings()
-    completer = _completer_for_audit(settings)
-    completion = await completer.complete(
-        model=utility_model.litellm_model_name,
-        messages=build_auditor_messages(question=question, answer=msg.content, sources=sources),
-    )
-    scores = parse_auditor_scores(completion.text)
-    if scores is None:
-        return False
-    msg.grounding_score = scores.grounding_score
-    msg.completeness_score = scores.completeness_score
-    chat = await session.get(Chat, msg.chat_id)
-    assert chat is not None  # FK guarantees the parent chat row exists
-    await quota_service.record_usage(
-        session, org_id=chat.org_id, user_id=chat.user_id, workspace_id=chat.workspace_id,
-        model_id=utility_model.id,
-        feature="validation", prompt_tokens=completion.usage.prompt_tokens,
-        completion_tokens=completion.usage.completion_tokens,
-    )
-    await session.commit()
-    return True
-
-
-@dataclass(frozen=True)
-class WorstAnswerRow:
-    message_id: UUID
-    chat_id: UUID
-    content_snippet: str
-    grounding_score: float | None
-    completeness_score: float | None
-    created_at: datetime
-
-
-@dataclass(frozen=True)
-class AnswerQualitySummary:
-    audited_count: int
-    avg_grounding_score: float | None
-    avg_completeness_score: float | None
-    low_score_count: int  # grounding_score < 0.5 OR completeness_score < 0.5
-    worst: list[WorstAnswerRow]
-
-
-_SNIPPET_CHARS_QUALITY = 200
-_LOW_SCORE_THRESHOLD = 0.5
-
-
-async def answer_quality_summary(
-    session: AsyncSession, ctx: TenantContext, *, days: int, limit: int = 10
-) -> AnswerQualitySummary:
-    """Phase 3 Auditor surfacing (§3): org-scoped average scores + the
-    lowest-scoring answers, for the admin dashboard tile/table. Only
-    audited messages (grounding_score IS NOT NULL) count."""
-    cutoff = naive_utc() - timedelta(days=days)
-    base = (
-        select(Message)
-        .join(Chat, Chat.id == Message.chat_id)
-        .where(
-            Chat.org_id == ctx.org_id,
-            Message.grounding_score.is_not(None),
-            Message.created_at >= cutoff,
-        )
-    )
-    rows = list((await session.execute(base)).scalars())
-    audited_count = len(rows)
-    if audited_count == 0:
-        return AnswerQualitySummary(0, None, None, 0, [])
-    avg_grounding = sum(m.grounding_score for m in rows) / audited_count  # type: ignore[misc]
-    avg_completeness = sum(m.completeness_score for m in rows) / audited_count  # type: ignore[misc]
-    low_score_count = sum(
-        1 for m in rows
-        if (m.grounding_score or 0) < _LOW_SCORE_THRESHOLD
-        or (m.completeness_score or 0) < _LOW_SCORE_THRESHOLD
-    )
-    worst = sorted(
-        rows, key=lambda m: ((m.grounding_score or 0) + (m.completeness_score or 0)) / 2
-    )[:limit]
-    return AnswerQualitySummary(
-        audited_count=audited_count,
-        avg_grounding_score=avg_grounding,
-        avg_completeness_score=avg_completeness,
-        low_score_count=low_score_count,
-        worst=[
-            WorstAnswerRow(
-                message_id=m.id, chat_id=m.chat_id,
-                content_snippet=m.content[:_SNIPPET_CHARS_QUALITY],
-                grounding_score=m.grounding_score, completeness_score=m.completeness_score,
-                created_at=m.created_at,
-            )
-            for m in worst
-        ],
-    )
-
-
-@dataclass(frozen=True)
-class FeedbackSummary:
-    total_count: int
-    down_count: int
-    down_rate: float | None
-
-
-async def feedback_summary(
-    session: AsyncSession, ctx: TenantContext, *, days: int
-) -> FeedbackSummary:
-    cutoff = naive_utc() - timedelta(days=days)
-    stmt = (
-        select(MessageFeedback)
-        .join(Message, Message.id == MessageFeedback.message_id)
-        .join(Chat, Chat.id == Message.chat_id)
-        .where(Chat.org_id == ctx.org_id, MessageFeedback.created_at >= cutoff)
-    )
-    rows = list((await session.execute(stmt)).scalars())
-    total = len(rows)
-    if total == 0:
-        return FeedbackSummary(total_count=0, down_count=0, down_rate=None)
-    down = sum(1 for r in rows if r.rating == "down")
-    return FeedbackSummary(total_count=total, down_count=down, down_rate=down / total)
-
-
-@dataclass(frozen=True)
-class FeedbackQueueRow:
-    message_id: UUID
-    chat_id: UUID
-    workspace_id: UUID
-    question: str
-    answer: str
-    rating: str
-    comment: str | None
-    citations: list[Citation]
-    created_at: datetime
-    user_id: UUID | None
-    user_email: str | None
-
-
-async def list_feedback_queue(
-    session: AsyncSession, ctx: TenantContext,
-    *, rating: str | None = None, workspace_id: UUID | None = None,
-    user_id: UUID | None = None, start: datetime | None = None, end: datetime | None = None,
-    cursor: str | None = None, limit: int = 50,
-) -> tuple[list[FeedbackQueueRow], str | None]:
-    """Keyset-paginated, org-scoped (iron rule 1: every org-owned-table query
-    goes through ctx.org_id). Mirrors list_audit_events's cursor shape
-    ("{created_at.isoformat()}|{message_id}")."""
-    stmt = (
-        select(MessageFeedback, Message, Chat)
-        .join(Message, Message.id == MessageFeedback.message_id)
-        .join(Chat, Chat.id == Message.chat_id)
-        .where(Chat.org_id == ctx.org_id)
-        .order_by(MessageFeedback.created_at.desc(), MessageFeedback.message_id.desc())
-    )
-    if rating is not None:
-        stmt = stmt.where(MessageFeedback.rating == rating)
-    if workspace_id is not None:
-        stmt = stmt.where(Chat.workspace_id == workspace_id)
-    if user_id is not None:
-        stmt = stmt.where(MessageFeedback.created_by == user_id)
-    if start is not None:
-        stmt = stmt.where(MessageFeedback.created_at >= start)
-    if end is not None:
-        stmt = stmt.where(MessageFeedback.created_at < end)
-    if cursor:
-        try:
-            ts_raw, id_raw = cursor.split("|", 1)
-            cursor_key = (datetime.fromisoformat(ts_raw), UUID(id_raw))
-        except ValueError as exc:
-            raise NotFoundError("invalid cursor") from exc
-        stmt = stmt.where(
-            tuple_(MessageFeedback.created_at, MessageFeedback.message_id) < cursor_key
-        )
-    rows = list((await session.execute(stmt.limit(limit + 1))).all())
-    next_cursor = None
-    if len(rows) > limit:
-        rows = rows[:limit]
-        last_fb, _, _ = rows[-1]
-        next_cursor = f"{last_fb.created_at.isoformat()}|{last_fb.message_id}"
-
-    message_ids = [m.id for _, m, _ in rows]
-    parent_ids = [m.parent_message_id for _, m, _ in rows if m.parent_message_id is not None]
-    parents: dict[UUID, Message] = {}
-    if parent_ids:
-        # Iron rule 1: re-filter on Chat.org_id at THIS query site too, even
-        # though parent_ids are already derived from org-filtered rows above
-        # and add_message's parent.chat_id != chat.id check independently
-        # guarantees a parent shares its child's chat. Don't rely on either
-        # invariant surviving a future refactor -- join through to Chat here.
-        parents = {
-            p.id: p
-            for p in (
-                await session.execute(
-                    select(Message)
-                    .join(Chat, Chat.id == Message.chat_id)
-                    .where(Message.id.in_(parent_ids), Chat.org_id == ctx.org_id)
-                )
-            ).scalars()
-        }
-    citations_by_message: dict[UUID, list[Citation]] = defaultdict(list)
-    if message_ids:
-        # Same rationale: message_ids come from the org-filtered main query,
-        # but this sub-query re-enforces org-scoping at its own query site
-        # rather than inheriting safety from the caller.
-        for c in (
-            await session.execute(
-                select(Citation)
-                .join(Message, Message.id == Citation.message_id)
-                .join(Chat, Chat.id == Message.chat_id)
-                .where(Citation.message_id.in_(message_ids), Chat.org_id == ctx.org_id)
-            )
-        ).scalars():
-            citations_by_message[c.message_id].append(c)
-
-    # Batch-load the feedback authors' emails (iron rule 1: re-scope on
-    # ctx.org_id at this query site too).
-    author_ids = [fb.created_by for fb, _, _ in rows if fb.created_by is not None]
-    authors: dict[UUID, str] = {}
-    if author_ids:
-        authors = {
-            u.id: u.email
-            for u in (
-                await session.execute(
-                    select(User).where(User.id.in_(author_ids), User.org_id == ctx.org_id)
-                )
-            ).scalars()
-        }
-
-    result = [
-        FeedbackQueueRow(
-            message_id=m.id, chat_id=chat.id, workspace_id=chat.workspace_id,
-            question=(
-                parents[m.parent_message_id].content
-                if m.parent_message_id is not None and m.parent_message_id in parents
-                else ""
-            ),
-            answer=m.content, rating=fb.rating, comment=fb.comment,
-            citations=sorted(citations_by_message.get(m.id, []), key=lambda c: c.marker),
-            created_at=fb.created_at,
-            user_id=fb.created_by,
-            user_email=authors.get(fb.created_by) if fb.created_by is not None else None,
-        )
-        for fb, m, chat in rows
-    ]
-    return result, next_cursor
 
 
 _STOP_PERSISTS: set[asyncio.Task[None]] = set()
@@ -1306,7 +629,7 @@ async def stream_reply(
     ctx: TenantContext,
     *,
     chat: Chat,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     user_message: Message,
     model: Model,
     streamer: LLMStreamer,
@@ -1394,6 +717,16 @@ async def stream_reply(
                 )
 
             convo_usage: LLMUsage | None = None
+            # Close the read unit of work BEFORE the model stream. An
+            # AsyncSession holds a pooled connection for as long as its
+            # transaction is open, and the reads above opened one implicitly;
+            # without this commit that connection stays checked out for the
+            # entire stream -- seconds to minutes -- doing nothing. N concurrent
+            # chats pinned N connections and starved every other request,
+            # including cheap ones. The loop below touches no session, and
+            # expire_on_commit=False keeps chat/user_message/model usable, so
+            # the post-stream writes simply open a fresh transaction.
+            await session.commit()
             # aclosing (not a bare async-for): on client abort, GeneratorExit
             # is thrown into THIS frame at the `yield token_event` below, not
             # into streamer.stream()'s frame - a bare async-for only drops
@@ -1724,6 +1057,16 @@ async def stream_reply(
                     user_message.content, image_data_uris
                 )
             gk_usage: LLMUsage | None = None
+            # Close the read unit of work BEFORE the model stream. An
+            # AsyncSession holds a pooled connection for as long as its
+            # transaction is open, and the reads above opened one implicitly;
+            # without this commit that connection stays checked out for the
+            # entire stream -- seconds to minutes -- doing nothing. N concurrent
+            # chats pinned N connections and starved every other request,
+            # including cheap ones. The loop below touches no session, and
+            # expire_on_commit=False keeps chat/user_message/model usable, so
+            # the post-stream writes simply open a fresh transaction.
+            await session.commit()
             # aclosing: same deterministic-cleanup-on-abort reasoning as the
             # conversational branch.
             async with contextlib.aclosing(

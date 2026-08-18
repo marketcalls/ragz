@@ -13,6 +13,7 @@ import ragz.modules.chat.models  # noqa: F401
 import ragz.modules.documents.models  # noqa: F401
 import ragz.modules.models.catalog  # noqa: F401
 import ragz.modules.models.models  # noqa: F401
+import ragz.modules.outbox.models  # noqa: F401
 import ragz.modules.quotas.models  # noqa: F401
 import ragz.modules.secrets.models  # noqa: F401
 import ragz.modules.tenancy.models  # noqa: F401

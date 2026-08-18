@@ -1,7 +1,15 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,13 +37,29 @@ class Folder(UUIDPk, Base):
             "uq_folders_workspace_root_name", "workspace_id", "name",
             unique=True, postgresql_where=text("parent_folder_id IS NULL"),
         ),
+        # Composite-FK target, so documents.folder_id and this table's own
+        # parent_folder_id can prove a referenced folder is in the SAME org.
+        UniqueConstraint("id", "org_id", name="uq_folders_id_org_id"),
+        ForeignKeyConstraint(
+            ["parent_folder_id", "org_id"], ["folders.id", "folders.org_id"],
+            name="fk_folders_parent_folder_id_org", ondelete="CASCADE",
+        ),
+        # Same-tenant composite FKs (e4f7c1a83b26) -- see Document.
+        ForeignKeyConstraint(
+            ["workspace_id", "org_id"], ["workspaces.id", "workspaces.org_id"],
+            name="fk_folders_workspace_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "org_id"], ["users.id", "users.org_id"],
+            name="fk_folders_created_by_org",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
-    parent_folder_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("folders.id", ondelete="CASCADE"), default=None, index=True
-    )
+    # No single-column ForeignKey: the composite one in __table_args__ carries
+    # both the reference and the ondelete, paired with org_id.
+    parent_folder_id: Mapped[UUID | None] = mapped_column(default=None, index=True)
     name: Mapped[str]
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
 
@@ -56,6 +80,47 @@ class Document(UUIDPk, Base):
             "chunk_method_override IN ('heading', 'fixed', 'page', 'table_qa')",
             name="ck_documents_chunk_method_override",
         ),
+        # Same-tenant composite FKs (e4f7c1a83b26): a plain FK on workspace_id
+        # proves the workspace EXISTS, not that it belongs to this row's org.
+        # Pairing org_id on both sides makes a cross-tenant reference
+        # impossible to persist, rather than merely unlikely to be written.
+        ForeignKeyConstraint(
+            ["workspace_id", "org_id"], ["workspaces.id", "workspaces.org_id"],
+            name="fk_documents_workspace_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "org_id"], ["users.id", "users.org_id"],
+            name="fk_documents_created_by_org",
+        ),
+        # f5a8d2e91c47: a document must not be filed under another org's folder.
+        # SET NULL (folder_id) names the column deliberately -- a bare SET NULL
+        # nulls every column of the composite FK, including the NOT NULL org_id,
+        # which makes any folder delete fail. Must match the migration.
+        ForeignKeyConstraint(
+            ["folder_id", "org_id"], ["folders.id", "folders.org_id"],
+            name="fk_documents_folder_id_org", ondelete="SET NULL (folder_id)",
+        ),
+        # Mirrors migration b1c4e7a20d31's ck_documents_index_state.
+        CheckConstraint(
+            "index_state IN ('active', 'pending', 'failed')",
+            name="ck_documents_index_state",
+        ),
+        # Mirrors b1c4e7a20d31's ix_documents_unprojected. Without it, ORM-built
+        # schemas (tests, dev) full-scan documents on every retrieval, since
+        # unprojected_document_ids runs on the hot path.
+        Index(
+            "ix_documents_unprojected", "workspace_id",
+            postgresql_where=text("index_state <> 'active'"),
+        ),
+        # Mirrors d3e6a9c42f15. The security invariant, enforced by the database
+        # rather than trusted from application code: a document may only claim
+        # to be projected when the revision Qdrant holds IS the committed one.
+        # Without this, a concurrent ACL update could mark a row active at an
+        # already-superseded revision and serve a stale ACL indefinitely.
+        CheckConstraint(
+            "index_state <> 'active' OR projected_security_revision = security_revision",
+            name="ck_documents_active_is_projected",
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
@@ -69,6 +134,14 @@ class Document(UUIDPk, Base):
     storage_key: Mapped[str]
     page_count: Mapped[int | None] = mapped_column(default=None)
     created_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    #: Who asked for the deletion, recorded WITH the flip to status="deleting".
+    #: The stuck-document reconciler has to republish documents.delete for rows
+    #: stranded mid-delete, and it used doc.created_by as the actor -- but the
+    #: creator is frequently not the deleter, so the replayed document.deleted
+    #: audit named an unrelated user. NULL where it is genuinely unknown (rows
+    #: that entered "deleting" before this column existed): an absent actor is
+    #: honest, a wrong one is not.
+    deleted_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
     updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
     pinned: Mapped[bool] = mapped_column(default=False, index=True)
     # None = unrestricted (every pre-Phase-2 document); a list = only members of
@@ -76,6 +149,16 @@ class Document(UUIDPk, Base):
     acl_group_ids: Mapped[list[UUID] | None] = mapped_column(
         ARRAY(PG_UUID(as_uuid=True)), default=None
     )
+    # Fail-closed ACL projection (review P0). A security-relevant change bumps
+    # security_revision in the SAME commit as the change itself; the projection
+    # to Qdrant then advances projected_security_revision and flips index_state
+    # back to 'active'. While they differ the document is NOT retrievable: the
+    # vector payload no longer reflects committed intent, so no caller's access
+    # can be evaluated correctly -- including one the new ACL permits. A brief
+    # under-grant is the right trade for never over-granting.
+    security_revision: Mapped[int] = mapped_column(default=0)
+    projected_security_revision: Mapped[int] = mapped_column(default=0)
+    index_state: Mapped[str] = mapped_column(default="active")  # active|pending|failed
     # Plan H (DOC-5): version lineage
     version: Mapped[int] = mapped_column(default=1)
     lineage_id: Mapped[UUID] = mapped_column(index=True)  # v1 row's own id; no FK (self-ref churn)
@@ -98,15 +181,18 @@ class Document(UUIDPk, Base):
     # existing single-document delete pipeline for every document found,
     # never a raw DB cascade straight onto Document (that would skip Qdrant/
     # MinIO cleanup entirely).
-    folder_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("folders.id", ondelete="SET NULL"), default=None, index=True
-    )
+    folder_id: Mapped[UUID | None] = mapped_column(default=None, index=True)
     # Chunk-methods plan Task 2: NULL = inherit Workspace.chunk_method.
     chunk_method_override: Mapped[str | None] = mapped_column(default=None)
 
 
 class IngestJob(UUIDPk, Base):
     __tablename__ = "ingest_jobs"
+    __table_args__ = (
+        # Mirrors migration d21fa2c66844: the reconciler's hot path is
+        # "newest job per stuck document".
+        Index("ix_ingest_jobs_document_id_updated_at", "document_id", "updated_at"),
+    )
 
     document_id: Mapped[UUID] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), index=True
@@ -116,6 +202,12 @@ class IngestJob(UUIDPk, Base):
     error: Mapped[str | None] = mapped_column(default=None)
     started_at: Mapped[datetime | None] = mapped_column(default=None)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    #: Worker liveness, not a bookkeeping timestamp. run_embed_upsert commits
+    #: `progress` after every batch, so onupdate turns that existing write into
+    #: a heartbeat at no extra cost: a live run touches this row continuously
+    #: even though Document.updated_at goes untouched for the whole stage.
+    #: reconcile_stuck_documents reads it to tell a dead worker from a slow one.
+    updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
 
 
 class MetadataField(UUIDPk, Base):

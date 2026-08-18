@@ -11,7 +11,10 @@ codebase that computes these three metrics.
 
 import json
 import re
+from uuid import UUID
 
+import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.chat.llm import LLMCompleter
@@ -23,7 +26,9 @@ from ragz.modules.evals.service import list_golden_queries_for_run
 from ragz.modules.models import service as models_service
 from ragz.modules.models.utility import get_utility_model
 from ragz.modules.tenancy.context import TenantContext
-from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
+
+log = structlog.get_logger(__name__)
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -61,7 +66,7 @@ def parse_faithfulness_score(text: str) -> int | None:
 
 async def _score_one(
     session: AsyncSession,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     gq: GoldenQuery,
     *,
     retriever: Retriever,
@@ -131,15 +136,50 @@ async def _score_one(
 
 async def run_eval(
     session: AsyncSession,
-    workspace: Workspace,
+    workspace: WorkspaceView,
     *,
     triggered_by: str,
     retriever: Retriever,
     completer: LLMCompleter | None,
-) -> EvalRun:
+    dispatch_id: UUID | None = None,
+) -> EvalRun | None:
     """One eval pass over every golden query in `workspace`. See this module's
     docstring and the metric definitions pinned in the Task 11 brief — this is
-    the ONLY function that computes hit-rate/citation-precision/faithfulness."""
+    the ONLY function that computes hit-rate/citation-precision/faithfulness.
+
+    `dispatch_id` is the outbox event id when this run came from one. Outbox
+    delivery is at-least-once -- the dispatcher hands the message to the broker
+    and only then marks the event dispatched, so a crash in between redelivers
+    it -- and an eval run is not idempotent: a second delivery would add a
+    duplicate row and re-spend the whole LLM/quota budget. Returns None when the
+    claim shows this delivery was already handled. Omitted (None) for callers
+    with no event behind them, which keeps their behaviour unchanged.
+    """
+    run: EvalRun | None = None
+    if dispatch_id is not None:
+        # workspace is a frozen WorkspaceView, detached from the session, so the
+        # rollback below cannot expire it and reading .id afterwards cannot
+        # trigger a lazy refresh. That refresh used to raise MissingGreenlet
+        # from inside the exception handler and mask the duplicate being
+        # handled; the view removes the hazard rather than working around it.
+        workspace_id = workspace.id
+        # Claim BEFORE any scoring. Deduplicating at the end would still pay for
+        # the entire run, which is the expensive half of the bug.
+        run = EvalRun(
+            workspace_id=workspace_id, triggered_by=triggered_by, dispatch_id=dispatch_id
+        )
+        session.add(run)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            log.info(
+                "eval_run_duplicate_delivery_skipped",
+                workspace_id=str(workspace_id),
+                dispatch_id=str(dispatch_id),
+            )
+            return None
+
     queries = await list_golden_queries_for_run(session, workspace.id)
     utility_model = await get_utility_model(session) if completer is not None else None
     default_model = (
@@ -161,14 +201,17 @@ async def run_eval(
             precisions.append(precision)
         if score is not None:
             faithfulness.append(score)
-    run = EvalRun(
-        workspace_id=workspace.id,
-        triggered_by=triggered_by,
-        query_count=len(queries),
-        hit_rate=(sum(hits) / len(hits)) if hits else None,
-        citation_precision=(sum(precisions) / len(precisions)) if precisions else None,
-        avg_faithfulness=(sum(faithfulness) / len(faithfulness)) if faithfulness else None,
+    if run is None:
+        run = EvalRun(workspace_id=workspace.id, triggered_by=triggered_by)
+        session.add(run)
+    # Either way the metrics land on one row: the claim above inserted it empty
+    # so the delivery was reserved before any tokens were spent, and this fills
+    # it in. Unclaimed callers insert and populate in one step, as before.
+    run.query_count = len(queries)
+    run.hit_rate = (sum(hits) / len(hits)) if hits else None
+    run.citation_precision = (sum(precisions) / len(precisions)) if precisions else None
+    run.avg_faithfulness = (
+        (sum(faithfulness) / len(faithfulness)) if faithfulness else None
     )
-    session.add(run)
     await session.commit()
     return run

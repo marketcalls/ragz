@@ -1,21 +1,24 @@
 """Async ingestion runners: orchestration + job status around the pure pipeline
-stages. Called from Celery via asyncio.run (ADR-0001), so each runner owns its
-engine lifecycle instead of sharing a loop-bound pool."""
+stages. Called from Celery on the worker process's single event loop
+(ADR-0006), so runners share one process-lifetime engine rather than building
+and disposing a pool each. The engine is still keyed by loop, because the API
+reaches _session too (nudge -> dispatch_pending) on a different one."""
 
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import timedelta
 from uuid import UUID
 
 import structlog
 from qdrant_client import models as qdrant_models
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
-from ragz.core.db import build_engine, build_session_factory, naive_utc
+from ragz.core.db import build_session_factory, get_loop_engine, naive_utc
 from ragz.core.storage import ObjectStorage, build_storage
 from ragz.modules.audit.service import record_audit
 from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter
@@ -53,12 +56,20 @@ _BATCH_SIZE = 32
 
 @asynccontextmanager
 async def _session() -> AsyncIterator[AsyncSession]:
-    engine = build_engine(get_settings().database_url)
-    try:
-        async with build_session_factory(engine)() as session:
-            yield session
-    finally:
-        await engine.dispose()
+    """A session on the CURRENT loop's process-lifetime engine (ADR-0006).
+
+    This used to build an engine and dispose it around every single use. That
+    was correct -- asyncio.run gave each task its own loop, and an asyncpg pool
+    cannot cross loops -- but it meant a TCP connect, TLS handshake and auth
+    round trip per parse, chunk, embed, delete AND per outbox sweep, which runs
+    every 30 seconds. get_loop_engine caches per running loop, so with one loop
+    per worker process that is one engine per process, while the API (a
+    different loop, reaching here through nudge -> dispatch_pending) keeps its
+    own. Disposal moves to process shutdown.
+    """
+    engine = get_loop_engine(get_settings().database_url)
+    async with build_session_factory(engine)() as session:
+        yield session
 
 
 async def _get_document(session: AsyncSession, document_id: UUID) -> Document:
@@ -672,3 +683,190 @@ async def mark_failed(document_id: UUID, reason: str) -> None:
             doc.status = "failed"
             doc.error = reason[:1000]
             await session.commit()
+
+
+async def reconcile_security_projections(limit: int = 500) -> int:
+    """Re-drive documents whose committed security state never reached Qdrant.
+
+    Fail-closed ACL projection (review P0) trades availability for safety: a
+    document with an unprojected revision is excluded from retrieval. That is
+    the correct default, but without this it is also PERMANENT -- one Qdrant
+    blip would leave a document invisible until someone noticed and re-saved
+    its ACL by hand. This is the other half of the contract: the system closes
+    the door on failure, then reopens it by itself once the store is reachable.
+
+    Idempotent and safe to run concurrently with live traffic: it re-reads the
+    current Postgres ACL and projects that, so a document that has since been
+    changed again is simply projected at its newer revision.
+
+    Returns the number of documents brought back to 'active', so the beat log
+    (and, later, a metric) shows whether the backlog is draining or growing.
+    """
+    from ragz.modules.documents.service import project_document_security
+
+    recovered = 0
+    async with _session() as session:
+        stale = (
+            (
+                await session.execute(
+                    select(Document)
+                    .where(
+                        # Both halves matter. index_state catches the ordinary
+                        # failure; the revision comparison catches a row that
+                        # says "active" while its projection is behind -- which
+                        # a state-only query would skip forever, leaving a stale
+                        # ACL served indefinitely. The compare-and-set in
+                        # project_document_security should make that
+                        # unreachable, and the DB constraint makes it
+                        # impossible, but the sweep must not DEPEND on either
+                        # being perfect: this is the backstop.
+                        (Document.index_state != "active")
+                        | (
+                            Document.projected_security_revision
+                            != Document.security_revision
+                        ),
+                        # Cubic P1: never re-activate a document on its way out.
+                        # Retrieval excludes only non-active rows, so projecting
+                        # a deleting document back to active would make its
+                        # vectors searchable again until the delete lands.
+                        Document.status != "deleting",
+                    )
+                    .order_by(Document.updated_at)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for doc in stale:
+            try:
+                await project_document_security(session, doc)
+            except Exception:  # noqa: BLE001 - one bad document must not stall the sweep
+                log.warning(
+                    "security_projection_reconcile_failed",
+                    document_id=str(doc.id),
+                    security_revision=doc.security_revision,
+                )
+                continue
+            # Only count a genuine recovery (Cubic P2). A projection superseded
+            # mid-flight deliberately leaves the row pending, and counting that
+            # as recovered would report a draining backlog while it stands still.
+            await session.refresh(doc)
+            if (
+                doc.index_state == "active"
+                and doc.projected_security_revision == doc.security_revision
+            ):
+                recovered += 1
+    if stale:
+        log.info(
+            "security_projection_reconciled",
+            attempted=len(stale),
+            recovered=recovered,
+            remaining=len(stale) - recovered,
+        )
+    return recovered
+
+
+#: A document whose worker has been SILENT longer than this is treated as
+#: abandoned: the worker died, or its message was lost before the outbox existed.
+#:
+#: Silence is measured against IngestJob.updated_at, not Document.updated_at
+#: (Cubic P1). Nothing touches the document row while a stage runs, but
+#: run_embed_upsert commits IngestJob.progress after every batch, so a live run
+#: -- however long -- keeps stamping a heartbeat. Judging by the document row
+#: made a slow parse+embed indistinguishable from a dead worker and re-published
+#: work that was actively running.
+_STUCK_AFTER_SECONDS = 3 * 60 * 60
+
+
+async def reconcile_stuck_documents(limit: int = 200) -> dict[str, int]:
+    """Re-drive documents stranded mid-pipeline (review P1).
+
+    The outbox guarantees work is never LOST going forward, but it cannot help
+    rows stranded before it existed, nor a worker that died after claiming a
+    message. Those sit at "queued", "processing" or "deleting" forever: the
+    status column looks like a queue but nothing ever reads it.
+
+    Rather than re-enqueue Celery directly, this republishes to the OUTBOX --
+    same durability guarantee as the original publication, and one dispatch
+    path to reason about. Idempotent: the pipeline upserts under deterministic
+    point ids and delete is idempotent by design, so re-driving a document that
+    was actually fine is harmless.
+    """
+    from ragz.modules.outbox import service as outbox_service
+
+    cutoff = naive_utc() - timedelta(seconds=_STUCK_AFTER_SECONDS)
+    counts = {"queued": 0, "processing": 0, "deleting": 0}
+    async with _session() as session:
+        # Newest worker heartbeat per document. COALESCE falls back to the
+        # document row for statuses that legitimately have no job yet --
+        # "queued" before the first stage starts, and "deleting", which never
+        # gets one -- so those keep their original behaviour exactly.
+        last_beat = (
+            select(
+                IngestJob.document_id.label("document_id"),
+                func.max(IngestJob.updated_at).label("beat"),
+            )
+            .group_by(IngestJob.document_id)
+            .subquery()
+        )
+        liveness = func.coalesce(last_beat.c.beat, Document.updated_at)
+        stuck = (
+            (
+                await session.execute(
+                    select(Document)
+                    .outerjoin(last_beat, last_beat.c.document_id == Document.id)
+                    .where(
+                        Document.status.in_(("queued", "processing", "deleting")),
+                        liveness < cutoff,
+                    )
+                    .order_by(liveness)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for doc in stuck:
+            if doc.status == "deleting":
+                # deleted_by, NOT created_by (Cubic P2). Replaying with the
+                # creator attributed the document.deleted audit to whoever
+                # uploaded the file, who is frequently not the person who asked
+                # for it to go. None for rows that entered "deleting" before
+                # deleted_by existed -- an unknown actor is honest, a wrong one
+                # is a false audit record.
+                outbox_service.publish(
+                    session,
+                    topic="documents.delete",
+                    payload={
+                        "document_id": str(doc.id),
+                        "actor_id": str(doc.deleted_by) if doc.deleted_by else None,
+                    },
+                    queue="interactive",
+                )
+            else:
+                # queued never started; processing died partway. Both re-enter
+                # at the front of the chain -- parse is cheap relative to
+                # guessing which stage was reached.
+                outbox_service.publish(
+                    session,
+                    topic="documents.ingest",
+                    payload={"document_id": str(doc.id), "size_bytes": doc.size_bytes},
+                )
+            # Touch updated_at so this row is not re-published on the NEXT
+            # sweep (Cubic P2). Without it each hour adds another outbox event
+            # for the same document until its status finally changes -- the
+            # recovery mechanism becomes an amplifier. updated_at doubles as the
+            # retry lease: the row only becomes eligible again after another
+            # full cutoff has elapsed, which is exactly the retry interval we
+            # want for work that may legitimately still be running.
+            doc.updated_at = naive_utc()
+            counts[doc.status] += 1
+        await session.commit()
+    if stuck:
+        log.warning(
+            "stuck_documents_requeued",
+            cutoff_seconds=_STUCK_AFTER_SECONDS,
+            **counts,
+        )
+    return counts

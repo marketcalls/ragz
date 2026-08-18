@@ -10,6 +10,7 @@ from uuid import UUID
 
 import structlog
 from celery import Task, chain
+from celery.exceptions import SoftTimeLimitExceeded
 
 from ragz.core.config import get_settings
 from ragz.core.db import build_engine, build_session_factory, naive_utc
@@ -25,9 +26,16 @@ from ragz.modules.evals.service import workspace_ids_with_golden_queries
 from ragz.modules.models import catalog
 from ragz.modules.retrieval.service import delete_ephemeral_points, retrieve
 from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
+from ragz.worker import loop as worker_loop
 from ragz.worker.celery_app import celery_app
 
 _MAX_RETRIES = 3
+# Maintenance work is small and bounded (a 30s sweep, capped reconciler scans, a
+# batched purge). Running for minutes means stuck, not busy -- so these get a
+# much tighter pair than the bulk ingest default in celery_app.py.
+_MAINT_SOFT = get_settings().celery_maintenance_soft_time_limit_seconds
+_MAINT_HARD = get_settings().celery_maintenance_time_limit_seconds
 
 
 class IngestTask(Task):
@@ -35,7 +43,16 @@ class IngestTask(Task):
 
     def on_failure(self, exc: Exception, task_id: str, args: tuple[Any, ...],
                    kwargs: dict[str, Any], einfo: Any) -> None:
-        asyncio.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
+        # Beat-scheduled maintenance tasks (outbox dispatch, the reconcilers)
+        # share this base but take NO arguments, so args[0] raised IndexError
+        # and replaced the real failure with a confusing one from the hook
+        # itself. Nothing to mark in that case -- let the original propagate.
+        if not args:
+            structlog.get_logger().error(
+                "scheduled_task_failed", task=self.name, error=str(exc)
+            )
+            return
+        worker_loop.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
 
 
 class DeleteTask(Task):
@@ -45,14 +62,21 @@ class DeleteTask(Task):
 
     def on_failure(self, exc: Exception, task_id: str, args: tuple[Any, ...],
                    kwargs: dict[str, Any], einfo: Any) -> None:
-        asyncio.run(ingest.mark_failed(UUID(str(args[0])), f"delete failed: {exc}"))
+        worker_loop.run(ingest.mark_failed(UUID(str(args[0])), f"delete failed: {exc}"))
 
 
 def _run(self: Task, coro_factory: Any) -> Any:
     try:
-        return asyncio.run(coro_factory())
+        return worker_loop.run(coro_factory())
     except IngestFailure:
         raise  # terminal: already recorded on the document; stops the chain, no retry
+    except SoftTimeLimitExceeded:
+        # Terminal, like IngestFailure. SoftTimeLimitExceeded is an ordinary
+        # Exception, so without this branch the generic retry below would give a
+        # task that is merely too slow three MORE full-length attempts -- four
+        # times the wasted work, on the very worker slot the limit exists to
+        # free. on_failure records it on the document instead.
+        raise
     except Exception as exc:
         raise self.retry(exc=exc, countdown=2 ** self.request.retries) from exc
 
@@ -87,7 +111,7 @@ def delete_task(self: Task, document_id: str, actor_id: str | None = None) -> No
     try:
         # Plan K Task 11: same inversion as embed_upsert_task above -- run_delete
         # returns the needs-reindex id, this entrypoint enqueues it.
-        needs_reindex = asyncio.run(ingest.run_delete(UUID(document_id),
+        needs_reindex = worker_loop.run(ingest.run_delete(UUID(document_id),
                                                        UUID(actor_id) if actor_id else None))
         if needs_reindex is not None:
             enqueue_reindex(needs_reindex)
@@ -205,7 +229,7 @@ def audit_message_task(message_id: str) -> None:
             await engine.dispose()
 
     try:
-        asyncio.run(_run())
+        worker_loop.run(_run())
     except Exception:
         structlog.get_logger().warning("audit_message_failed", message_id=message_id, exc_info=True)
 
@@ -261,7 +285,7 @@ def process_attachment_task(attachment_id: str) -> None:
             await engine.dispose()
 
     try:
-        asyncio.run(_run())
+        worker_loop.run(_run())
     except Exception:
         # Review fix (DOC-9 Task 2): mirror audit_message_task's outer guard
         # exactly -- nothing may escape this task, or a transient DB error
@@ -275,7 +299,7 @@ def process_attachment_task(attachment_id: str) -> None:
             "attachment_processing_outer_failed", attachment_id=attachment_id, exc_info=True
         )
         try:
-            asyncio.run(_mark_attachment_failed_best_effort(attachment_id))
+            worker_loop.run(_mark_attachment_failed_best_effort(attachment_id))
         except Exception:
             # Best-effort write on top of a best-effort write: the DB itself
             # is likely unreachable here. Rare double-failure, not solved
@@ -291,7 +315,7 @@ def enqueue_attachment_processing(attachment_id: UUID) -> None:
 
 
 @celery_app.task(name="evals.run")
-def run_eval_task(workspace_id: str, triggered_by: str) -> None:
+def run_eval_task(workspace_id: str, triggered_by: str, dispatch_id: str | None = None) -> None:
     """Minimal trigger for Task 11 (the admin on-demand button); Task 12 adds
     the nightly/settings-change triggers alongside this same task."""
 
@@ -308,20 +332,30 @@ def run_eval_task(workspace_id: str, triggered_by: str) -> None:
                     base_url=settings.litellm_url, master_key=settings.litellm_master_key
                 )
                 await run_eval(
-                    session, ws, triggered_by=triggered_by, retriever=retrieve,
+                    session, WorkspaceView.of(ws), triggered_by=triggered_by,
+                    retriever=retrieve,
                     completer=completer,
+                    dispatch_id=UUID(dispatch_id) if dispatch_id else None,
                 )
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
-def enqueue_eval_run(workspace_id: UUID, triggered_by: str) -> None:
-    run_eval_task.si(str(workspace_id), triggered_by).apply_async(queue="default")
+def enqueue_eval_run(
+    workspace_id: UUID, triggered_by: str, dispatch_id: UUID | None = None
+) -> None:
+    """`dispatch_id` is the outbox event id, carried through so the runner can
+    recognise a redelivery of the SAME event and refuse to run it twice. None
+    for callers with no event behind them (the nightly fan-out)."""
+    run_eval_task.si(
+        str(workspace_id), triggered_by, str(dispatch_id) if dispatch_id else None
+    ).apply_async(queue="default")
 
 
-@celery_app.task(name="evals.run_all_workspaces")
+@celery_app.task(name="evals.run_all_workspaces",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def run_all_workspaces_task() -> None:
     """Nightly fan-out (Task 12, §6; Plan G Task 12 precedent: interval-based,
     not true crontab). Only workspaces with >=1 golden query get a run -
@@ -339,10 +373,11 @@ def run_all_workspaces_task() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
-@celery_app.task(name="attachments.cleanup_stale")
+@celery_app.task(name="attachments.cleanup_stale",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def cleanup_stale_attachments_task() -> None:
     """Task 7 (DOC-9): daily Beat sweep deleting ephemeral chat attachments
     past the 24h TTL -- DB row (chat_service.delete_attachment), MinIO blob
@@ -382,10 +417,11 @@ def cleanup_stale_attachments_task() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
 
 
-@celery_app.task(name="models.refresh_catalog")
+@celery_app.task(name="models.refresh_catalog",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
 def refresh_model_catalog() -> None:
     """Beat-scheduled daily; refresh_catalog's own 3-day cache makes redundant
     runs a cheap no-op (MODEL-10/G7)."""
@@ -401,4 +437,67 @@ def refresh_model_catalog() -> None:
         finally:
             await engine.dispose()
 
-    asyncio.run(_run())
+    worker_loop.run(_run())
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="documents.reconcile_security_projections",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
+def reconcile_security_projections_task(self: Task) -> int:
+    """Re-drive documents whose committed ACL never reached Qdrant (review P0).
+
+    Fail-closed projection makes a Qdrant failure hide a document instead of
+    over-sharing it. This is what makes that recoverable without a human:
+    without it, one blip would leave the document invisible until someone
+    re-saved its ACL by hand.
+    """
+    return _run(self, lambda: ingest.reconcile_security_projections())  # type: ignore[no-any-return]
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="outbox.dispatch_pending",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
+def outbox_dispatch_task(self: Task) -> int:
+    """Sweep undispatched outbox events (review P1).
+
+    The API nudges the dispatcher inline after a commit, so this sweep is the
+    SAFETY NET, not the normal path: it covers the cases the nudge cannot --
+    the process dying between commit and nudge, the broker being down at that
+    moment, or an event published by something with no request to nudge from.
+    """
+    from ragz.worker.outbox import dispatch_pending
+
+    return _run(self, lambda: dispatch_pending())  # type: ignore[no-any-return]
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="outbox.purge_dispatched",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
+def outbox_purge_task(self: Task) -> int:
+    """Bounded retention for outbox_events (Cubic P2).
+
+    One row per upload/delete/reindex/eval accumulated forever, making the
+    busiest insert path in the system also the largest table -- in storage,
+    backups and vacuum work. Only dispatched rows past the window are removed;
+    pending rows are owed work and failed rows are parked for a human.
+    """
+    async def _purge() -> int:
+        from ragz.modules.documents.ingest import _session
+        from ragz.modules.outbox import service as outbox_service
+
+        async with _session() as session:
+            return await outbox_service.purge_dispatched(session)
+
+    return _run(self, _purge)  # type: ignore[no-any-return]
+
+
+@celery_app.task(base=IngestTask, bind=True, max_retries=_MAX_RETRIES,
+                 name="documents.reconcile_stuck",
+                 soft_time_limit=_MAINT_SOFT, time_limit=_MAINT_HARD)
+def reconcile_stuck_documents_task(self: Task) -> dict[str, int]:
+    """Re-drive documents stranded mid-pipeline (review P1).
+
+    The outbox stops work being lost from now on; this recovers rows stranded
+    BEFORE it existed, and any whose worker died after claiming the message.
+    """
+    return _run(self, lambda: ingest.reconcile_stuck_documents())  # type: ignore[no-any-return]

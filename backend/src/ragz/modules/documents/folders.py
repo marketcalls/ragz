@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.core.errors import ConflictError, NotFoundError, WorkspaceAccessDenied
 from ragz.modules.audit.service import record_audit
 from ragz.modules.documents.models import Document, Folder
+from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.service import get_workspace_checked
 
@@ -296,9 +297,23 @@ async def delete_folder(session: AsyncSession, ctx: TenantContext, folder_id: UU
         # Non-enumerating: a member must not learn a restricted doc exists
         # here, same error as get_folder_checked's own workspace gate.
         raise WorkspaceAccessDenied("workspace not found or not accessible")
+    # ONE transaction for the whole cascade (Cubic P1). This used to be two
+    # commits here plus a third in the route when it published the delete
+    # events, so a crash in between could leave every document in the subtree
+    # at "deleting" with no work queued for any of them -- the folder gone, the
+    # documents stranded. Publishing here, alongside the status flips, makes the
+    # cascade genuinely all-or-nothing; the route only nudges the dispatcher.
     for doc in docs:
         doc.status = "deleting"
-    await session.commit()
+        # Same as the single-document route: record the requester with the flip
+        # so a reconciler replay attributes the audit correctly.
+        doc.deleted_by = ctx.user_id
+        outbox_service.publish(
+            session,
+            topic="documents.delete",
+            payload={"document_id": str(doc.id), "actor_id": str(ctx.user_id)},
+            queue="interactive",
+        )
     document_ids = [doc.id for doc in docs]
     await session.delete(folder)  # subtree cascades via Folder.parent_folder_id's DB FK
     await record_audit(

@@ -5,6 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from ragz.core.errors import UpstreamError
 from ragz.modules.retrieval.embeddings import (
     HashDenseEmbedder,
     LiteLLMEmbedder,
@@ -142,7 +143,7 @@ async def test_litellm_embedder_non_200_raises_upstream_error() -> None:
         await embedder.embed(["hello"])
 
 
-def test_get_dense_embedder_routes_tei_vs_litellm() -> None:
+def test_get_dense_embedder_routes_tei_vs_litellm(pristine_env) -> None:
     tei_id = uuid4()
     other_id = uuid4()
     tei = get_dense_embedder(tei_id, provider_kind="tei", litellm_model_name="local-embeddings")
@@ -158,3 +159,29 @@ def test_get_dense_embedder_caches_by_model_id() -> None:
     a = get_dense_embedder(model_id, provider_kind="tei", litellm_model_name="local-embeddings")
     b = get_dense_embedder(model_id, provider_kind="tei", litellm_model_name="local-embeddings")
     assert a is b
+
+
+async def test_an_unreachable_tei_names_the_service_and_the_fix() -> None:
+    """Issue #1: this is the most likely first-run failure.
+
+    A fresh workspace selects the built-in local model, but TEI sits behind the
+    local-embeddings Compose profile and so is simply not running. httpx's own
+    message -- "All connection attempts failed" -- names neither the service,
+    nor the URL, nor what to do, which is what the reporter actually saw after
+    parse and chunk had already succeeded.
+    """
+    def _refuse(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    emb = TeiDenseEmbedder(
+        "http://localhost:58080", transport=httpx.MockTransport(_refuse)
+    )
+
+    with pytest.raises(UpstreamError) as excinfo:
+        await emb.embed(["anything"])
+
+    message = str(excinfo.value)
+    assert "localhost:58080" in message, "must name the endpoint that failed"
+    assert "local-embeddings" in message, "must name the profile that starts it"
+    assert "Admin" in message, "must offer the hosted alternative"
+    assert "All connection attempts failed" not in message

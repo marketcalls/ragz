@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,18 @@ DEFAULT_CHAT_TITLE = "New chat"
 
 class Chat(UUIDPk, Base):
     __tablename__ = "chats"
+    __table_args__ = (
+        # Same-tenant composite FKs (e4f7c1a83b26): a plain FK on workspace_id
+        # proves the workspace EXISTS, not that it belongs to this chat's org.
+        ForeignKeyConstraint(
+            ["workspace_id", "org_id"], ["workspaces.id", "workspaces.org_id"],
+            name="fk_chats_workspace_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "org_id"], ["users.id", "users.org_id"],
+            name="fk_chats_user_id_org",
+        ),
+    )
 
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
     workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
