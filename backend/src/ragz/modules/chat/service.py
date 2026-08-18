@@ -10,7 +10,6 @@ import contextlib
 from collections import defaultdict
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -50,6 +49,36 @@ from ragz.modules.chat.analytics import (
 )
 from ragz.modules.chat.analytics import (
     list_feedback_queue as list_feedback_queue,
+)
+from ragz.modules.chat.attachments import (
+    create_attachment as create_attachment,
+)
+from ragz.modules.chat.attachments import (
+    delete_attachment as delete_attachment,
+)
+from ragz.modules.chat.attachments import (
+    get_attachment_for_chat as get_attachment_for_chat,
+)
+from ragz.modules.chat.attachments import (
+    link_attachments_to_message as link_attachments_to_message,
+)
+from ragz.modules.chat.attachments import (
+    list_attachments_by_message as list_attachments_by_message,
+)
+from ragz.modules.chat.attachments import (
+    list_stale_attachments as list_stale_attachments,
+)
+from ragz.modules.chat.attachments import (
+    mark_attachment_failed as mark_attachment_failed,
+)
+from ragz.modules.chat.attachments import (
+    mark_attachment_processing as mark_attachment_processing,
+)
+from ragz.modules.chat.attachments import (
+    mark_attachment_ready as mark_attachment_ready,
+)
+from ragz.modules.chat.attachments import (
+    route_attachment as route_attachment,
 )
 from ragz.modules.chat.blocks import validate_blocks
 from ragz.modules.chat.blocks_emit import SourceInput, generate_blocks
@@ -125,7 +154,6 @@ from ragz.modules.chat.validation import (
 from ragz.modules.chat.web import WebResult, WebSearcher
 from ragz.modules.documents import metadata as metadata_service
 from ragz.modules.documents import service as documents_service
-from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch
 from ragz.modules.models import service as models_service
 from ragz.modules.models import settings_service
 from ragz.modules.models.models import (
@@ -139,9 +167,7 @@ from ragz.modules.retrieval.service import (
     MetadataClause,
     RetrievalResult,
     RetrievedChunk,
-    ensure_ephemeral_collection,
     search_ephemeral_attachments,
-    upsert_ephemeral_chunks,
 )
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Workspace
@@ -150,161 +176,6 @@ ROLE_USER = "user"
 ROLE_ASSISTANT = "assistant"
 
 
-
-_ATTACHMENT_KINDS = {
-    "text/plain", "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
-
-
-def _attachment_kind(mime: str) -> str:
-    return "image" if mime.startswith("image/") else "document"
-
-
-async def create_attachment(
-    session: AsyncSession, ctx: TenantContext, chat_id: UUID,
-    *, filename: str, mime: str, data: bytes,
-) -> ChatAttachment:
-    await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
-    kind = _attachment_kind(mime)
-    attachment = ChatAttachment(
-        chat_id=chat_id, kind=kind, filename=filename, mime=mime, storage_key="",
-    )
-    session.add(attachment)
-    await session.flush()  # assigns attachment.id for the storage key
-    attachment.storage_key = f"{ctx.org_id}/chats/{chat_id}/{attachment.id}/{filename}"
-    storage = build_storage(get_settings())
-    await storage.ensure_bucket()
-    await storage.put(attachment.storage_key, data, content_type=mime)
-    await session.commit()
-    return attachment
-
-
-async def get_attachment_for_chat(
-    session: AsyncSession, ctx: TenantContext, chat_id: UUID, attachment_id: UUID
-) -> ChatAttachment:
-    """Load a chat attachment for content read, gated by chat ownership.
-
-    get_chat enforces org_id + user_id (a chat belongs to exactly one user),
-    so this is not cross-user readable. The attachment must also belong to
-    THIS chat -- an attachment_id from another (even same-user) chat is a
-    non-leaking NotFound, same as an unknown id. Mirrors the documents
-    file-read gate (get_document_checked) in intent."""
-    await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is None or attachment.chat_id != chat_id:
-        raise NotFoundError("attachment not found")
-    return attachment
-
-
-async def mark_attachment_processing(session: AsyncSession, attachment_id: UUID) -> None:
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is not None:
-        attachment.status = "processing"
-        await session.commit()
-
-
-async def mark_attachment_ready(
-    session: AsyncSession, attachment_id: UUID, extracted_text: str
-) -> None:
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is not None:
-        attachment.extracted_text = extracted_text
-        attachment.status = "ready"
-        await session.commit()
-
-
-async def mark_attachment_failed(session: AsyncSession, attachment_id: UUID) -> None:
-    attachment = await session.get(ChatAttachment, attachment_id)
-    if attachment is not None:
-        attachment.status = "failed"
-        await session.commit()
-
-
-async def list_stale_attachments(
-    session: AsyncSession, cutoff: datetime
-) -> list[ChatAttachment]:
-    """Task 7 (DOC-9): attachments older than the 24h TTL, for the daily Beat
-    sweep. Deletion itself (DB row + MinIO blob + Qdrant points) is the
-    caller's job (worker/tasks.py's cleanup_stale_attachments_task) so each
-    side-effect stays independently testable."""
-    stmt = select(ChatAttachment).where(ChatAttachment.created_at < cutoff)
-    return list((await session.execute(stmt)).scalars())
-
-
-async def delete_attachment(session: AsyncSession, attachment: ChatAttachment) -> None:
-    """Deletes the DB row only -- MinIO blob and Qdrant points are the
-    caller's responsibility (see list_stale_attachments)."""
-    await session.delete(attachment)
-    await session.commit()
-
-
-async def link_attachments_to_message(
-    session: AsyncSession, attachments: Sequence[ChatAttachment], message_id: UUID
-) -> None:
-    """Transcript rendering: stamp this turn's attachments with the user
-    Message they were actually sent on. Called from chats.py::send_message
-    AFTER add_user_message persists the message -- attachment resolution
-    happens first (fail-fast, same convention as the quota/model checks),
-    so the message id isn't known until now."""
-    for attachment in attachments:
-        attachment.message_id = message_id
-    await session.commit()
-
-
-async def list_attachments_by_message(
-    session: AsyncSession, chat_id: UUID
-) -> dict[UUID, list[ChatAttachment]]:
-    stmt = (
-        select(ChatAttachment)
-        .where(ChatAttachment.chat_id == chat_id, ChatAttachment.message_id.isnot(None))
-        .order_by(ChatAttachment.created_at)
-    )
-    by_message: dict[UUID, list[ChatAttachment]] = defaultdict(list)
-    for attachment in (await session.execute(stmt)).scalars():
-        by_message[attachment.message_id].append(attachment)  # type: ignore[index]
-    return by_message
-
-
-_ATTACHMENT_INLINE_TOKEN_BUDGET = 4000
-
-
-async def route_attachment(
-    session: AsyncSession, org_id: UUID, chat_id: UUID,
-    attachment: ChatAttachment, marker: int, model_hint: str | None,
-) -> "PromptSource | None":
-    """Inline if the attachment's extracted text fits the budget; otherwise
-    chunk+embed+upsert into the ephemeral collection and return None (the
-    caller's existing retrieval call picks it up via search_ephemeral_attachments,
-    merged like any other candidate chunk group)."""
-    text = attachment.extracted_text or ""
-    if not text.strip():
-        return None
-    if count_tokens(text, model_hint) <= _ATTACHMENT_INLINE_TOKEN_BUDGET:
-        attachment.routed_to = "inline"
-        await session.commit()
-        return PromptSource(marker=marker, filename=attachment.filename, page=1, text=text)
-
-    attachment.routed_to = "retrieval"
-    await session.commit()
-    chunks = chunk_blocks(
-        [PageBlock(page=1, text=text, kind="text")]
-    )
-    # DOC-10: the ephemeral attachments store has no per-workspace embedding
-    # choice (ensure_ephemeral_collection's own docstring) -- always the
-    # seeded local model, never the calling workspace's embedding_model_id.
-    ephemeral_model = await models_service.get_model(session, LOCAL_EMBEDDING_MODEL_ID)
-    dense_embedder = get_dense_embedder(
-        ephemeral_model.id, provider_kind=ephemeral_model.provider_kind,
-        litellm_model_name=ephemeral_model.litellm_model_name,
-    )
-    dense, sparse = await embed_batch([c.text for c in chunks], dense_embedder)
-    await ensure_ephemeral_collection()
-    await upsert_ephemeral_chunks(
-        org_id=org_id, chat_id=chat_id, attachment_id=attachment.id,
-        chunks=chunks, dense=dense, sparse=sparse,
-    )
-    return None
 
 
 async def list_messages(session: AsyncSession, chat_id: UUID) -> list[Message]:
