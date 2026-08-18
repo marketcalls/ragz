@@ -680,3 +680,53 @@ async def test_daily_org_cap_blocks_even_when_user_cap_is_fine(
     )
     assert out.error is not None
     assert web_searcher.queries == []
+
+
+def _metadata_completion(query: str) -> LLMCompletion:
+    return LLMCompletion(
+        text=f'{{"action": "search_by_metadata", "query": "{query}", '
+             '"filters": {"department": "HSE"}}',
+        tool_calls=[], usage=LLMUsage(prompt_tokens=10, completion_tokens=5),
+    )
+
+
+async def test_planner_rounds_do_not_hold_a_db_connection(  # type: ignore[no-untyped-def]
+    session, chat_env, ctx, flagged_model
+) -> None:
+    """Phase 2 item 3: the loop must release its pooled connection across every
+    planner round-trip. An AsyncSession holds a connection for as long as its
+    transaction is open, and _plan is a full LLM call that takes no session at
+    all -- so holding one there pins a connection per in-flight agent chat for
+    the sum of its planner latencies and starves the pool for everyone else.
+
+    Asserted on what the session's transaction state IS when the planner runs,
+    not on some commit having been called. The action is search_by_metadata
+    specifically because execute_tool routes it through the REAL
+    build_clauses(session, ...) -- an actual Postgres read that opens a
+    transaction. With FakeRetriever's plain `search` nothing touches the DB at
+    all, so round 2 would read False whether or not the release exists and the
+    test would pass against the unfixed code.
+    """
+    in_transaction: list[bool] = []
+
+    class ProbingCompleter(FakeCompleter):
+        async def complete(self, **kwargs):  # type: ignore[no-untyped-def]
+            in_transaction.append(session.in_transaction())
+            return await super().complete(**kwargs)
+
+    completer = ProbingCompleter([_metadata_completion("muster point")])
+    steps, gathered = await _collect(run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="q?",
+        model=flagged_model, completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=None,
+        metadata_field_names=["department"], collection_name=COLLECTION,
+    ))
+    # Two planner rounds: search_by_metadata, then the dry script's answer.
+    # Round 2 is the load-bearing one -- build_clauses read from Postgres in
+    # between, so without the release the session is still in that transaction.
+    assert len(in_transaction) == 2
+    assert in_transaction == [False, False]
+    # The release must not cost the loop its results.
+    assert [(s.n, s.tool) for s in steps] == [(1, "search_by_metadata")]
+    assert gathered.grounded is True
