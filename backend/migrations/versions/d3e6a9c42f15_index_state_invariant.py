@@ -47,10 +47,16 @@ def upgrade() -> None:
     # which repairs anything stranded by the pre-b1c4e7a20d31 failure mode.
     # Unrestricted documents are left alone: re-projecting the entire corpus
     # would hide every document at once for the duration of the sweep.
+    # Cubic P1: `status = 'deleting'` rows are excluded. Marking them pending
+    # would have the reconciler re-project them and set them ACTIVE again, and
+    # retrieval only excludes non-active rows -- so a slow or failed delete
+    # would leave its vectors searchable. A document on its way out must not be
+    # dragged back into the retrievable set by a rollout sweep.
     op.execute(
         """
         UPDATE documents SET index_state = 'pending'
         WHERE acl_group_ids IS NOT NULL
+          AND status <> 'deleting'
         """
     )
     op.create_check_constraint(

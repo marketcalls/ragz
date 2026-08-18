@@ -23,6 +23,7 @@ Create Date: 2026-08-17
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -50,8 +51,37 @@ _USER_FKS = [
 ]
 
 
+#: Preflight (Cubic P1). Postgres VALIDATES every existing row when a foreign
+#: key is added, so a database that already contains a cross-tenant row -- the
+#: exact bug these constraints exist to prevent, which nothing stopped until now
+#: -- aborts the whole upgrade with a bare constraint-violation message and no
+#: indication of WHICH rows are at fault. Report them first, actionably.
+def _preflight(table: str, column: str, ref: str) -> None:
+    conn = op.get_bind()
+    bad = conn.execute(
+        sa.text(
+            f"SELECT t.id FROM {table} t "  # noqa: S608 - identifiers are module constants
+            f"LEFT JOIN {ref} r ON r.id = t.{column} AND r.org_id = t.org_id "
+            f"WHERE t.{column} IS NOT NULL AND r.id IS NULL LIMIT 20"
+        )
+    ).scalars().all()
+    if bad:
+        raise RuntimeError(
+            f"{table}.{column} has rows referencing a DIFFERENT org's {ref}: "
+            f"{[str(b) for b in bad]}"
+            f"{' (first 20 shown)' if len(bad) == 20 else ''}. "
+            f"These are cross-tenant rows -- a data-integrity incident, not a "
+            f"migration problem. Investigate and repair or quarantine them, then "
+            f"re-run this migration."
+        )
+
+
 def upgrade() -> None:
     """Upgrade schema."""
+    for table, column in _WORKSPACE_FKS:
+        _preflight(table, column, "workspaces")
+    for table, column in _USER_FKS:
+        _preflight(table, column, "users")
     for table, column in _WORKSPACE_FKS:
         op.create_foreign_key(
             f"fk_{table}_{column}_org", table, "workspaces",
