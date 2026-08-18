@@ -18,14 +18,21 @@
 name: ragz
 
 x-app-env: &app-env
-  RAGZ_DATABASE_URL: postgresql+asyncpg://ragz:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ragz
+  # ragz_app, NOT the owner: DML only, no DDL. The migrate job below uses the
+  # owning role instead, because it is the only thing that needs to change
+  # the schema. A compromised API or worker cannot drop what it reads.
+  RAGZ_DATABASE_URL: postgresql+asyncpg://ragz_app:${RAGZ_APP_DB_PASSWORD:?set RAGZ_APP_DB_PASSWORD}@postgres:5432/ragz
   RAGZ_REDIS_URL: redis://redis:6379/0
   RAGZ_QDRANT_URL: http://qdrant:6333
   RAGZ_LITELLM_URL: http://litellm:4000
   RAGZ_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
   RAGZ_MINIO_ENDPOINT: http://minio:9000
-  RAGZ_MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-ragz}
-  RAGZ_MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+  # A scoped service account, NOT the MinIO root credentials. The app only ever
+  # touches ragz-documents; holding root meant a compromised worker could read,
+  # rewrite or delete every bucket and reconfigure the store itself. minio-init
+  # below creates this user and binds it to a policy covering exactly one bucket.
+  RAGZ_MINIO_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:-ragz-app}
+  RAGZ_MINIO_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?set MINIO_APP_SECRET_KEY}
   RAGZ_MINIO_BUCKET: ragz-documents
   # The one secret that lives outside the database. Mounted read-only below;
   # losing it makes every encrypted secret unrecoverable, so it is the thing to
@@ -47,7 +54,13 @@ services:
     build: { context: ../backend }
     image: ragz/backend:${RAGZ_VERSION:-dev}
     command: ["alembic", "upgrade", "head"]
-    environment: *app-env
+    environment:
+      <<: *app-env
+      # The ONE service that connects as the owning role: applying migrations is
+      # DDL, which ragz_app deliberately cannot do. Overriding it here rather
+      # than granting the app DDL keeps the privilege where it is needed and
+      # nowhere else.
+      RAGZ_DATABASE_URL: postgresql+asyncpg://ragz:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ragz
     volumes: ["${RAGZ_KEK_HOST_PATH:-./data/ragz_kek}:/run/secrets/ragz_kek:ro"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -62,6 +75,9 @@ services:
     tmpfs: ["/tmp"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      # Without this the app can start holding credentials MinIO has not
+      # been told about yet, and every upload fails until a restart.
+      minio-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       qdrant: { condition: service_healthy }
     healthcheck:
@@ -97,6 +113,9 @@ services:
     tmpfs: ["/tmp"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      # Without this the app can start holding credentials MinIO has not
+      # been told about yet, and every upload fails until a restart.
+      minio-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     deploy:
       resources:
@@ -116,6 +135,9 @@ services:
     tmpfs: ["/tmp"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      # Without this the app can start holding credentials MinIO has not
+      # been told about yet, and every upload fails until a restart.
+      minio-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     deploy:
       replicas: 1
@@ -142,7 +164,14 @@ services:
       POSTGRES_USER: ragz
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ragz
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+      # Consumed by the init script below to create the restricted app role.
+      RAGZ_APP_DB_PASSWORD: ${RAGZ_APP_DB_PASSWORD:?set RAGZ_APP_DB_PASSWORD}
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+      # Creates the litellm database and the least-privilege ragz_app role.
+      # Runs ONLY on first initialisation of the volume -- see the script's
+      # header for the statements to apply to an existing deployment.
+      - ./postgres-init.prod.sh:/docker-entrypoint-initdb.d/10-ragz.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ragz"]
       interval: 10s
@@ -187,12 +216,59 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # One-shot: creates the bucket, a policy scoped to exactly that bucket, and
+  # the service account the app authenticates with. Runs as root because only
+  # root can create users -- which is precisely why the app must not be root.
+  minio-init:
+    image: minio/mc:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        until mc alias set ragz http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          echo "waiting for minio..."; sleep 2
+        done
+        mc mb --ignore-existing ragz/ragz-documents
+        # s3:* on ONE bucket. No admin actions, no other bucket, no listing of
+        # buckets it does not own.
+        cat >/tmp/ragz-app.json <<'POLICY'
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              "Resource": ["arn:aws:s3:::ragz-documents/*"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+              "Resource": ["arn:aws:s3:::ragz-documents"]
+            }
+          ]
+        }
+        POLICY
+        mc admin policy create ragz ragz-app /tmp/ragz-app.json || true
+        mc admin user add ragz "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY" || true
+        mc admin policy attach ragz ragz-app --user "$$MINIO_APP_ACCESS_KEY" || true
+        echo "minio bootstrap complete"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-ragz}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY}
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:-ragz-app}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?set MINIO_APP_SECRET_KEY}
+    depends_on:
+      minio: { condition: service_healthy }
+    restart: "no"  # bootstrap, not a service
+
   litellm:
     image: ghcr.io/berriai/litellm:main-stable@sha256:154e23bb5f31b1f10e16392a8ef299bd2cde08de3a64a6849002cfcc25ce3c63
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set LITELLM_SALT_KEY}
-      DATABASE_URL: postgresql://ragz:${POSTGRES_PASSWORD}@postgres:5432/ragz
+      # Its OWN database. Pointing this at ragz put a third party's migrations
+      # inside the application's database.
+      DATABASE_URL: postgresql://ragz:${POSTGRES_PASSWORD}@postgres:5432/litellm
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
