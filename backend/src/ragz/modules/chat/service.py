@@ -78,6 +78,9 @@ from ragz.modules.chat.attachments import (
 from ragz.modules.chat.attachments import (
     route_attachment as route_attachment,
 )
+from ragz.modules.chat.audit import (
+    audit_message as audit_message,
+)
 from ragz.modules.chat.blocks_emit import SourceInput, generate_blocks
 from ragz.modules.chat.chats import (
     _auto_title as _auto_title,
@@ -112,7 +115,7 @@ from ragz.modules.chat.events import (
     token_event,
     tool_result_event,
 )
-from ragz.modules.chat.llm import LiteLLMStreamer, LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
+from ragz.modules.chat.llm import LLMCompleter, LLMDelta, LLMStreamer, LLMUsage
 from ragz.modules.chat.messages import (
     ROLE_ASSISTANT as ROLE_ASSISTANT,
 )
@@ -176,9 +179,7 @@ from ragz.modules.chat.prompting import (
 )
 from ragz.modules.chat.router import classify_query, is_ambiguous_for_escalation, should_escalate
 from ragz.modules.chat.validation import (
-    build_auditor_messages,
     classify_escalation,
-    parse_auditor_scores,
     synthesize_with_gatekeeper,
 )
 from ragz.modules.chat.web import WebResult, WebSearcher
@@ -529,65 +530,6 @@ async def _persist_assistant(
     return msg
 
 
-def _completer_for_audit(settings: Settings) -> LiteLLMStreamer:
-    """Own gateway client per audit run - the worker has no request-scoped
-    app.state to borrow one from (mirrors LiteLLMStreamer's construction in
-    chats.py's _streamer, minus the per-user virtual key: audit calls are
-    platform overhead, not a member's own usage)."""
-    return LiteLLMStreamer(base_url=settings.litellm_url, master_key=settings.litellm_master_key)
-
-
-async def audit_message(session: AsyncSession, message_id: UUID) -> bool:
-    """Phase 3 Auditor (§3): scores ONE already-persisted message. No ctx -
-    this runs from a worker-owned session with no request-scoped tenant
-    context; it only ever touches the single message_id the route already
-    resolved inside a real, ACL-checked request, so it needs no additional
-    tenant filtering of its own. Returns False (no-op, never raises) when
-    there is no utility model, the message is gone, or grounding != 'documents'
-    (nothing meaningful to check citations against on conversational/
-    general-knowledge/no-answer turns)."""
-    utility_model = await get_utility_model(session)
-    if utility_model is None:
-        return False
-    msg = (
-        await session.execute(select(Message).where(Message.id == message_id))
-    ).scalar_one_or_none()
-    if msg is None or msg.grounding != "documents" or msg.no_answer:
-        return False
-    user_msg = (
-        await session.execute(select(Message).where(Message.id == msg.parent_message_id))
-    ).scalar_one_or_none()
-    question = user_msg.content if user_msg else ""
-    citations = (
-        await session.execute(
-            select(Citation).where(Citation.message_id == msg.id).order_by(Citation.marker)
-        )
-    ).scalars()
-    sources = [
-        PromptSource(marker=c.marker, filename=c.chunk_ref, page=c.page, text="", section=c.section)
-        for c in citations
-    ]
-    settings = get_settings()
-    completer = _completer_for_audit(settings)
-    completion = await completer.complete(
-        model=utility_model.litellm_model_name,
-        messages=build_auditor_messages(question=question, answer=msg.content, sources=sources),
-    )
-    scores = parse_auditor_scores(completion.text)
-    if scores is None:
-        return False
-    msg.grounding_score = scores.grounding_score
-    msg.completeness_score = scores.completeness_score
-    chat = await session.get(Chat, msg.chat_id)
-    assert chat is not None  # FK guarantees the parent chat row exists
-    await quota_service.record_usage(
-        session, org_id=chat.org_id, user_id=chat.user_id, workspace_id=chat.workspace_id,
-        model_id=utility_model.id,
-        feature="validation", prompt_tokens=completion.usage.prompt_tokens,
-        completion_tokens=completion.usage.completion_tokens,
-    )
-    await session.commit()
-    return True
 
 
 

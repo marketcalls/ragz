@@ -204,14 +204,17 @@ async def test_audit_message_persists_scores(
     session: AsyncSession, chat_env: dict[str, Any], ctx: TenantContext, utility_model: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from ragz.modules.chat import service as chat_service
+    from ragz.modules.chat import audit as chat_audit
     from ragz.modules.chat.llm import LLMCompletion, LLMUsage
 
     fake = FakeCompleter([LLMCompletion(
         text='{"grounding_score": 0.8, "completeness_score": 0.9}', tool_calls=[],
         usage=LLMUsage(prompt_tokens=30, completion_tokens=10),
     )])
-    monkeypatch.setattr(chat_service, "_completer_for_audit", lambda settings: fake)
+    # Patched on chat.audit, not chat.service: audit_message resolves
+    # _completer_for_audit in its OWN module namespace, so the re-export on
+    # service.py is not the seam even though the public name still lives there.
+    monkeypatch.setattr(chat_audit, "_completer_for_audit", lambda settings: fake)
 
     chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
     user_msg = await service.add_message(
