@@ -49,6 +49,27 @@ class ObjectStorage:
         async with self._client() as s3:
             await s3.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
 
+    async def put_stream(
+        self, key: str, fileobj: Any, content_type: str = "application/octet-stream"
+    ) -> None:
+        """Upload from a file-like object instead of a bytes blob.
+
+        `put` needs the whole object resident before the first byte goes out,
+        which for a 100 MB upload (the max_upload_mb default) means 100 MB of
+        RSS per concurrent request. upload_fileobj reads incrementally and
+        switches to multipart above the transfer threshold, so peak memory is
+        bounded by that threshold rather than by the file.
+
+        `fileobj` only has to implement `read` returning bytes; aioboto3 awaits
+        the result if it is awaitable, so a plain SpooledTemporaryFile (what
+        Starlette hands us for an upload) works unwrapped. It is read from its
+        current position -- seek it where you want it before calling.
+        """
+        async with self._client() as s3:
+            await s3.upload_fileobj(
+                fileobj, self.bucket, key, ExtraArgs={"ContentType": content_type}
+            )
+
     async def get(self, key: str) -> bytes:
         async with self._client() as s3:
             try:

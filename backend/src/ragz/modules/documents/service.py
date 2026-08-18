@@ -1,4 +1,3 @@
-import hashlib
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,6 +17,7 @@ from ragz.core.storage import build_storage
 from ragz.modules.audit.service import record_audit
 from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents.models import Document
+from ragz.modules.documents.uploads import UploadedContent
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.retrieval import service as retrieval_service
 from ragz.modules.tenancy.context import TenantContext
@@ -79,13 +79,19 @@ async def create_from_upload(
     *,
     filename: str,
     mime: str,
-    data: bytes,
+    data: bytes | UploadedContent,
     folder_id: UUID | None = None,
 ) -> Document:
+    # One internal path. Callers that already hold the bytes (tests, inline bot
+    # attachments) keep passing them; the upload route passes an
+    # UploadedContent whose payload is still on disk, so a 100 MB upload is
+    # never resident. Everything below reads size and digest off the value
+    # object rather than off a bytes blob.
+    content = data if isinstance(data, UploadedContent) else UploadedContent.from_bytes(data)
     ws = await get_workspace_checked(session, ctx, workspace_id)
     if folder_id is not None:
         await folders_service.get_folder_checked(session, ctx, folder_id, workspace_id=ws.id)
-    await _enforce_org_upload_quota(session, ctx.org_id, len(data))
+    await _enforce_org_upload_quota(session, ctx.org_id, content.size_bytes)
     reembed_in_progress = (
         await session.execute(
             select(ReembedJob.id).where(
@@ -100,7 +106,7 @@ async def create_from_upload(
         raise ConflictError(
             "a re-embed job is in progress for this workspace; try again once it completes"
         )
-    content_hash = hashlib.sha256(data).hexdigest()
+    content_hash = content.sha256
     dup = (
         await session.execute(
             select(Document).where(
@@ -128,7 +134,7 @@ async def create_from_upload(
     ).scalar_one_or_none()
     doc = Document(
         org_id=ctx.org_id, workspace_id=ws.id, filename=filename, mime=mime,
-        size_bytes=len(data), content_hash=content_hash, storage_key="",
+        size_bytes=content.size_bytes, content_hash=content_hash, storage_key="",
         created_by=ctx.user_id, folder_id=folder_id,
         version=(predecessor.version + 1) if predecessor else 1,
         lineage_id=predecessor.lineage_id if predecessor else uuid4(),  # placeholder, fixed below
@@ -141,7 +147,7 @@ async def create_from_upload(
     doc.storage_key = f"{ctx.org_id}/{ws.id}/{doc.id}/{filename}"
     storage = build_storage(get_settings())
     await storage.ensure_bucket()
-    await storage.put(doc.storage_key, data, content_type=mime)
+    await storage.put_stream(doc.storage_key, content.stream, content_type=mime)
     await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
                        action="document.uploaded", target_type="document",
                        target_id=str(doc.id))

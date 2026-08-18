@@ -33,6 +33,7 @@ from ragz.modules.documents.schemas import (
     MetadataFieldOut,
     MetadataValuesIn,
 )
+from ragz.modules.documents.uploads import measure_upload
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy.context import TenantContext, require_action
 from ragz.worker.outbox import nudge
@@ -113,19 +114,21 @@ async def upload_document(
         except ValueError:
             pass  # Invalid Content-Length, let chunked read handle it
 
-    # Read file in chunks, aborting early if size exceeds limit
-    buf = bytearray()
-    while chunk := await file.read(1024 * 1024):
-        buf.extend(chunk)
-        if len(buf) > max_bytes:
-            raise PayloadTooLarge(f"file exceeds {get_settings().max_upload_mb} MB limit")
-
-    data = bytes(buf)
+    # Measure without accumulating. This used to build a bytearray and then
+    # copy it into bytes -- two full copies of a file that may be 100 MB, held
+    # for the whole request, so a few concurrent uploads could exhaust the API's
+    # memory. Starlette has already spooled the body to a temp file, so size and
+    # digest come from one streaming pass and the bytes stay on disk.
+    content = await measure_upload(
+        file,
+        max_bytes=max_bytes,
+        limit_message=f"file exceeds {get_settings().max_upload_mb} MB limit",
+    )
     doc = await service.create_from_upload(
         session, ctx, workspace_id,
         filename=file.filename or "upload.bin",
         mime=file.content_type or "application/octet-stream",
-        data=data, folder_id=folder_id,
+        data=content, folder_id=folder_id,
     )
     # The work is already durable: create_from_upload committed an outbox event
     # in the same transaction as the document. This is only a latency nudge so
