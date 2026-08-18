@@ -52,7 +52,7 @@ Review bar: OWASP ASVS L2 + OWASP LLM Top 10.
 | `audit` | append-only event log |
 | `outbox` | durable intent to run background work; committed with the domain change that justifies it |
 
-Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.py` only. Modules import `core/` and other modules' public services only — never internals or ORM models. Direction: `api`/`worker` → `modules` → `core`. Enforced by import-linter in CI.
+Boundaries: `api/` and `worker/` are thin entrypoints that call module `service.py` only. Direction: `api`/`worker` → `modules` → `core` — this part IS enforced by import-linter in CI (the `Layered architecture` contract). **Not implemented:** the rest of the rule — that modules import other modules' public services only, never internals or ORM models — is convention, not a gate. import-linter checks layer direction, not module-to-module reach, and there are **29 cross-module ORM model imports** today (chat 8, quotas 6, documents 5, evals 3, tenancy 3, auth 2, bots 1, retrieval 1). Phase 2 item 2 of the architecture review covers closing them; until a `forbidden` contract exists to hold the line, treat this as an aspiration.
 
 ## Stack & Tooling
 
