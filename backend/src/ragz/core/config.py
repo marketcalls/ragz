@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # off-by-default means an operator opts in rather than inheriting an open
     # endpoint from a deploy they did not read.
     metrics_token: str = ""
+    # OTLP/HTTP traces endpoint (e.g. http://collector:4318/v1/traces). Empty
+    # (the default) leaves tracing entirely off: no provider is installed and
+    # every span call site resolves to OpenTelemetry's no-op tracer.
+    otel_endpoint: str = ""
+    otel_service_name: str = "ragz-api"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 1209600  # 14 days
     # Server-side pepper (HMAC key) for opaque bearer-token hashes: refresh

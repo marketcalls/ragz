@@ -32,6 +32,8 @@ dependencies = [
     "liteparse>=2.12",
     "trafilatura>=2.2.0",
     "prometheus-client>=0.26.0",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
 ]
 
 [dependency-groups]

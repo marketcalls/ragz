@@ -94,12 +94,22 @@ TEMPLATE, never request path; unmatched requests collapse to `route="unmatched"`
 properties are pinned by `tests/api/test_metrics.py`, which fails if a raw path id
 reaches a label.
 
+OpenTelemetry tracing covers the **API only** (`core/tracing.py`): one SERVER span per
+HTTP request, named by route template, continuing an inbound W3C `traceparent`. Off
+unless `RAGZ_OTEL_ENDPOINT` is set, in which case every span call site resolves to
+OpenTelemetry's no-op tracer. Both middlewares share `core/middleware.py::route_template`,
+which recovers the FULL template including the router prefix — FastAPI nests included
+routers, so `scope["route"].path` is only the sub-path and using it merges every router
+sharing a sub-path into one series. Pinned by `tests/api/test_tracing.py`.
+
 **Not implemented** (earlier revisions of this file asserted all of it as if built):
-OpenTelemetry tracing, trace propagation into Celery, worker health endpoints, and
-alerting/SLOs. `opentelemetry` is not a dependency today. **Worker metrics do not exist
-at all**: Celery task counters were deliberately left unwritten rather than defined-but-
-never-incremented, because the worker has no exposition endpoint to scrape and a metric
-nothing observes is worse than an absent one — it reads as coverage.
+**trace propagation into Celery** — `inject_context`/`extract_context` exist and are
+tested, but nothing calls them at the outbox→Celery boundary yet, so a worker span starts
+its own trace rather than continuing the request's; worker health endpoints; and
+alerting/SLOs. **Worker metrics do not exist at all**: Celery task counters were
+deliberately left unwritten rather than defined-but-never-incremented, because the worker
+has no exposition endpoint to scrape and a metric nothing observes is worse than an absent
+one — it reads as coverage.
 
 ## Depth Pointers
 
