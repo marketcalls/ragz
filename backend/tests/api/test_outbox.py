@@ -114,10 +114,11 @@ async def test_the_dispatcher_delivers_pending_work_to_the_broker(
     from ragz.worker import outbox as worker_outbox
 
     sent: list[dict[str, Any]] = []
-    # Handlers take (payload, queue, event_id) -- the id is there so a handler
-    # whose work is not idempotent can use it as an idempotency key.
+    # Handlers take (payload, queue, event_id, headers) -- the id is there so a
+    # handler whose work is not idempotent can use it as an idempotency key,
+    # and headers carry the publishing request's traceparent onto the message.
     monkeypatch.setitem(
-        worker_outbox._HANDLERS, "documents.ingest", lambda p, _q, _e: sent.append(p)
+        worker_outbox._HANDLERS, "documents.ingest", lambda p, _q, _e, _h: sent.append(p)
     )
     monkeypatch.setattr(ingest, "_session", _FixedSession(session))
 
@@ -461,7 +462,7 @@ async def test_the_broker_publish_runs_off_the_event_loop(
     monkeypatch.setitem(
         worker_outbox._HANDLERS,
         "documents.ingest",
-        lambda _p, _q, _e: handler_threads.append(threading.get_ident()),
+        lambda _p, _q, _e, _h: handler_threads.append(threading.get_ident()),
     )
     monkeypatch.setattr(ingest, "_session", _FixedSession(session))
 
@@ -474,3 +475,79 @@ async def test_the_broker_publish_runs_off_the_event_loop(
     assert handler_threads and loop_thread not in handler_threads, (
         "the broker publish must not run on the event loop thread"
     )
+
+
+async def test_the_publishing_requests_trace_reaches_the_worker(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end trace continuity across the outbox (Phase 3 item 1).
+
+    The whole point of storing the traceparent on the ROW rather than reading
+    it at dispatch: dispatch can happen in another process, minutes later, from
+    a beat sweep. This asserts the trace id that was active when the event was
+    published is the one the Celery message carries.
+    """
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from ragz.modules.documents import ingest
+    from ragz.worker import outbox as worker_outbox
+
+    provider = TracerProvider(resource=Resource.create({"service.name": "t"}))
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+    monkeypatch.setattr(trace, "get_tracer_provider", lambda: provider)
+
+    seen_headers: list[dict[str, str]] = []
+    monkeypatch.setitem(
+        worker_outbox._HANDLERS,
+        "documents.ingest",
+        lambda _p, _q, _e, h: seen_headers.append(h),
+    )
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+
+    with provider.get_tracer("test").start_as_current_span("POST /documents") as span:
+        publishing_trace_id = format(span.get_span_context().trace_id, "032x")
+        outbox_service.publish(
+            session,
+            topic="documents.ingest",
+            payload={"document_id": str(uuid4()), "size_bytes": 1},
+        )
+        await session.commit()
+
+    # Dispatch happens OUTSIDE the publishing span, exactly as it does when the
+    # beat sweep picks up an event long after the request has finished.
+    assert await worker_outbox.dispatch_pending() == 1
+
+    assert seen_headers, "handler received no headers"
+    assert publishing_trace_id in seen_headers[0]["traceparent"], (
+        "worker message does not carry the publishing request's trace"
+    )
+
+
+async def test_an_event_published_without_tracing_carries_no_headers(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tracing is off by default, and that must stay a no-op rather than
+    putting an empty or bogus traceparent on every message."""
+    from ragz.modules.documents import ingest
+    from ragz.worker import outbox as worker_outbox
+
+    seen_headers: list[dict[str, str]] = []
+    monkeypatch.setitem(
+        worker_outbox._HANDLERS,
+        "documents.ingest",
+        lambda _p, _q, _e, h: seen_headers.append(h),
+    )
+    monkeypatch.setattr(ingest, "_session", _FixedSession(session))
+
+    outbox_service.publish(
+        session,
+        topic="documents.ingest",
+        payload={"document_id": str(uuid4()), "size_bytes": 1},
+    )
+    await session.commit()
+    assert await worker_outbox.dispatch_pending() == 1
+    assert seen_headers == [{}]

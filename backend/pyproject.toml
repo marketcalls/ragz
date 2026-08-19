@@ -95,6 +95,17 @@ module = "ragz.worker.tasks"
 disallow_untyped_decorators = false
 disallow_subclassing_any = false
 
+[[tool.mypy.overrides]]
+# celery is untyped (see the ignore list above), so a Task subclass is a
+# subclass of Any. celery_app needs this because the traced Task base lives
+# there -- it has to, so it can be installed as the app's default Task class
+# before any task is declared. Deliberately NOT relaxing
+# disallow_untyped_decorators here as well: this module's existing
+# `# type: ignore[untyped-decorator]` comments on the worker signal hooks are
+# doing real work, and turning the check off would make them dead.
+module = "ragz.worker.celery_app"
+disallow_subclassing_any = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
