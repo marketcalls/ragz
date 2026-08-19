@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.app_settings import get_app_setting
+from ragz.core.db import naive_utc
 from ragz.core.errors import (
     AuthorizationError,
     ConflictError,
@@ -28,7 +29,8 @@ from ragz.modules.tenancy.models import (
     WorkspaceMember,
 )
 from ragz.modules.tenancy.permissions import PERMISSIONS
-from ragz.modules.tenancy.views import WorkspaceView
+from ragz.modules.tenancy.reembed_models import ReembedJob
+from ragz.modules.tenancy.views import ReembedJobView, WorkspaceView
 
 
 async def create_workspace(session: AsyncSession, ctx: TenantContext, name: str) -> Workspace:
@@ -531,6 +533,101 @@ def _check_known_permissions(permissions: list[str]) -> None:
     unknown = sorted(set(permissions) - PERMISSIONS)
     if unknown:
         raise ConflictError(f"unknown permission flag(s): {', '.join(unknown)}")
+
+
+async def get_role_template_version(
+    session: AsyncSession, role_template_id: UUID
+) -> int | None:
+    """The template's policy version, or None if it no longer exists.
+
+    Same reason as auth.get_custom_role_id: /me/authorization used to
+    session.get(RoleTemplate, ...) in the route for a single integer. None
+    rather than raising -- a role deleted between the user row being read and
+    this lookup is a live-system race, and the caller's answer is simply "no
+    policy version", not an error.
+    """
+    return (
+        await session.execute(
+            select(RoleTemplate.version).where(RoleTemplate.id == role_template_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def start_reembed_job(
+    session: AsyncSession,
+    ctx: TenantContext,
+    workspace_id: UUID,
+    new_embedding_model_id: UUID,
+    *,
+    enqueue: Callable[[UUID, UUID, UUID], None],
+) -> ReembedJobView:
+    """Create the re-embed job row and hand the work off, atomically enough.
+
+    Moved here from the route (Phase 2 item 1): the job row, its guard
+    semantics and its failure handling all belong to the module that owns the
+    table. `enqueue` is injected rather than imported because a domain module
+    must not know Celery exists -- the caller passes the task publisher.
+
+    The ORDER below is load-bearing and predates this move; it is not
+    incidental style:
+
+    - The row is created SYNCHRONOUSLY with started_at set and committed
+      BEFORE the enqueue, not inside the worker task. Otherwise the row only
+      exists once Celery picks the task up, and during that gap
+      documents.create_from_upload's in-progress guard sees no job and lets
+      uploads through that the re-embed's workspace-wide delete then silently
+      wipes. Committing here arms the guard from the instant this returns.
+    - If the enqueue itself fails (broker down), the committed row would sit
+      "in progress" forever with no task to close it, and that same guard
+      would permanently reject uploads to the workspace. So it is closed here
+      before the error surfaces.
+    """
+    ws = await get_workspace(session, ctx, workspace_id)
+    if new_embedding_model_id == ws.embedding_model_id:
+        # A double-submit re-requesting the current model would make
+        # run_reembed_workspace's old and new collections identical, and its
+        # "delete from OLD collection" step would then erase everything it had
+        # just written.
+        raise ConflictError("workspace is already using this embedding model")
+    new_model = await models_service.get_model(session, new_embedding_model_id)
+    if new_model.modality != "embedding":
+        raise ConflictError("model is not an embedding model")
+
+    job = ReembedJob(
+        workspace_id=workspace_id,
+        old_embedding_model_id=ws.embedding_model_id,
+        new_embedding_model_id=new_embedding_model_id,
+        # The real count is not known until run_reembed_workspace counts the
+        # workspace's documents; it updates this same row.
+        documents_total=0,
+        started_at=naive_utc(),
+    )
+    session.add(job)
+    await session.commit()
+    try:
+        enqueue(workspace_id, job.id, new_embedding_model_id)
+    except Exception as exc:
+        job.error = str(exc)[:1000]
+        job.finished_at = naive_utc()
+        await session.commit()
+        raise
+    return ReembedJobView.of(job)
+
+
+async def get_latest_reembed_job(
+    session: AsyncSession, workspace_id: UUID
+) -> ReembedJobView | None:
+    """The workspace's most recent re-embed job, or None if it has never had
+    one. Replaces the route running this query itself."""
+    job = (
+        await session.execute(
+            select(ReembedJob)
+            .where(ReembedJob.workspace_id == workspace_id)
+            .order_by(ReembedJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return None if job is None else ReembedJobView.of(job)
 
 
 async def list_role_templates(session: AsyncSession) -> list[RoleTemplate]:

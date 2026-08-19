@@ -631,6 +631,19 @@ async def accept_invitation(
     return user
 
 
+async def get_custom_role_id(session: AsyncSession, user_id: UUID) -> UUID | None:
+    """The user's custom role template id, or None if they have no custom role.
+
+    Exists so entrypoints stop reaching into auth's ORM for one column
+    (Phase 2 item 1): /me/authorization was doing `select(User)` in the route
+    just to read custom_role_id off the row. Returns the id rather than the
+    User so nothing outside this module ends up holding a live user row.
+    """
+    return (
+        await session.execute(select(User.custom_role_id).where(User.id == user_id))
+    ).scalar_one_or_none()
+
+
 async def list_users(session: AsyncSession, ctx: TenantContext) -> list[User]:
     return list(
         (
