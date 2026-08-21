@@ -35,3 +35,30 @@ async def test_get_with_wrong_credentials_raises_client_error(
     # Try to get with bad credentials - should raise ClientError, not NotFoundError
     with pytest.raises(ClientError):
         await bad_storage.get("any-key")
+
+
+async def test_put_stream_roundtrips_and_uses_multipart_for_large_objects(
+    storage: ObjectStorage,
+) -> None:
+    """put_stream is the upload path's escape from holding whole files in RAM
+    (Phase 3 item 4), so it has to survive the case that motivated it: an
+    object big enough to cross aioboto3's multipart threshold, where the
+    single put_object path is not taken."""
+    from io import BytesIO
+
+    payload = b"ragz" * (3 * 1024 * 1024)  # 12 MB, above the 8 MB threshold
+    await storage.put_stream("org/ws/doc/big.bin", BytesIO(payload))
+    assert await storage.get("org/ws/doc/big.bin") == payload
+    await storage.delete("org/ws/doc/big.bin")
+
+
+async def test_put_stream_reads_from_the_current_position(storage: ObjectStorage) -> None:
+    """Documented contract: the stream is read from where it is, not rewound
+    for the caller. measure_upload seeks to 0 precisely because of this."""
+    from io import BytesIO
+
+    buf = BytesIO(b"skip-me:kept")
+    buf.seek(len(b"skip-me:"))
+    await storage.put_stream("org/ws/doc/partial.txt", buf, content_type="text/plain")
+    assert await storage.get("org/ws/doc/partial.txt") == b"kept"
+    await storage.delete("org/ws/doc/partial.txt")

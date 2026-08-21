@@ -41,18 +41,31 @@ def quota_settings(
 
 @pytest.fixture
 async def storage_put_calls(monkeypatch: pytest.MonkeyPatch) -> list:  # type: ignore[type-arg]
-    """Records every ObjectStorage.put call (any instance) -- proves a
-    rejected upload never reaches storage.put (no orphaned MinIO object)."""
+    """Records every ObjectStorage write (any instance, either API) -- proves a
+    rejected upload never reaches storage (no orphaned MinIO object).
+
+    Both `put` and `put_stream` are recorded on purpose. The upload route moved
+    to put_stream when uploads stopped being buffered, and a spy on `put` alone
+    silently recorded nothing afterwards -- the assertions below still ran, but
+    against an empty list, so they could no longer fail. Watching every write
+    method keeps the guarantee attached to "did anything reach storage" rather
+    than to whichever method the route happens to call today."""
     calls: list = []  # type: ignore[type-arg]
     from ragz.core.storage import ObjectStorage
 
     original_put = ObjectStorage.put
+    original_put_stream = ObjectStorage.put_stream
 
     async def _spy_put(self, key, data, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
         calls.append(key)
         return await original_put(self, key, data, content_type=content_type)
 
+    async def _spy_put_stream(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        calls.append(key)
+        return await original_put_stream(self, key, fileobj, content_type=content_type)
+
     monkeypatch.setattr(ObjectStorage, "put", _spy_put)
+    monkeypatch.setattr(ObjectStorage, "put_stream", _spy_put_stream)
     return calls
 
 
