@@ -13,7 +13,8 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "generate:api": "openapi-typescript http://localhost:8000/api/openapi.json -o src/api/schema.d.ts",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "bundle-budget": "node scripts/check-bundle-budget.mjs"
   },
   "packageManager": "pnpm@10.34.5",
   "engines": {

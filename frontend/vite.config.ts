@@ -8,6 +8,13 @@ export default defineConfig({
   server: {
     proxy: { '/api': 'http://localhost:8000' },
   },
+  build: {
+    // Emitted so scripts/check-bundle-budget.mjs can tell the initial download
+    // apart from the lazily loaded route chunks. Reading file sizes off disk
+    // cannot make that distinction; the manifest records which imports are
+    // static and which are dynamic.
+    manifest: true,
+  },
   test: {
     environment: 'jsdom',
     globals: true,
