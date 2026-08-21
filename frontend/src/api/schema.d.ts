@@ -497,19 +497,11 @@ export interface paths {
          * @description Admin-confirmed switch for a workspace that already has indexed
          *     content (the 409 path of PATCH .../embedding-model points here).
          *
-         *     Fix round 2: creates the ReembedJob row SYNCHRONOUSLY, with started_at
-         *     set, and commits it in this request's own transaction BEFORE enqueueing
-         *     the Celery task -- not inside run_reembed_workspace as before. That
-         *     closes the race described in
-         *     .superpowers/sdd/final-review-fix-report.md: previously the row only
-         *     came into existence once Celery actually picked up the task, so
-         *     documents/service.py::create_from_upload's in-progress guard saw NO job
-         *     at all during the enqueue-to-pickup gap and let uploads through that
-         *     could then be silently wiped by the re-embed's workspace-wide delete.
-         *     Creating the row here means the guard is armed from the instant this
-         *     response returns to the admin -- no window. documents_total is 0 here
-         *     (the real count isn't known until run_reembed_workspace counts the
-         *     workspace's documents) and gets updated on this same row once it does.
+         *     The job's lifecycle -- creating the row synchronously so the upload guard
+         *     is armed before this returns, and closing it if the enqueue fails -- lives
+         *     in tenancy's service, which owns the table (Phase 2 item 1). The task
+         *     publisher is passed in because a domain module must not know Celery
+         *     exists; this route is the layer that may.
          */
         post: operations["start_reembed_api_v1_workspaces__workspace_id__reembed_post"];
         delete?: never;

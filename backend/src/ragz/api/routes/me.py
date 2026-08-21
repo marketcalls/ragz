@@ -10,13 +10,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
-from ragz.modules.auth.models import User
+from ragz.modules.auth import service as auth_service
+from ragz.modules.tenancy import service as tenancy_service
 from ragz.modules.tenancy.context import TenantContext, get_tenant_context
-from ragz.modules.tenancy.models import RoleTemplate
 
 router = APIRouter(tags=["me"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -31,14 +30,15 @@ class AuthorizationOut(BaseModel):
 
 @router.get("/me/authorization", response_model=AuthorizationOut)
 async def get_my_authorization(session: SessionDep, ctx: CtxDep) -> AuthorizationOut:
+    # Two module accessors rather than two ORM queries in the route: entrypoints
+    # call public services (Phase 2 item 1). auth owns who has which custom
+    # role; tenancy owns what version that role template is on.
     policy_version: int | None = None
-    user = (
-        await session.execute(select(User).where(User.id == ctx.user_id))
-    ).scalar_one_or_none()
-    if user is not None and user.custom_role_id is not None:
-        template = await session.get(RoleTemplate, user.custom_role_id)
-        if template is not None:
-            policy_version = template.version
+    custom_role_id = await auth_service.get_custom_role_id(session, ctx.user_id)
+    if custom_role_id is not None:
+        policy_version = await tenancy_service.get_role_template_version(
+            session, custom_role_id
+        )
     return AuthorizationOut(
         role=ctx.role, permissions=sorted(ctx.permissions), policy_version=policy_version
     )

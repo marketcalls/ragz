@@ -14,9 +14,11 @@ about.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.reembed_models import ReembedJob
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,4 +64,37 @@ class WorkspaceView:
             web_search_enabled=workspace.web_search_enabled,
             generative_ui_enabled=workspace.generative_ui_enabled,
             strict_mode=workspace.strict_mode,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReembedJobView:
+    """A re-embed job's state, for entrypoints to serialise.
+
+    The route used to build ReembedJob rows itself and read them back with its
+    own query (Phase 2 item 1). It now gets this, so the job's lifecycle stays
+    inside the module that owns the table and no live row escapes into an
+    API layer that might lazily refresh it mid-response.
+    """
+
+    id: UUID
+    workspace_id: UUID
+    old_embedding_model_id: UUID
+    new_embedding_model_id: UUID
+    documents_total: int
+    documents_done: int
+    error: str | None
+    finished_at: datetime | None
+
+    @classmethod
+    def of(cls, job: ReembedJob) -> "ReembedJobView":
+        return cls(
+            id=job.id,
+            workspace_id=job.workspace_id,
+            old_embedding_model_id=job.old_embedding_model_id,
+            new_embedding_model_id=job.new_embedding_model_id,
+            documents_total=job.documents_total,
+            documents_done=job.documents_done,
+            error=job.error,
+            finished_at=job.finished_at,
         )

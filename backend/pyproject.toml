@@ -446,7 +446,7 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-# Same rule for api/. Still 14 ORM imports across 8 route modules, so this
+# Same rule for api/. Down to 11 ORM imports across 7 route modules, so this
 # contract pins only the ORM the routes do NOT reach for today and lists the
 # rest as exceptions -- the same shrinking-backlog shape as the per-module
 # contracts above. Most are type annotations on FastAPI dependencies that hand
@@ -461,5 +461,6 @@ forbidden_modules = [
   "ragz.modules.outbox.models",
   "ragz.modules.quotas.models",
   "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.reembed_models",
 ]
 allow_indirect_imports = true
