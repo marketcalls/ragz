@@ -40,24 +40,27 @@ log = structlog.get_logger()
 #: silently get default routing. documents.ingest is the exception and says so:
 #: its queue is derived from file size by select_queue, not chosen by the caller.
 #: The third argument is the EVENT ID, passed so a handler whose work is not
-#: naturally idempotent can carry it through as an idempotency key. Delivery is
+#: naturally idempotent can carry it through as an idempotency key. The fourth
+#: is the Celery message headers, carrying the publishing request's W3C
+#: traceparent so a worker span continues that trace rather than starting an
+#: orphan one. Delivery is
 #: at-least-once -- the broker send below is followed by a separate
 #: mark_dispatched commit, and a crash between them redelivers the event.
-_HANDLERS: dict[str, Callable[[dict[str, Any], str, UUID], None]] = {
-    "documents.ingest": lambda p, _q, _e: build_ingest_chain(
+_HANDLERS: dict[str, Callable[[dict[str, Any], str, UUID, dict[str, str]], None]] = {
+    "documents.ingest": lambda p, _q, _e, h: build_ingest_chain(
         p["document_id"], select_queue(int(p["size_bytes"]))
-    ).apply_async(),
-    "documents.delete": lambda p, q, _e: delete_task.si(
+    ).apply_async(headers=h),
+    "documents.delete": lambda p, q, _e, h: delete_task.si(
         p["document_id"], p["actor_id"]
-    ).apply_async(queue=q),
-    "documents.reindex": lambda p, q, _e: reindex_task.si(p["document_id"]).apply_async(
-        queue=q
+    ).apply_async(queue=q, headers=h),
+    "documents.reindex": lambda p, q, _e, h: reindex_task.si(p["document_id"]).apply_async(
+        queue=q, headers=h
     ),
     # The one non-idempotent handler: a redelivery would add a duplicate
     # EvalRun and re-spend the whole LLM/quota budget, so the runner claims the
     # event id before it scores anything.
-    "evals.run": lambda p, _q, e: enqueue_eval_run(
-        UUID(p["workspace_id"]), p["triggered_by"], e
+    "evals.run": lambda p, _q, e, h: enqueue_eval_run(
+        UUID(p["workspace_id"]), p["triggered_by"], e, headers=h
     ),
 }
 
@@ -106,7 +109,14 @@ async def dispatch_pending(limit: int = 100) -> int:
                 # other in-flight request with it -- while this batch's rows
                 # sat locked by claim_due's FOR UPDATE. Off-loop, a broker
                 # timeout costs this request latency and nothing else.
-                await asyncio.to_thread(handler, event.payload, event.queue, event.id)
+                # The publishing request's trace context, carried on the
+                # Celery message so the worker span continues that trace
+                # instead of starting an orphan. Empty when the event was
+                # published with tracing off.
+                headers = {"traceparent": event.traceparent} if event.traceparent else {}
+                await asyncio.to_thread(
+                    handler, event.payload, event.queue, event.id, headers
+                )
             except Exception as exc:  # noqa: BLE001 - broker errors must not kill the sweep
                 await outbox_service.mark_failed(session, event, str(exc))
                 continue

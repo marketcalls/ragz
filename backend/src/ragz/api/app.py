@@ -49,7 +49,12 @@ from ragz.core.config import Settings, get_settings
 from ragz.core.db import build_engine, build_session_factory, dispose_loop_engine
 from ragz.core.errors import RagzError
 from ragz.core.logging import configure_logging
-from ragz.core.middleware import MetricsMiddleware, RequestIDMiddleware
+from ragz.core.middleware import (
+    MetricsMiddleware,
+    RequestIDMiddleware,
+    TracingMiddleware,
+)
+from ragz.core.tracing import configure_tracing
 from ragz.modules.chat.llm import LLMCompleter, LLMStreamer
 from ragz.modules.chat.prompting import warm_token_encoder
 from ragz.modules.chat.service import ChunkReader, Retriever
@@ -233,6 +238,15 @@ def create_app(
     # It still labels by route template: scope["route"] is read after the inner
     # app returns, and routing mutates the same scope dict this sees.
     app.add_middleware(MetricsMiddleware)
+    # Inside metrics: metrics must see every request, including ones an outer
+    # middleware rejects, whereas a span for a request that never reached
+    # routing carries no useful detail. Tracing is a no-op unless
+    # RAGZ_OTEL_ENDPOINT is set, so this costs a tracer lookup when off.
+    if settings.otel_endpoint:
+        configure_tracing(
+            endpoint=settings.otel_endpoint, service_name=settings.otel_service_name
+        )
+    app.add_middleware(TracingMiddleware)
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=trusted_hosts_for(settings.environment, settings.public_api_base_url),

@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.db import naive_utc
+from ragz.core.tracing import inject_context
 from ragz.modules.outbox.models import OutboxEvent
 
 log = structlog.get_logger()
@@ -51,7 +52,18 @@ def publish(
     justifies it. Commit both or neither -- that is the entire point. A caller
     that commits and then publishes has reintroduced the bug.
     """
-    event = OutboxEvent(topic=topic, payload=payload, queue=queue)
+    # Capture the trace context HERE, in the caller's request, not at dispatch.
+    # Dispatch may happen much later and in another process (the beat sweep
+    # after a crash, or after a backoff), so a traceparent taken there would
+    # parent the work to whichever sweep collected it instead of to the request
+    # that caused it. Empty dict when tracing is off or there is no active
+    # span, which stores NULL and lets the consumer start its own trace.
+    event = OutboxEvent(
+        topic=topic,
+        payload=payload,
+        queue=queue,
+        traceparent=inject_context({}).get("traceparent"),
+    )
     session.add(event)
     return event
 

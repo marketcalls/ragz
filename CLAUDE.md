@@ -94,12 +94,28 @@ TEMPLATE, never request path; unmatched requests collapse to `route="unmatched"`
 properties are pinned by `tests/api/test_metrics.py`, which fails if a raw path id
 reaches a label.
 
+OpenTelemetry tracing covers the **API only** (`core/tracing.py`): one SERVER span per
+HTTP request, named by route template, continuing an inbound W3C `traceparent`. Off
+unless `RAGZ_OTEL_ENDPOINT` is set, in which case every span call site resolves to
+OpenTelemetry's no-op tracer. Both middlewares share `core/middleware.py::route_template`,
+which recovers the FULL template including the router prefix — FastAPI nests included
+routers, so `scope["route"].path` is only the sub-path and using it merges every router
+sharing a sub-path into one series. Pinned by `tests/api/test_tracing.py`.
+
+Trace context **does** cross into Celery: `outbox_events.traceparent` records the W3C
+context at PUBLISH time (inside the request that caused the work, not at dispatch — a
+beat sweep may dispatch minutes later in another process), the dispatcher puts it on the
+Celery message headers, and `worker/celery_app.py::TracedTask` — installed as the app's
+default Task base, so all tasks get it including the six declared without an explicit
+`base=` — opens a CONSUMER span continuing that trace. Pinned by
+`tests/api/test_outbox.py`.
+
 **Not implemented** (earlier revisions of this file asserted all of it as if built):
-OpenTelemetry tracing, trace propagation into Celery, worker health endpoints, and
-alerting/SLOs. `opentelemetry` is not a dependency today. **Worker metrics do not exist
-at all**: Celery task counters were deliberately left unwritten rather than defined-but-
-never-incremented, because the worker has no exposition endpoint to scrape and a metric
-nothing observes is worse than an absent one — it reads as coverage.
+worker health endpoints and alerting/SLOs. There is also no `/metrics` exposition on the
+worker, so worker spans reach a collector but worker METRICS still do not exist. **Worker metrics do not exist at all**: Celery task counters were
+deliberately left unwritten rather than defined-but-never-incremented, because the worker
+has no exposition endpoint to scrape and a metric nothing observes is worse than an absent
+one — it reads as coverage.
 
 ## Depth Pointers
 

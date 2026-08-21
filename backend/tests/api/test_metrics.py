@@ -59,7 +59,11 @@ async def test_http_metrics_label_by_route_template_not_by_path(
     ).content.decode()
 
     assert doc_id not in body, "raw path id leaked into a metric label"
-    assert "{document_id}" in body
+    # The FULL template, prefix included. Asserting only "{document_id}" would
+    # pass against the sub-path "/documents/{document_id}" that
+    # scope["route"].path actually returns -- which silently merges every
+    # router sharing a sub-path into one series. See route_template.
+    assert 'route="/api/v1/documents/{document_id}"' in body
 
 
 async def test_unmatched_requests_collapse_to_one_series(client, test_settings) -> None:  # type: ignore[no-untyped-def]

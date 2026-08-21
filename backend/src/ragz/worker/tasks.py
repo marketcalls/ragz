@@ -28,7 +28,7 @@ from ragz.modules.retrieval.service import delete_ephemeral_points, retrieve
 from ragz.modules.tenancy.models import Workspace
 from ragz.modules.tenancy.views import WorkspaceView
 from ragz.worker import loop as worker_loop
-from ragz.worker.celery_app import celery_app
+from ragz.worker.celery_app import TracedTask, celery_app
 
 _MAX_RETRIES = 3
 # Maintenance work is small and bounded (a 30s sweep, capped reconciler scans, a
@@ -38,7 +38,7 @@ _MAINT_SOFT = get_settings().celery_maintenance_soft_time_limit_seconds
 _MAINT_HARD = get_settings().celery_maintenance_time_limit_seconds
 
 
-class IngestTask(Task):
+class IngestTask(TracedTask):
     """Marks the document failed once retries are exhausted (or on IngestFailure)."""
 
     def on_failure(self, exc: Exception, task_id: str, args: tuple[Any, ...],
@@ -55,7 +55,7 @@ class IngestTask(Task):
         worker_loop.run(ingest.mark_failed(UUID(str(args[0])), str(exc)))
 
 
-class DeleteTask(Task):
+class DeleteTask(TracedTask):
     """Without this, an exhausted delete retry fails silently: the document
     sits forever in the "deleting" status set by the route with no error and
     no way for the UI to tell the user anything went wrong."""
@@ -344,14 +344,18 @@ def run_eval_task(workspace_id: str, triggered_by: str, dispatch_id: str | None 
 
 
 def enqueue_eval_run(
-    workspace_id: UUID, triggered_by: str, dispatch_id: UUID | None = None
+    workspace_id: UUID,
+    triggered_by: str,
+    dispatch_id: UUID | None = None,
+    *,
+    headers: dict[str, str] | None = None,
 ) -> None:
     """`dispatch_id` is the outbox event id, carried through so the runner can
     recognise a redelivery of the SAME event and refuse to run it twice. None
     for callers with no event behind them (the nightly fan-out)."""
     run_eval_task.si(
         str(workspace_id), triggered_by, str(dispatch_id) if dispatch_id else None
-    ).apply_async(queue="default")
+    ).apply_async(queue="default", headers=headers or {})
 
 
 @celery_app.task(name="evals.run_all_workspaces",

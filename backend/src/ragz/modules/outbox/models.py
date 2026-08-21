@@ -62,3 +62,12 @@ class OutboxEvent(UUIDPk, Base):
     #: row cannot spin the dispatcher.
     available_at: Mapped[datetime] = mapped_column(default=naive_utc)
     dispatched_at: Mapped[datetime | None] = mapped_column(default=None)
+    #: W3C traceparent of the request that published this event, captured at
+    #: publish time rather than at dispatch. Dispatch can happen much later and
+    #: in another process (the beat sweep after a crash or a backoff), so a
+    #: traceparent taken there would parent the work to whichever sweep
+    #: happened to pick it up rather than to the request that caused it --
+    #: which is exactly the causal link the async ingestion path needs to be
+    #: traceable end to end. NULL when tracing is off or the publisher ran
+    #: outside a span; consumers then simply start their own trace.
+    traceparent: Mapped[str | None] = mapped_column(default=None)
