@@ -585,6 +585,22 @@ async def run_agent_gather(
                 LLMUsage(prompt_tokens=0, completion_tokens=0),
             )
         else:
+            # Release the pooled connection BEFORE the planner round-trip, for
+            # the reason stream_reply commits before its model streams: an
+            # AsyncSession holds a connection for as long as its transaction is
+            # open, and _plan is a full LLM call that touches the session zero
+            # times (it takes no session at all). Without this, every agent turn
+            # pinned a connection for the sum of its planner latencies --
+            # AGENT_MAX_ITERATIONS round-trips of dead hold time -- and N
+            # concurrent agent chats starved the pool for everyone else.
+            #
+            # Safe because every session use in this loop is a READ: execute_tool
+            # only forwards the session to retrieve/build_clauses/chunk_reader/
+            # web_searcher, none of which add, flush or delete. So there is never
+            # a pending write for this commit to make durable early, and
+            # expire_on_commit=False keeps workspace/model usable afterwards.
+            # execute_tool below simply opens a fresh transaction on demand.
+            await session.commit()
             action, usage = await _plan(
                 completer, model=model, question=question, summaries=summaries,
                 tool_names=tool_names, metadata_field_names=metadata_field_names,

@@ -110,23 +110,356 @@ layers = ["ragz.api", "ragz.worker", "ragz.modules", "ragz.core"]
 # should be a last resort -- the outbox is usually the answer.
 ignore_imports = []
 
-[[tool.importlinter.contracts]]
-# Locks in Phase 2 item 2's result rather than trusting it to stay true.
-# chat used to take tenancy's ORM Workspace into stream_reply and the agent --
-# an ORM entity crossing a module boundary, which the Never Do list forbids and
-# which also let a session-attached row lazily load mid-stream. It now takes
-# tenancy.views.WorkspaceView, so this boundary is clean and stays clean.
+# --- Module ORM boundaries (Phase 2 item 1) --------------------------------
+# The audit's P1 finding was that boundaries were documented but not enforced
+# AT MODULE LEVEL: the layered contract puts every business package in the same
+# ragz.modules layer, so it cannot see sibling coupling at all. These contracts
+# are that missing mechanism. One per module, each forbidding every OTHER
+# module's ORM submodules, with the imports that exist today listed in its
+# comment as the exceptions they are.
 #
-# Deliberately narrow: it names the boundary actually cleaned. Other modules
-# still import tenancy's models to JOIN against them for org scoping, which is
-# cross-module data access rather than an ORM object crossing a boundary, and
-# a wider contract here would simply fail.
-name = "chat does not reach into tenancy's ORM"
+# That pins 153 of the 169 module -> foreign-ORM pairs, so the 168 sibling
+# boundaries that are already clean cannot silently regress -- which is how the
+# coupling the audit found accumulated in the first place. The 16 remaining
+# exceptions are the actual backlog, and they shrink one line at a time: give
+# the owning module a bulk accessor, drop the import, delete the entry. An
+# import-linter failure is then the signal that a boundary moved BACKWARDS.
+#
+# allow_indirect_imports throughout: forbidden contracts are transitive by
+# default, which flags a -> b.service -> c.models. That is a chain through
+# another module's public service, not `a` reaching for an ORM class, and the
+# rule being enforced is about what each module itself imports.
+#
+# Generated from the real import graph, not hand-written -- a hand-kept list of
+# this size drifts. Supersedes the narrower "chat does not reach into tenancy's
+# ORM" contract, which is now just one line of chat's forbidden list.
+
+[[tool.importlinter.contracts]]
+# Imports no other module's ORM at all -- fully clean.
+name = "audit does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.audit"]
+forbidden_modules = [
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: tenancy.models.
+name = "auth does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.auth"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: tenancy.models.
+name = "bots does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.bots"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: auth.models, models.models.
+name = "chat does not import another module's ORM"
 type = "forbidden"
 source_modules = ["ragz.modules.chat"]
-forbidden_modules = ["ragz.modules.tenancy.models", "ragz.modules.tenancy.reembed_models"]
-# Direct imports only. Forbidden contracts are transitive by default, which
-# flags chat -> documents.service -> tenancy.reembed_models: a chain through
-# another module's public service, not chat reaching for an ORM class. The rule
-# being enforced is about what chat itself imports.
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: tenancy.models, tenancy.reembed_models.
+name = "documents does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.documents"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Imports no other module's ORM at all -- fully clean.
+name = "email does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.email"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: documents.models, tenancy.models.
+name = "evals does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.evals"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Imports no other module's ORM at all -- fully clean.
+name = "models does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.models"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Imports no other module's ORM at all -- fully clean.
+name = "ops does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.ops"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Imports no other module's ORM at all -- fully clean.
+name = "outbox does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.outbox"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: auth.models, chat.models, models.catalog, models.models, tenancy.models.
+name = "quotas does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.quotas"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: tenancy.models.
+name = "retrieval does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.retrieval"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Imports no other module's ORM at all -- fully clean.
+name = "secrets does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.secrets"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Still imports: auth.models, models.models.
+name = "tenancy does not import another module's ORM"
+type = "forbidden"
+source_modules = ["ragz.modules.tenancy"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.catalog",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# The audit: "API routes and workers import ORM models directly and execute
+# queries, despite the stated rule that entrypoints call public services only."
+# worker/ is now clean of that: it used to session.get(ChatAttachment) and
+# session.get(Workspace) itself, and now calls chat_service
+# .get_attachment_for_extraction and tenancy_service.get_workspace_view, which
+# hand back frozen views instead of live rows.
+#
+# One exception, and it is not an ORM import: `from ragz.modules.models import
+# catalog` binds the module namespace to call catalog.refresh_catalog(), a
+# service function. catalog.py happens to also define ModelCatalogEntry, and
+# import-linter cannot tell the two apart. Splitting that file would remove the
+# exception; until then it is listed rather than silently permitted.
+name = "worker entrypoints do not import module ORM"
+type = "forbidden"
+source_modules = ["ragz.worker"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.auth.models",
+  "ragz.modules.bots.models",
+  "ragz.modules.chat.models",
+  "ragz.modules.documents.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.models.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+  "ragz.modules.tenancy.models",
+  "ragz.modules.tenancy.reembed_models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+# Same rule for api/. Still 14 ORM imports across 8 route modules, so this
+# contract pins only the ORM the routes do NOT reach for today and lists the
+# rest as exceptions -- the same shrinking-backlog shape as the per-module
+# contracts above. Most are type annotations on FastAPI dependencies that hand
+# routes a live ORM row (`current_user: User`); removing them means the
+# dependency returns a view, which is a wider change than this one.
+name = "api entrypoints do not import module ORM"
+type = "forbidden"
+source_modules = ["ragz.api"]
+forbidden_modules = [
+  "ragz.modules.audit.models",
+  "ragz.modules.evals.models",
+  "ragz.modules.outbox.models",
+  "ragz.modules.quotas.models",
+  "ragz.modules.secrets.models",
+]
 allow_indirect_imports = true
