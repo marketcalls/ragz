@@ -62,3 +62,13 @@ async def test_put_stream_reads_from_the_current_position(storage: ObjectStorage
     await storage.put_stream("org/ws/doc/partial.txt", buf, content_type="text/plain")
     assert await storage.get("org/ws/doc/partial.txt") == b"kept"
     await storage.delete("org/ws/doc/partial.txt")
+
+
+async def test_stream_upload_and_download_roundtrip(storage: ObjectStorage) -> None:
+    from io import BytesIO
+
+    source = BytesIO(b"streamed without a whole-object API buffer")
+    await storage.put_stream("org/ws/doc/stream.bin", source)
+    target = BytesIO()
+    await storage.download_to_fileobj("org/ws/doc/stream.bin", target)
+    assert target.getvalue() == b"streamed without a whole-object API buffer"

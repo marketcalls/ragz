@@ -4,10 +4,15 @@ chat route (iron rule 1/2)."""
 
 import asyncio
 import base64
+import struct
+import zlib
+from io import BytesIO
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import httpx
 import pytest
+from PIL import Image
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -25,6 +30,12 @@ from tests.conftest import FakeChunkReader, FakeRetriever, FakeStreamer, _stub_l
 # chat_client/chat_env fixtures live in test_chat_stream; pytest only shares
 # fixtures across modules via conftest.py or an explicit plugin import.
 pytest_plugins = ["tests.api.test_chat_stream"]
+
+
+def _png_bytes() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), color="white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 @pytest.fixture
@@ -63,6 +74,304 @@ async def test_upload_attachment_creates_row_and_stores_blob(
     assert body["kind"] == "document"
     assert body["filename"] == "notes.txt"
     assert body["status"] == "queued"
+
+
+async def test_attachment_upload_streams_to_storage(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    streamed: list[bytes] = []
+
+    async def _forbid_buffered_put(self, key, data, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        raise AssertionError("attachment upload buffered the entire file")
+
+    async def _capture_stream(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        streamed.append(fileobj.read())
+
+    monkeypatch.setattr(ObjectStorage, "put", _forbid_buffered_put)
+    monkeypatch.setattr(ObjectStorage, "put_stream", _capture_stream)
+    monkeypatch.setattr("ragz.api.routes.chats.enqueue_attachment_processing", lambda _id: None)
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+
+    response = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("notes.txt", b"stream me", "text/plain")},
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    assert streamed == [b"stream me"]
+
+
+async def test_spoofed_attachment_type_is_rejected_before_storage_and_enqueue(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    storage_writes: list[str] = []
+    enqueues: list[str] = []
+
+    async def _store(self, key, data, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        storage_writes.append(key)
+
+    monkeypatch.setattr(ObjectStorage, "put", _store)
+    monkeypatch.setattr(ObjectStorage, "put_stream", _store)
+    monkeypatch.setattr(
+        "ragz.api.routes.chats.enqueue_attachment_processing",
+        lambda attachment_id: enqueues.append(str(attachment_id)),
+    )
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+
+    response = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={
+            "file": (
+                "spoofed.pdf",
+                b"<!doctype html><script>parent.previewPwned=true</script>",
+                "application/pdf",
+            )
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 415
+    assert storage_writes == []
+    assert enqueues == []
+
+
+async def test_compressed_attachment_budget_rejects_before_storage_and_enqueue(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    archive_bytes = BytesIO()
+    with ZipFile(archive_bytes, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", "x" * 1024)
+    body = archive_bytes.getvalue()
+    monkeypatch.setattr(test_settings, "attachment_max_uncompressed_bytes", 100)
+    storage_writes: list[str] = []
+    enqueues: list[str] = []
+
+    async def _store(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        storage_writes.append(key)
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _store)
+    monkeypatch.setattr(
+        "ragz.api.routes.chats.enqueue_attachment_processing",
+        lambda attachment_id: enqueues.append(str(attachment_id)),
+    )
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+
+    response = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={
+            "file": (
+                "large.docx",
+                body,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 413
+    assert storage_writes == []
+    assert enqueues == []
+
+
+async def test_image_pixel_budget_rejects_before_storage_and_enqueue(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    def _chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", 10_000, 10_000, 8, 2, 0, 0, 0)
+    body = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IEND", b"")
+    monkeypatch.setattr(test_settings, "attachment_max_image_pixels", 1_000_000)
+    storage_writes: list[str] = []
+    enqueues: list[str] = []
+
+    async def _store(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        storage_writes.append(key)
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _store)
+    monkeypatch.setattr(
+        "ragz.api.routes.chats.enqueue_attachment_processing",
+        lambda attachment_id: enqueues.append(str(attachment_id)),
+    )
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+
+    response = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("bomb.png", body, "image/png")},
+        headers=headers,
+    )
+
+    assert response.status_code == 413
+    assert storage_writes == []
+    assert enqueues == []
+
+
+@pytest.mark.parametrize(
+    ("setting", "limit", "first", "second"),
+    [
+        ("attachment_max_count_per_user", 1, b"first", b"second"),
+        ("attachment_max_bytes_per_user", 10, b"123456", b"abcdef"),
+    ],
+)
+async def test_attachment_aggregate_limits_reject_before_storage_and_enqueue(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    setting: str,
+    limit: int,
+    first: bytes,
+    second: bytes,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    monkeypatch.setattr(test_settings, setting, limit)
+    storage_writes: list[str] = []
+    enqueues: list[str] = []
+
+    async def _store(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        storage_writes.append(key)
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _store)
+    monkeypatch.setattr(
+        "ragz.api.routes.chats.enqueue_attachment_processing",
+        lambda attachment_id: enqueues.append(str(attachment_id)),
+    )
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+
+    accepted = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("one.txt", first, "text/plain")},
+        headers=headers,
+    )
+    rejected = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("two.txt", second, "text/plain")},
+        headers=headers,
+    )
+
+    assert accepted.status_code == 201
+    assert rejected.status_code == 413
+    assert len(storage_writes) == 1
+    assert len(enqueues) == 1
+
+
+async def test_parallel_attachment_pending_limit_counts_in_flight_upload(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    monkeypatch.setattr(test_settings, "attachment_max_pending_per_user", 1)
+    first_storage_started = asyncio.Event()
+    release_first_storage = asyncio.Event()
+    storage_writes: list[str] = []
+    enqueues: list[str] = []
+
+    async def _store(self, key, payload, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        storage_writes.append(key)
+        if len(storage_writes) == 1:
+            first_storage_started.set()
+            await release_first_storage.wait()
+
+    monkeypatch.setattr(ObjectStorage, "put", _store)
+    monkeypatch.setattr(ObjectStorage, "put_stream", _store)
+    monkeypatch.setattr(
+        "ragz.api.routes.chats.enqueue_attachment_processing",
+        lambda attachment_id: enqueues.append(str(attachment_id)),
+    )
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+    first = asyncio.create_task(
+        chat_client.post(
+            f"/api/v1/chats/{chat_id}/attachments",
+            files={"file": ("one.txt", b"first", "text/plain")},
+            headers=headers,
+        )
+    )
+    await asyncio.wait_for(first_storage_started.wait(), timeout=5)
+
+    rejected = await chat_client.post(
+        f"/api/v1/chats/{chat_id}/attachments",
+        files={"file": ("two.txt", b"second", "text/plain")},
+        headers=headers,
+    )
+    release_first_storage.set()
+    accepted = await asyncio.wait_for(first, timeout=5)
+
+    assert accepted.status_code == 201
+    assert rejected.status_code == 413
+    assert len(storage_writes) == 1
+    assert len(enqueues) == 1
+
+
+async def test_attachment_upload_frequency_is_bounded_per_user(
+    chat_client: httpx.AsyncClient,
+    chat_env: dict,
+    seeded_user: User,
+    test_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    monkeypatch.setattr(test_settings, "attachment_uploads_per_minute", 3)
+
+    async def _store(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        return None
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _store)
+    monkeypatch.setattr("ragz.api.routes.chats.enqueue_attachment_processing", lambda _id: None)
+    headers = await auth(chat_client, seeded_user.email)
+    chat_id = await make_chat(chat_client, chat_env, headers)
+    responses = []
+    for index in range(4):
+        responses.append(
+            await chat_client.post(
+                f"/api/v1/chats/{chat_id}/attachments",
+                files={"file": (f"{index}.txt", str(index).encode(), "text/plain")},
+                headers=headers,
+            )
+        )
+
+    assert [response.status_code for response in responses] == [201, 201, 201, 429]
 
 
 async def test_upload_attachment_requires_chat_attachments_create(
@@ -108,7 +417,7 @@ async def test_get_attachment_content_streams_bytes_inline(
     right mime -- powers image thumbnails/previews in the conversation."""
     h = await auth(chat_client, seeded_user.email)
     chat_id = await make_chat(chat_client, chat_env, h)
-    png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+    png = _png_bytes()
     r = await chat_client.post(
         f"/api/v1/chats/{chat_id}/attachments",
         files={"file": ("photo.png", png, "image/png")}, headers=h,
@@ -136,7 +445,7 @@ async def test_get_attachment_content_rejects_other_users_chat(
     chat_id = await make_chat(chat_client, chat_env, h_a)
     r = await chat_client.post(
         f"/api/v1/chats/{chat_id}/attachments",
-        files={"file": ("photo.png", b"\x89PNG\r\n\x1a\nsecret", "image/png")}, headers=h_a,
+        files={"file": ("photo.png", _png_bytes(), "image/png")}, headers=h_a,
     )
     attachment_id = r.json()["id"]
 
@@ -242,7 +551,7 @@ async def test_image_attachment_on_vision_model_becomes_multimodal_content(
     assert r_model.status_code == 201
     vision_model_id = r_model.json()["id"]
 
-    image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes-not-a-real-png"
+    image_bytes = _png_bytes()
     r = await chat_client.post(
         f"/api/v1/chats/{chat_id}/attachments",
         files={"file": ("photo.png", image_bytes, "image/png")},
@@ -290,7 +599,7 @@ async def test_image_attachment_on_non_vision_model_still_routes_through_ocr(
     inline/retrieval routing, exactly like a document attachment."""
     h = await auth(chat_client, seeded_user.email)
     chat_id = await make_model_and_chat(chat_client, chat_env, session, seeded_superadmin, h)
-    image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes-not-a-real-png"
+    image_bytes = _png_bytes()
     r = await chat_client.post(
         f"/api/v1/chats/{chat_id}/attachments",
         files={"file": ("photo.png", image_bytes, "image/png")},
@@ -353,7 +662,7 @@ async def test_image_attachment_survives_general_knowledge_fallback(
         assert r_model.status_code == 201
         vision_model_id = r_model.json()["id"]
 
-        image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes-not-a-real-png"
+        image_bytes = _png_bytes()
         r_attach = await client.post(
             f"/api/v1/chats/{chat_id}/attachments",
             files={"file": ("photo.png", image_bytes, "image/png")},

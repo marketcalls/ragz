@@ -30,7 +30,6 @@ localhost/link-local/metadata addresses.
 import base64
 import hashlib
 import hmac
-import ipaddress
 import json
 import socket
 import time
@@ -46,6 +45,7 @@ from PIL import Image
 
 from ragz.core.config import Settings
 from ragz.core.crypto import load_kek
+from ragz.core.net import is_blocked_ip
 
 _SIGNING_CONTEXT = b"image-proxy-ref-v1"
 _DEFAULT_TTL_SECONDS = 86_400
@@ -145,17 +145,6 @@ def verify_image_ref(ref: str, *, settings: Settings, now: int) -> ImagePayload 
         return None
 
 
-def _ip_is_bad(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return bool(
-        addr.is_private
-        or addr.is_loopback
-        or addr.is_link_local
-        or addr.is_reserved
-        or addr.is_multicast
-        or addr.is_unspecified
-    )
-
-
 def _resolve_safe(host: str) -> list[str] | None:
     """SSRF guard + DNS-rebind pin source. Resolve `host` ONCE and return the
     list of validated literal IPs, or None if `host` is empty, fails to
@@ -189,14 +178,7 @@ def _resolve_safe(host: str) -> list[str] | None:
     ips: list[str] = []
     for info in infos:
         ip = str(info[4][0])
-        try:
-            addr = ipaddress.ip_address(ip)
-        except ValueError:
-            return None
-        if _ip_is_bad(addr):
-            return None
-        mapped = getattr(addr, "ipv4_mapped", None)
-        if mapped is not None and _ip_is_bad(mapped):
+        if is_blocked_ip(ip):
             return None
         ips.append(ip)
     return ips

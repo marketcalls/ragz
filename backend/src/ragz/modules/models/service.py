@@ -55,7 +55,11 @@ async def list_enabled_models(session: AsyncSession, modality: str | None = None
 async def _enabled_model(session: AsyncSession, model_id: UUID) -> Model | None:
     return (
         await session.execute(
-            select(Model).where(Model.id == model_id, Model.enabled == true())
+            select(Model).where(
+                Model.id == model_id,
+                Model.enabled == true(),
+                Model.modality == "chat",
+            )
         )
     ).scalar_one_or_none()
 
@@ -63,8 +67,13 @@ async def _enabled_model(session: AsyncSession, model_id: UUID) -> Model | None:
 async def resolve_model(
     session: AsyncSession, *, requested_model_id: UUID | None, default_model_id: UUID | None
 ) -> Model:
-    """Chat model resolution (spec 3.5 + Plan D model selector):
-    explicit request -> workspace default -> typed error."""
+    """Enabled chat-model resolution (spec 3.5 + Plan D model selector):
+    explicit request -> workspace default -> typed error.
+
+    Embedding model IDs are intentionally indistinguishable from missing or
+    disabled IDs here: callers pass an untrusted UUID into chat-completion
+    paths, where an embedding-only model is never valid.
+    """
     if requested_model_id is not None:
         model = await _enabled_model(session, requested_model_id)
         if model is None:
@@ -74,6 +83,16 @@ async def resolve_model(
         model = await _enabled_model(session, default_model_id)
         if model is not None:
             return model
+        fallback = (
+            await session.execute(
+                select(Model)
+                .where(Model.enabled == true(), Model.modality == "chat")
+                .order_by(Model.created_at, Model.id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if fallback is not None:
+            return fallback
     raise ConflictError("no model configured for workspace")
 
 

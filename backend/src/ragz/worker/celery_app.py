@@ -77,7 +77,7 @@ def build_celery() -> Celery:
             "attachment-ttl-cleanup": {
                 "task": "attachments.cleanup_stale",
                 "options": {"queue": "maintenance"},
-                "schedule": 24 * 60 * 60,
+                "schedule": 60,
             },
             # Review P0: fail-closed ACL projection hides a document when Qdrant
             # is unreachable rather than over-sharing it. This reopens the door

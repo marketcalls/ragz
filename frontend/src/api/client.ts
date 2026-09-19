@@ -1,6 +1,12 @@
 import createClient from 'openapi-fetch';
 
-import { getAccessToken, setAccessToken } from '@/lib/auth-store';
+import {
+  getAccessToken,
+  getAuthGeneration,
+  invalidateAuthGeneration,
+  replaceAccessTokenIfCurrent,
+  setAccessToken,
+} from '@/lib/auth-store';
 
 import type { paths } from './schema';
 
@@ -11,20 +17,49 @@ export function setOnAuthFailure(fn: () => void): void {
 }
 
 // Single-flight: concurrent 401s share one refresh round-trip.
-let refreshInFlight: Promise<boolean> | null = null;
+type RefreshResult = 'refreshed' | 'failed-current' | 'stale';
+let refreshInFlight: {
+  generation: number;
+  controller: AbortController;
+  promise: Promise<RefreshResult>;
+} | null = null;
 
-export function refreshAccessToken(): Promise<boolean> {
-  refreshInFlight ??= doRefresh().finally(() => {
-    refreshInFlight = null;
-  });
-  return refreshInFlight;
+export function refreshAccessToken(
+  expectedGeneration: number = getAuthGeneration(),
+): Promise<boolean> {
+  return refreshForGeneration(expectedGeneration).then((result) => result === 'refreshed');
 }
 
-async function doRefresh(): Promise<boolean> {
-  const res = await fetch('/api/v1/auth/refresh', { method: 'POST', credentials: 'include' });
+function refreshForGeneration(generation: number): Promise<RefreshResult> {
+  // A response from an old protected request must not start a refresh after
+  // logout/login has crossed the identity boundary: Set-Cookie happens before
+  // JavaScript can inspect the response, so rejecting it afterward is too late.
+  if (getAuthGeneration() !== generation) return Promise.resolve('stale');
+  if (refreshInFlight?.generation === generation) return refreshInFlight.promise;
+  const controller = new AbortController();
+  const slot = { generation, controller, promise: Promise.resolve<RefreshResult>('stale') };
+  slot.promise = doRefresh(generation, controller.signal)
+    .catch((error: unknown): RefreshResult => {
+      if (error instanceof DOMException && error.name === 'AbortError') return 'stale';
+      throw error;
+    })
+    .finally(() => {
+      if (refreshInFlight === slot) refreshInFlight = null;
+    });
+  refreshInFlight = slot;
+  return slot.promise;
+}
+
+async function doRefresh(generation: number, signal: AbortSignal): Promise<RefreshResult> {
+  const res = await fetch('/api/v1/auth/refresh', {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+  });
+  if (getAuthGeneration() !== generation) return 'stale';
   if (!res.ok) {
     setAccessToken(null);
-    return false;
+    return 'failed-current';
   }
   const body: unknown = await res.json().catch(() => null);
   const token =
@@ -32,11 +67,21 @@ async function doRefresh(): Promise<boolean> {
       ? (body as { access_token: unknown }).access_token
       : null;
   if (typeof token !== 'string' || token === '') {
+    if (getAuthGeneration() !== generation) return 'stale';
     setAccessToken(null);
-    return false;
+    return 'failed-current';
   }
-  setAccessToken(token);
-  return true;
+  return replaceAccessTokenIfCurrent(token, generation) ? 'refreshed' : 'stale';
+}
+
+export async function beginAuthIdentityTransition(options?: {
+  clearAccessToken?: boolean;
+}): Promise<void> {
+  if (options?.clearAccessToken) setAccessToken(null);
+  else invalidateAuthGeneration();
+  const oldRefresh = refreshInFlight;
+  oldRefresh?.controller.abort();
+  await oldRefresh?.promise.catch(() => undefined);
 }
 
 // Endpoints where a 401 is a real answer, not an expired access token.
@@ -51,6 +96,7 @@ const NO_REFRESH = new Set([
 ]);
 
 export async function authFetch(input: Request): Promise<Response> {
+  const requestGeneration = getAuthGeneration();
   const send = (): Promise<Response> => {
     const req = input.clone();
     const token = getAccessToken();
@@ -59,9 +105,10 @@ export async function authFetch(input: Request): Promise<Response> {
   };
   let res = await send();
   if (res.status === 401 && !NO_REFRESH.has(new URL(input.url).pathname)) {
-    if (await refreshAccessToken()) {
+    const refreshResult = await refreshForGeneration(requestGeneration);
+    if (refreshResult === 'refreshed' && getAuthGeneration() === requestGeneration) {
       res = await send();
-    } else {
+    } else if (refreshResult === 'failed-current') {
       onAuthFailure();
     }
   }

@@ -124,9 +124,13 @@ def test_ref_carries_minting_org_capability_model(test_settings: Settings) -> No
         ("127.0.0.1", True),     # loopback
         ("10.0.0.5", True),      # private
         ("169.254.1.1", True),   # link-local
+        ("100.64.0.1", True),    # RFC 6598 shared space
+        ("192.0.2.1", True),     # non-global documentation range
         ("::1", True),           # loopback v6
+        ("2001:db8::1", True),   # non-global IPv6 documentation range
         ("0.0.0.0", True),  # noqa: S104 — test data (unspecified addr), not a bind
         ("93.184.216.34", False),  # public
+        ("2606:4700:4700::1111", False),  # public IPv6
     ],
 )
 def test_host_is_blocked(monkeypatch: pytest.MonkeyPatch, ip: str, blocked: bool) -> None:
@@ -162,6 +166,25 @@ async def test_fetch_rejects_non_image_content_type(monkeypatch: pytest.MonkeyPa
         "https://pub.example.com/x", transport=httpx.MockTransport(handler)
     )
     assert out is None
+
+
+async def test_fetch_rejects_cgnat_destination_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _addrinfo("100.64.0.1"))
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, content=_png_bytes(), headers={"content-type": "image/png"})
+
+    out = await media.fetch_image_safely(
+        "https://shared.example/image.png", transport=httpx.MockTransport(handler)
+    )
+
+    assert out is None
+    assert calls == 0
 
 
 async def test_fetch_rejects_oversize_content_length(monkeypatch: pytest.MonkeyPatch) -> None:

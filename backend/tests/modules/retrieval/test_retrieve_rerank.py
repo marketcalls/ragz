@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
 from ragz.modules.quotas.models import UsageRecord
+from ragz.modules.retrieval.query_expansion import ExpandedQueries
 from ragz.modules.retrieval.service import retrieve
 from tests.modules.retrieval.test_retrieve import seed_workspace, upsert_texts
 
@@ -59,7 +60,13 @@ class _BilledReranker:
         self.last_search_units = units
 
     async def rerank(self, query: str, texts: list[str]) -> list[float]:
+        self.query = query
         return [1.0] * len(texts)
+
+
+class _RerankQueryExpander:
+    async def expand(self, query: str, *, model: str) -> ExpandedQueries:
+        return ExpandedQueries((query, "alternative phrasing"))
 
 
 async def test_rerank_records_usage_with_billed_units(
@@ -87,6 +94,38 @@ async def test_rerank_records_usage_with_billed_units(
     assert len(rows) == 1
     assert rows[0].units == 5
     assert rows[0].prompt_tokens == 0 and rows[0].completion_tokens == 0
+
+
+async def test_multi_query_reranks_once_against_original_query(
+    session: AsyncSession,
+    qdrant_collection: None,
+    utility_model: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx, ws = await seed_workspace(
+        session,
+        "mqRerankOriginal",
+        rerank_enabled=True,
+        multi_query_enabled=True,
+    )
+    await upsert_texts(ctx, ws, ["original subject", "alternative phrasing"])
+    reranker = _BilledReranker(units=0)
+
+    async def _fake_get_reranker(_session, _settings):  # type: ignore[no-untyped-def]
+        return reranker
+
+    monkeypatch.setattr("ragz.modules.retrieval.service.get_reranker", _fake_get_reranker)
+
+    result = await retrieve(
+        session,
+        ctx,
+        ws.id,
+        "original subject",
+        query_expander=_RerankQueryExpander(),
+    )
+
+    assert result.chunks
+    assert reranker.query == "original subject"
 
 
 async def test_local_reranker_records_no_rerank_usage(

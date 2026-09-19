@@ -26,6 +26,7 @@ backend/celerybeat-schedule*
 anything-llm/
 openui/
 .claude/
+no_rel/
 
 # Internal planning/audit docs — LOCAL REFERENCE ONLY, never commit to GitHub
 docs/superpowers/

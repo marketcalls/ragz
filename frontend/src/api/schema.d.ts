@@ -869,6 +869,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{workspace_id}/evals/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compare Answers
+         * @description Transient A/B answer generation; does not create chats or PATCH settings.
+         */
+        post: operations["compare_answers_api_v1_workspaces__workspace_id__evals_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{workspace_id}/evals/runs": {
         parameters: {
             query?: never;
@@ -2149,6 +2169,18 @@ export interface components {
              */
             variant: "primary" | "secondary";
         };
+        /** AnswerComparisonOut */
+        AnswerComparisonOut: {
+            /** Variants */
+            variants: components["schemas"]["ComparisonVariantOut"][];
+        };
+        /** AnswerComparisonRequest */
+        AnswerComparisonRequest: {
+            /** Question */
+            question: string;
+            /** Model Id */
+            model_id?: string | null;
+        };
         /** AnswerQualityOut */
         AnswerQualityOut: {
             /** Audited Count */
@@ -2838,6 +2870,58 @@ export interface components {
             org_id: string;
             /** User Id */
             user_id: string;
+        };
+        /** ComparisonSourceOut */
+        ComparisonSourceOut: {
+            /** Marker */
+            marker: number;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Filename */
+            filename: string;
+            /** Page */
+            page: number;
+            /** Chunk Index */
+            chunk_index: number;
+            /** Score */
+            score: number;
+            /** Snippet */
+            snippet: string;
+            /** Section */
+            section: string | null;
+            /** Version */
+            version: number;
+        };
+        /** ComparisonVariantOut */
+        ComparisonVariantOut: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "single" | "multi";
+            /** Answer */
+            answer: string;
+            /** Sources */
+            sources: components["schemas"]["ComparisonSourceOut"][];
+            /** Citation Markers */
+            citation_markers: number[];
+            /** No Answer */
+            no_answer: boolean;
+            /** Query Count */
+            query_count: number;
+            /** Retrieval Ms */
+            retrieval_ms: number;
+            /** Generation Ms */
+            generation_ms: number;
+            /** Total Ms */
+            total_ms: number;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Completion Tokens */
+            completion_tokens: number;
         };
         /** CustomRoleAssign */
         CustomRoleAssign: {
@@ -4686,6 +4770,8 @@ export interface components {
             top_k: number;
             /** Rerank Enabled */
             rerank_enabled: boolean;
+            /** Multi Query Enabled */
+            multi_query_enabled: boolean;
             /** System Prompt Override */
             system_prompt_override: string | null;
             /** Fallback Policy */
@@ -4711,6 +4797,8 @@ export interface components {
             min_score?: number | null;
             /** Rerank Enabled */
             rerank_enabled?: boolean | null;
+            /** Multi Query Enabled */
+            multi_query_enabled?: boolean | null;
             /** System Prompt Override */
             system_prompt_override?: string | null;
             /** Fallback Policy */
@@ -6432,6 +6520,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_answers_api_v1_workspaces__workspace_id__evals_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerComparisonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerComparisonOut"];
                 };
             };
             /** @description Validation Error */

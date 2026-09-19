@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,7 @@ from ragz.modules.audit.models import AuditEvent
 from ragz.modules.auth.models import User
 from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents import service
+from ragz.modules.documents.models import Document
 from ragz.modules.documents.service import (
     create_from_upload,
     get_document_checked,
@@ -56,6 +59,51 @@ async def test_upload_stores_row_object_and_audit(
     assert await storage.get(doc.storage_key) == b"hello world"
     actions = [e.action for e in (await session.execute(select(AuditEvent))).scalars()]
     assert "document.uploaded" in actions
+
+
+async def test_committed_document_survives_cancelled_commit_acknowledgement(
+    session: AsyncSession,
+    stack_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx, ws = await seed_workspace(session, "commit-ack")
+    blobs: set[str] = set()
+
+    class Storage:
+        async def ensure_bucket(self) -> None:
+            return None
+
+        async def put_stream(self, key, stream, content_type):  # type: ignore[no-untyped-def]
+            blobs.add(key)
+
+        async def delete(self, key: str) -> None:
+            blobs.discard(key)
+
+    monkeypatch.setattr(service, "build_storage", lambda _settings: Storage())
+    real_commit = session.commit
+    commits = 0
+
+    async def committed_then_cancelled() -> None:
+        nonlocal commits
+        commits += 1
+        await real_commit()
+        if commits == 2:
+            raise asyncio.CancelledError("synthetic cancellation after durable commit")
+
+    monkeypatch.setattr(session, "commit", committed_then_cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        await create_from_upload(
+            session,
+            ctx,
+            ws.id,
+            filename="committed.txt",
+            mime="text/plain",
+            data=b"durable",
+        )
+    row = (
+        await session.execute(select(Document).where(Document.filename == "committed.txt"))
+    ).scalar_one()
+    assert row.storage_key in blobs
 
 
 async def test_duplicate_content_conflicts(session: AsyncSession, stack_env: None) -> None:

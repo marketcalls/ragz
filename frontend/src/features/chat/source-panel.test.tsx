@@ -57,7 +57,13 @@ test('omits version/section chrome when absent', () => {
 
 test('a chip with a url renders the hostname, the globe glyph, and an "open" link (Task 11/D7)', () => {
   const withUrl: SourceChipData[] = [
-    { marker: 1, document_id: '', filename: 'ISO 45001 overview', page: 0, url: 'https://example.test/iso' },
+    {
+      marker: 1,
+      document_id: '',
+      filename: 'ISO 45001 overview',
+      page: 0,
+      url: 'https://example.test/iso',
+    },
   ];
   render(<SourcePanel sources={withUrl} />);
   expect(screen.getByText('· example.test')).toBeInTheDocument();
@@ -66,6 +72,23 @@ test('a chip with a url renders the hostname, the globe glyph, and an "open" lin
   expect(link).toHaveAttribute('href', 'https://example.test/iso');
   expect(link).toHaveAttribute('target', '_blank');
   expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+});
+
+test('a citation with a non-http scheme is inert and never becomes a browser link', () => {
+  const withUnsafeUrl: SourceChipData[] = [
+    {
+      marker: 1,
+      document_id: '',
+      filename: 'Suspicious source',
+      page: 0,
+      url: 'javascript:alert(1)',
+    },
+  ];
+
+  render(<SourcePanel sources={withUnsafeUrl} />);
+
+  expect(screen.queryByRole('link', { name: 'open' })).not.toBeInTheDocument();
+  expect(screen.getByText('· Web source')).toBeInTheDocument();
 });
 
 test('a doc chip (no url) is rendered unchanged', () => {
@@ -86,7 +109,13 @@ test('clicking a document citation chip opens the drawer with the right document
 
 test('a web citation chip does not open the drawer (its "open" link stays external)', async () => {
   const withUrl: SourceChipData[] = [
-    { marker: 1, document_id: '', filename: 'ISO 45001 overview', page: 0, url: 'https://example.test/iso' },
+    {
+      marker: 1,
+      document_id: '',
+      filename: 'ISO 45001 overview',
+      page: 0,
+      url: 'https://example.test/iso',
+    },
   ];
   const onOpenDocument = vi.fn();
   const user = userEvent.setup();

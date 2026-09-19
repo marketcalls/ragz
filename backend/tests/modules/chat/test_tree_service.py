@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.errors import ConflictError, NotFoundError
@@ -228,6 +229,53 @@ async def test_audit_message_persists_scores(
     assert await service.audit_message(session, msg.id) is True
     await session.refresh(msg)
     assert msg.grounding_score == 0.8 and msg.completeness_score == 0.9
+
+
+async def test_audit_message_meters_completed_call_when_scores_are_malformed(
+    session: AsyncSession,
+    chat_env: dict[str, Any],
+    ctx: TenantContext,
+    utility_model: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.modules.chat import audit as chat_audit
+    from ragz.modules.chat.llm import LLMCompletion, LLMUsage
+    from ragz.modules.quotas.models import UsageRecord
+
+    fake = FakeCompleter(
+        [
+            LLMCompletion(
+                text="not scores",
+                tool_calls=[],
+                usage=LLMUsage(prompt_tokens=30, completion_tokens=10),
+            )
+        ]
+    )
+    monkeypatch.setattr(chat_audit, "_completer_for_audit", lambda settings: fake)
+    chat = await service.create_chat(session, ctx, workspace_id=chat_env["workspace"].id)
+    user_msg = await service.add_message(
+        session, ctx, chat, role=service.ROLE_USER, content="Question", parent=None
+    )
+    msg = await service.add_message(
+        session,
+        ctx,
+        chat,
+        role=service.ROLE_ASSISTANT,
+        content="Answer",
+        parent=user_msg,
+        grounding="documents",
+    )
+
+    assert await service.audit_message(session, msg.id) is False
+    usage = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == ctx.org_id,
+                UsageRecord.feature == "validation",
+            )
+        )
+    ).scalar_one()
+    assert (usage.prompt_tokens, usage.completion_tokens) == (30, 10)
 
 
 async def test_answer_quality_summary_averages_and_ranks_worst(

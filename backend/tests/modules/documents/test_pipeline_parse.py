@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 
 import pytest
 from docx import Document as DocxBuilder
@@ -30,6 +31,25 @@ def test_parse_txt_fast_path() -> None:
     blocks = parse_bytes(b"para one\n\npara two", "notes.txt")
     assert [b.text for b in blocks] == ["para one", "para two"]
     assert all(b.kind == "text" and b.page == 1 for b in blocks)
+
+
+def test_existing_path_is_forwarded_to_docling_without_a_bytes_copy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "manual.pdf"
+    source.write_bytes(b"%PDF-1.7\n%%EOF")
+    received: list[Path] = []
+
+    def _fake_convert(path: Path, suffix: str, *, ocr: bool) -> list[PageBlock]:
+        received.append(path)
+        return [PageBlock(page=1, text="parsed", kind="text")]
+
+    monkeypatch.setattr(pipeline, "_convert_blocks", _fake_convert)
+
+    blocks = parse_bytes(source, source.name, ocr_enabled=False)
+
+    assert received == [source]
+    assert blocks == [PageBlock(page=1, text="parsed", kind="text")]
 
 
 def test_empty_file_fails_with_reason() -> None:

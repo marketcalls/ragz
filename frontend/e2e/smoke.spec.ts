@@ -40,9 +40,11 @@ async function ensureModel(page: Page): Promise<void> {
 async function ensureWorkspace(page: Page): Promise<void> {
   await page.goto('/chat');
   await page.getByRole('button', { name: 'Switch workspace' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Loading workspaces…' })).toBeHidden();
+  await expect(page.getByRole('menuitem', { name: 'New workspace' })).toBeVisible();
   const existing = page.getByRole('menuitem', { name: 'E2E Workspace' });
-  if (await existing.isVisible().catch(() => false)) {
-    await existing.click();
+  if ((await existing.count()) > 0) {
+    await existing.first().click();
     return;
   }
   await page.getByRole('menuitem', { name: 'New workspace' }).click();
@@ -76,7 +78,10 @@ test('phase 1 smoke: upload → indexed → cited streamed answer → edit sibli
   // The citation resolves to the uploaded document in the source panel.
   await chip.click();
   await expect(
-    page.locator('[aria-label="Sources"]').getByText(/sample\.pdf/).first(),
+    page
+      .locator('[aria-label="Sources"]')
+      .getByText(/sample\.pdf/)
+      .first(),
   ).toBeVisible();
 
   // Edit the user message in place → a sibling version with < n/n > navigation.

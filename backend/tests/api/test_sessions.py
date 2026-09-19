@@ -148,6 +148,9 @@ async def test_cannot_revoke_another_users_session(
     )
     victim_family = victim_family_resp.json()[0]["family_id"]
 
+    # Model a different browser/device. A deliberate same-browser identity
+    # transition revokes the presented prior user's family to fence cookie races.
+    client.cookies.delete("refresh_token")
     attacker_login = await _login(client, other.email)
     attacker_headers = {"Authorization": f"Bearer {attacker_login.json()['access_token']}"}
 

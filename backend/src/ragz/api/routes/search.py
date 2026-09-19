@@ -30,6 +30,11 @@ async def search_workspace(
     result = await retrieve(
         session, ctx, workspace_id, body.query, top_k=body.top_k, metadata_clauses=clauses
     )
+    # retrieve() stages provider usage with commit=False so chat can fold it
+    # into the end-of-turn commit. Direct search has no later write boundary;
+    # commit here or its embedding/query-expansion usage is rolled back when
+    # the request session closes.
+    await session.commit()
     return SearchResponse(
         no_answer=result.no_answer,
         chunks=[

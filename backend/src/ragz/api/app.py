@@ -230,7 +230,9 @@ def create_app(
         SecurityHeadersMiddleware, hsts=(settings.environment == "production")
     )
     app.add_middleware(
-        BodySizeLimitMiddleware, max_bytes=body_size_ceiling_bytes(settings.max_upload_mb)
+        BodySizeLimitMiddleware,
+        max_bytes=body_size_ceiling_bytes(settings.max_upload_mb),
+        attachment_max_bytes=(settings.interactive_upload_mb + 10) * 1024 * 1024,
     )
     # Added last => OUTERMOST, deliberately outside TrustedHost and
     # BodySizeLimit. Those two reject requests before any route runs, and a

@@ -239,3 +239,68 @@ async def test_an_acl_committed_mid_query_cannot_be_served_from_the_stale_payloa
     assert calls["n"] >= 2, "retrieve must re-read after the query, not trust one snapshot"
     assert doc.id not in {c.document_id for c in after.chunks}
     assert all("4400" not in c.text for c in after.chunks)
+
+
+async def test_completed_projection_cannot_validate_an_older_qdrant_response(
+    engine,
+    session: AsyncSession,
+    qdrant_collection: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Direct search must bind returned payloads to the committed revision.
+
+    The vector query completes while the document is open. Before its response
+    is decoded, another transaction restricts and fully projects the ACL. A
+    state-only recheck sees an active row; the old response revision is the only
+    evidence that the returned text predates the completed restriction.
+    """
+
+    from ragz.core.db import build_session_factory
+
+    ctx_in, ctx_out, ctx_admin, ws, finance = await seed_acl_workspace(session)
+    doc = await ingest_text(session, ctx_admin, ws, "completed-race.txt", SECRET)
+    client = retrieval_service.get_qdrant()
+    original_query_points = client.query_points
+    projected = False
+
+    async def _query_then_complete_projection(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal projected
+        response = await original_query_points(*args, **kwargs)
+        if kwargs.get("prefetch") is not None and not projected:
+            projected = True
+            factory = build_session_factory(engine)
+            async with factory() as concurrent:
+                await set_document_acl(concurrent, ctx_admin, doc.id, [finance.id])
+        return response
+
+    monkeypatch.setattr(client, "query_points", _query_then_complete_projection)
+
+    result = await retrieve(session, ctx_out, ws.id, SECRET, top_k=10)
+
+    assert projected
+    assert doc.id not in {chunk.document_id for chunk in result.chunks}
+    assert all("4400" not in chunk.text for chunk in result.chunks)
+
+
+async def test_chat_source_recheck_rejects_a_stale_chunk_after_completed_projection(
+    session: AsyncSession,
+    qdrant_collection: None,
+) -> None:
+    from ragz.core.errors import WorkspaceAccessDenied
+    from ragz.modules.chat.service import _source_refs
+    from ragz.modules.retrieval.service import RetrievedChunk
+
+    ctx_in, ctx_out, ctx_admin, ws, finance = await seed_acl_workspace(session)
+    doc = await ingest_text(session, ctx_admin, ws, "chat-race.txt", SECRET)
+    stale = RetrievedChunk(
+        document_id=doc.id,
+        page=1,
+        chunk_index=0,
+        text=SECRET,
+        score=0.99,
+        security_revision=doc.security_revision,
+    )
+    await set_document_acl(session, ctx_admin, doc.id, [finance.id])
+
+    with pytest.raises(WorkspaceAccessDenied):
+        await _source_refs(session, ctx_out, [stale])

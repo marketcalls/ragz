@@ -1,8 +1,9 @@
+import ipaddress
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from ragz.core.crypto import load_kek
@@ -97,11 +98,46 @@ class Settings(BaseSettings):
     tei_url: str = "http://localhost:58080"
     embedding_backend: str = "tei"  # "tei" | "hash" (hash = deterministic, test/dev only)
     embedding_dim: int = 1024  # bge-m3
+    # Query vectors are safe to cache only under their complete model namespace.
+    # Disabled in the class default so tests/direct library users are explicit;
+    # the production Compose deployment opts in below with bounded settings.
+    query_embedding_cache_enabled: bool = False
+    query_embedding_cache_max_entries: int = Field(default=10_000, ge=1, le=100_000)
+    query_embedding_cache_ttl_seconds: int = Field(default=3_600, ge=1, le=86_400)
+    query_expansion_cache_enabled: bool = False
+    query_expansion_cache_max_entries: int = Field(default=5_000, ge=1, le=50_000)
+    query_expansion_cache_ttl_seconds: int = Field(default=3_600, ge=1, le=86_400)
+    multi_query_expansion_timeout_ms: int = Field(default=3_000, ge=100, le=30_000)
+    cohere_rerank_max_retries: int = Field(default=2, ge=0, le=5)
+    cohere_rerank_base_backoff_seconds: float = Field(default=0.5, ge=0.0, le=10.0)
     # Plan E: cross-encoder reranker (CHAT-2 pull-forward)
     rerank_url: str = "http://localhost:58081"
     rerank_backend: str = "tei"  # "tei" | "lexical" (lexical = deterministic, test/dev only)
-    max_upload_mb: int = 100
+    # Large textbooks commonly exceed 100 MiB because of embedded images.
+    # Uploads are streamed to object storage and LiteParse reads a temporary
+    # file, so this is a safety boundary rather than a RAM-allocation target.
+    max_upload_mb: int = 1_024
     interactive_upload_mb: int = 50  # uploads below this jump to the interactive queue
+    document_max_text_mb: int = Field(default=32, ge=1, le=1_024)
+    # LiteParse's own default silently stops at page 1,000. Ragz probes the
+    # source total, then parses bounded page ranges under one document so a
+    # large manual keeps correct original page numbers without one giant
+    # in-memory parse. The maximum is a fail-closed operator limit, never a
+    # truncation target.
+    liteparse_batch_pages: int = Field(default=250, ge=1, le=1_000)
+    liteparse_max_pages: int = Field(default=10_000, ge=1, le=100_000)
+    attachment_uploads_per_minute: int = 20
+    attachment_max_count_per_user: int = 100
+    attachment_max_count_per_org: int = 1000
+    attachment_max_bytes_per_user: int = 512 * 1024 * 1024
+    attachment_max_bytes_per_org: int = 5 * 1024 * 1024 * 1024
+    attachment_max_pending_per_user: int = 5
+    attachment_max_pending_per_org: int = 50
+    attachment_max_pages: int = 500
+    attachment_max_extracted_chars: int = 2_000_000
+    attachment_max_image_pixels: int = 40_000_000
+    attachment_max_archive_entries: int = 10_000
+    attachment_max_uncompressed_bytes: int = 200 * 1024 * 1024
 
     # Plan C: LiteLLM proxy gateway
     litellm_url: str = "http://localhost:54000"
@@ -134,8 +170,8 @@ class Settings(BaseSettings):
     # task_acks_late a killed worker re-delivers it, so one poisonous document
     # could occupy a slot repeatedly.
     #
-    # The bulk default is generous on purpose: CLAUDE.md's own benchmark has
-    # docling at 103s for a 168-page PDF, max_upload_mb is 100, and embedding
+    # The bulk default is generous on purpose: the retained benchmark has
+    # docling at 103s for a 168-page PDF, max_upload_mb is 1024, and embedding
     # adds many provider round-trips on top. A limit that fires on legitimate
     # work is worse than none, because it fails uploads that would have
     # succeeded.
@@ -190,12 +226,11 @@ class Settings(BaseSettings):
     # sec RAGZ-PUB-03 (bounded slice): per-ORGANIZATION resource caps enforced
     # at upload time (modules/documents/service.py::create_from_upload), so a
     # single tenant cannot fill shared Postgres/Qdrant/object storage without
-    # bound. 0 = disabled (the default) -- a fresh install / dev / test keeps
-    # today's unbounded behavior with zero configuration. Other PUB-03
-    # dimensions (OCR pages, embedding tokens, queue depth, job concurrency,
-    # provider spend) are intentionally OUT of this slice's scope.
-    org_max_documents: int = 0
-    org_max_storage_bytes: int = 0
+    # bound. Shipped defaults are finite; an operator may set one dimension to
+    # 0 only as an explicit local override. The byte default still admits more
+    # than two hundred 454 MiB reference PDFs.
+    org_max_documents: int = 10_000
+    org_max_storage_bytes: int = 100 * 1024 * 1024 * 1024
 
     # sec RAGZ-PUB-06 follow-up: IPs/CIDRs of this deployment's own trusted
     # reverse proxy(ies)/CDN egress ranges (e.g. an ALB, nginx, Cloudflare).
@@ -210,10 +245,14 @@ class Settings(BaseSettings):
     # var or a real list programmatically; bare IPs are treated as /32 (or
     # /128 for IPv6).
     trusted_proxies: Annotated[list[str], NoDecode] = []
+    # Explicit operator policy for production OIDC/SMTP/model integrations
+    # hosted on private networks. This is never applied to user/model-influenced
+    # web or media fetching, and cannot allow loopback/link-local/metadata.
+    egress_allowed_cidrs: Annotated[list[str], NoDecode] = []
 
-    @field_validator("trusted_proxies", mode="before")
+    @field_validator("trusted_proxies", "egress_allowed_cidrs", mode="before")
     @classmethod
-    def _split_trusted_proxies(cls, value: object) -> object:
+    def _split_cidr_lists(cls, value: object) -> object:
         """`NoDecode` above stops pydantic-settings' default JSON-array
         decode for this field (which would reject a plain comma-separated
         env var with a confusing JSONDecodeError) -- this validator does the
@@ -222,6 +261,13 @@ class Settings(BaseSettings):
         passes through unchanged."""
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("egress_allowed_cidrs")
+    @classmethod
+    def _validate_egress_allowed_cidrs(cls, value: list[str]) -> list[str]:
+        for item in value:
+            ipaddress.ip_network(item, strict=False)
         return value
 
     @model_validator(mode="after")

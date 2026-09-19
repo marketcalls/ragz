@@ -49,6 +49,8 @@ class ChunkEnrichment:
     summary: str | None
     keywords: list[str] = field(default_factory=list)
     hypothetical_questions: list[str] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 def _enrich_user_message(chunk_text: str) -> str:
@@ -93,8 +95,14 @@ async def enrich_chunk(completer: LLMCompleter, model: str, chunk_text: str) -> 
     )
     parsed = _parse_json_lenient(completion.text)
     if parsed is None:
-        log.warning("enrichment_parse_failed", raw=completion.text[:200])
-        return ChunkEnrichment(summary=None, keywords=[], hypothetical_questions=[])
+        log.warning("enrichment_parse_failed", response_chars=len(completion.text))
+        return ChunkEnrichment(
+            summary=None,
+            keywords=[],
+            hypothetical_questions=[],
+            prompt_tokens=completion.usage.prompt_tokens,
+            completion_tokens=completion.usage.completion_tokens,
+        )
     summary = parsed.get("summary")
     keywords = parsed.get("keywords")
     questions = parsed.get("hypothetical_questions")
@@ -105,4 +113,6 @@ async def enrich_chunk(completer: LLMCompleter, model: str, chunk_text: str) -> 
             [q for q in questions if isinstance(q, str)][:_MAX_HYPOTHETICAL_QUESTIONS]
             if isinstance(questions, list) else []
         ),
+        prompt_tokens=completion.usage.prompt_tokens,
+        completion_tokens=completion.usage.completion_tokens,
     )

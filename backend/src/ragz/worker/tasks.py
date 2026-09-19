@@ -5,6 +5,7 @@ No business logic lives here — only retry/queue/failure plumbing.
 
 import asyncio
 from datetime import timedelta
+from io import BytesIO
 from typing import Any
 from uuid import UUID
 
@@ -272,8 +273,15 @@ def process_attachment_task(attachment_id: str) -> None:
                 try:
                     storage = build_storage(settings)
                     data = await storage.get(attachment.storage_key)
+                    chat_service.validate_attachment_parser_resources(
+                        BytesIO(data), attachment.filename, settings
+                    )
                     text = await asyncio.to_thread(
-                        extract_text, data, attachment.filename
+                        extract_text,
+                        data,
+                        attachment.filename,
+                        max_pages=settings.attachment_max_pages,
+                        max_chars=settings.attachment_max_extracted_chars,
                     )
                     await chat_service.mark_attachment_ready(session, attachment.id, text)
                 except Exception:
@@ -401,21 +409,20 @@ def cleanup_stale_attachments_task() -> None:
             async with factory() as session:
                 cutoff = naive_utc() - timedelta(hours=24)
                 stale = await chat_service.list_stale_attachments(session, cutoff)
-                stale_ids_by_chat: dict[UUID, list[UUID]] = {}
-                for a in stale:
-                    stale_ids_by_chat.setdefault(a.chat_id, []).append(a.id)
-                storage = build_storage(settings)
                 for attachment in stale:
-                    try:
-                        await storage.delete(attachment.storage_key)
-                    except Exception:
-                        structlog.get_logger().warning(
-                            "attachment_blob_delete_failed",
-                            attachment_id=str(attachment.id), exc_info=True,
-                        )
                     await chat_service.delete_attachment(session, attachment)
-                for chat_id, attachment_ids in stale_ids_by_chat.items():
-                    await delete_ephemeral_points(chat_id, attachment_ids)
+                storage = build_storage(settings)
+
+                async def _delete_vectors(chat_id: UUID, attachment_id: UUID) -> None:
+                    await delete_ephemeral_points(chat_id, [attachment_id])
+
+                for job in await chat_service.list_due_cleanup_jobs(session):
+                    await chat_service.process_cleanup_job(
+                        session,
+                        job,
+                        delete_blob=storage.delete,
+                        delete_vectors=_delete_vectors,
+                    )
         finally:
             await engine.dispose()
 

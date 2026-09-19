@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.core.errors import WorkspaceAccessDenied
 from ragz.modules.documents.ingest import run_delete
 from ragz.modules.documents.pipeline import Chunk, upsert_hq_points
+from ragz.modules.documents.service import create_from_upload
 from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
 from ragz.modules.retrieval.client import COLLECTION, get_qdrant
 from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
@@ -279,7 +280,7 @@ async def test_chunk_refs_cross_workspace_never_resolve(
 async def test_chunk_refs_cross_org_never_resolve(
     session: AsyncSession, two_orgs: dict  # type: ignore[type-arg]
 ) -> None:
-    ctx_a, ws_a, _ = two_orgs["a"]
+    ctx_a, ws_a, doc_a = two_orgs["a"]
     _, _, doc_b = two_orgs["b"]
     # Org A replays org B's chunk_ref against its own workspace: nothing.
     assert (
@@ -329,16 +330,17 @@ async def test_hq_point_respects_tenant_and_acl_filters(
     hypothetical question's embedding (per spec §4), so querying with the
     EXACT question text is the strongest possible lure: if the tenant/ACL
     filter were broken, this hq point would be the top hit by construction."""
-    ctx_a, ws_a, _ = two_orgs["a"]
+    ctx_a, ws_a, doc_a = two_orgs["a"]
     ctx_b, ws_b, _ = two_orgs["b"]
 
     question = "what is the hq secret launch code?"
     q_dense = (await _test_dense_embedder().embed([question]))[0]
     q_sparse = (await asyncio.to_thread(embed_sparse, [question]))[0]
     await upsert_hq_points(
-        org_id=ctx_a.org_id, workspace_id=ws_a.id, document_id=uuid4(),
+        org_id=ctx_a.org_id, workspace_id=ws_a.id, document_id=doc_a.id,
         mime="text/plain", created_at=datetime.now(), acl_group_ids=[],
         version=1, meta=None, is_current=True,
+        security_revision=doc_a.security_revision,
         parent_chunks=[Chunk(text="hq secret: the launch code is 4471", page=1, chunk_index=0)],
         parent_summaries=[None], hq_texts=[[question]],
         hq_dense=[[q_dense]], hq_sparse=[[q_sparse]], collection_name=COLLECTION,
@@ -354,14 +356,28 @@ async def test_hq_point_respects_tenant_and_acl_filters(
     # Same org, one workspace, wrong ACL group — the ACL clause must also
     # exclude an hq point exactly like it excludes its parent chunk.
     ctx_in, ctx_out, _, acl_ws, finance = await seed_acl_workspace(session)
+    acl_doc = await create_from_upload(
+        session,
+        ctx_in,
+        acl_ws.id,
+        filename="hq-finance.txt",
+        mime="text/plain",
+        data=b"finance placeholder",
+    )
+    acl_doc.status = "indexed"
+    acl_doc.is_current = True
+    acl_doc.vectors_present = True
+    acl_doc.acl_group_ids = [finance.id]
+    await session.commit()
     acl_question = "what is the finance hq secret budget code?"
     acl_dense = (await _test_dense_embedder().embed([acl_question]))[0]
     acl_sparse = (await asyncio.to_thread(embed_sparse, [acl_question]))[0]
     await upsert_hq_points(
-        org_id=ctx_in.org_id, workspace_id=acl_ws.id, document_id=uuid4(),
+        org_id=ctx_in.org_id, workspace_id=acl_ws.id, document_id=acl_doc.id,
         mime="text/plain", created_at=datetime.now(),
         acl_group_ids=[str(finance.id)],
         version=1, meta=None, is_current=True,
+        security_revision=acl_doc.security_revision,
         parent_chunks=[Chunk(text="finance hq secret: the budget code is 8820",
                               page=1, chunk_index=0)],
         parent_summaries=[None], hq_texts=[[acl_question]],

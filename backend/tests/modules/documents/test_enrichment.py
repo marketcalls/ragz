@@ -28,6 +28,8 @@ async def test_enrich_chunk_parses_clean_json() -> None:
         summary="PPE is mandatory in zone 2.",
         keywords=["ppe", "zone 2", "safety"],
         hypothetical_questions=["What PPE is required in zone 2?"],
+        prompt_tokens=10,
+        completion_tokens=5,
     )
 
 
@@ -60,7 +62,13 @@ async def test_enrich_chunk_caps_hypothetical_questions_at_three() -> None:
 async def test_enrich_chunk_falls_back_on_garbage_output() -> None:
     completer = _FakeCompleter(["not json at all, sorry"])
     result = await enrich_chunk(completer, "m", "text")
-    assert result == ChunkEnrichment(summary=None, keywords=[], hypothetical_questions=[])
+    assert result == ChunkEnrichment(
+        summary=None,
+        keywords=[],
+        hypothetical_questions=[],
+        prompt_tokens=10,
+        completion_tokens=5,
+    )
 
 
 async def test_enrich_chunk_wraps_text_as_data_not_instructions() -> None:

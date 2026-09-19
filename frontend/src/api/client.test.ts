@@ -1,6 +1,11 @@
 import { getAccessToken, setAccessToken } from '@/lib/auth-store';
 
-import { authFetch, refreshAccessToken, setOnAuthFailure } from './client';
+import {
+  authFetch,
+  beginAuthIdentityTransition,
+  refreshAccessToken,
+  setOnAuthFailure,
+} from './client';
 
 function res(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -103,4 +108,101 @@ test('refresh success with a malformed (empty) body is treated as failure and cl
   );
   expect(await refreshAccessToken()).toBe(false);
   expect(getAccessToken()).toBeNull();
+});
+
+test('a late refresh cannot overwrite a newer identity or replay its request as that identity', async () => {
+  setAccessToken('identity-a');
+  let resolveRefresh: ((response: Response) => void) | undefined;
+  const refreshResponse = new Promise<Response>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  const protectedRequests: Array<string | null> = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: RequestInfo | URL) => {
+      const url = typeof req === 'string' ? req : req instanceof URL ? req.href : req.url;
+      if (url.includes('/auth/refresh')) return refreshResponse;
+      protectedRequests.push(url);
+      return res(401);
+    }),
+  );
+  const pending = authFetch(new Request('http://x/api/v1/workspaces'));
+  await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2));
+  setAccessToken('identity-b');
+  resolveRefresh?.(res(200, { access_token: 'identity-a-refreshed' }));
+  expect((await pending).status).toBe(401);
+  expect(getAccessToken()).toBe('identity-b');
+  expect(protectedRequests).toHaveLength(1);
+});
+
+test('a late failed refresh cannot clear a newer login or fire auth failure', async () => {
+  setAccessToken('identity-a');
+  const onFail = vi.fn();
+  setOnAuthFailure(onFail);
+  let resolveRefresh: ((response: Response) => void) | undefined;
+  const refreshResponse = new Promise<Response>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (req: RequestInfo | URL) => {
+      const url = typeof req === 'string' ? req : req instanceof URL ? req.href : req.url;
+      return url.includes('/auth/refresh') ? refreshResponse : res(401);
+    }),
+  );
+  const pending = authFetch(new Request('http://x/api/v1/workspaces'));
+  await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2));
+  setAccessToken('identity-b');
+  resolveRefresh?.(res(401));
+  expect((await pending).status).toBe(401);
+  expect(getAccessToken()).toBe('identity-b');
+  expect(onFail).not.toHaveBeenCalled();
+});
+
+test('a stale request cannot start a cookie-rotating refresh after identity transition', async () => {
+  setAccessToken('identity-a');
+  let resolveProtected: ((response: Response) => void) | undefined;
+  const protectedResponse = new Promise<Response>((resolve) => {
+    resolveProtected = resolve;
+  });
+  const fetchMock = vi.fn(async (req: RequestInfo | URL) => {
+    const url = typeof req === 'string' ? req : req instanceof URL ? req.href : req.url;
+    if (url.includes('/auth/refresh')) return res(200, { access_token: 'identity-a-refreshed' });
+    return protectedResponse;
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const pending = authFetch(new Request('http://x/api/v1/workspaces'));
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  setAccessToken('identity-b');
+  resolveProtected?.(res(401));
+
+  expect((await pending).status).toBe(401);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(getAccessToken()).toBe('identity-b');
+});
+
+test('an explicit identity transition aborts and settles an older refresh first', async () => {
+  setAccessToken('identity-a');
+  let refreshAborted = false;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      (req: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const url = typeof req === 'string' ? req : req instanceof URL ? req.href : req.url;
+          if (!url.includes('/auth/refresh')) return reject(new Error('unexpected URL'));
+          init?.signal?.addEventListener('abort', () => {
+            refreshAborted = true;
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    ),
+  );
+  const refresh = refreshAccessToken();
+  await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledOnce());
+  await beginAuthIdentityTransition();
+  expect(await refresh).toBe(false);
+  expect(refreshAborted).toBe(true);
+  expect(getAccessToken()).toBe('identity-a');
 });

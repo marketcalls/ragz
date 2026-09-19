@@ -163,6 +163,28 @@ test('401 → refresh → single retry, then succeeds', async () => {
   expect(failures).toEqual([]);
 });
 
+test('an upload from an old identity cannot refresh or retry as a newer identity', async () => {
+  setAccessToken('identity-a');
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ access_token: 'wrong-refresh' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  const file = new File(['x'], 'a.pdf');
+  const promise = uploadDocuments('w1', [{ file, folderId: null }], vi.fn());
+  const first = FakeXhr.instances[0]!;
+
+  setAccessToken('identity-b');
+  first.status = 401;
+  first.onload?.();
+
+  expect(await promise).toEqual([{ file, message: 'session expired' }]);
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(FakeXhr.instances).toHaveLength(1);
+});
+
 // --- walkDroppedItems / walkEntry (dropzone.tsx) ---
 //
 // Mocks the File and Directory Entries API shape returned by

@@ -219,6 +219,48 @@ async def test_resolve_model_order(
         await resolve_model(session, requested_model_id=None, default_model_id=None)
 
 
+async def test_invalid_existing_default_falls_back_to_an_enabled_chat_model(
+    session: AsyncSession, seeded_user: User, settings: Settings
+) -> None:
+    ctx = super_ctx(seeded_user)
+    fallback = await create_model(
+        session,
+        ctx,
+        litellm_model_name="fallback-chat",
+        display_name="Fallback chat",
+        provider_kind="ollama",
+        base_url="http://ollama:11434",
+        api_key=None,
+        settings=settings,
+    )
+    invalid_default = await create_model(
+        session,
+        ctx,
+        litellm_model_name="disabled-default",
+        display_name="Disabled default",
+        provider_kind="ollama",
+        base_url="http://ollama:11434",
+        api_key=None,
+        settings=settings,
+    )
+    await update_model(
+        session,
+        ctx,
+        invalid_default.id,
+        display_name=None,
+        base_url=None,
+        enabled=False,
+        api_key=None,
+        settings=settings,
+    )
+
+    resolved = await resolve_model(
+        session, requested_model_id=None, default_model_id=invalid_default.id
+    )
+
+    assert resolved.id == fallback.id
+
+
 async def test_create_model_blocks_ssrf_base_url_in_production(
     session: AsyncSession, seeded_user: User, production_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,

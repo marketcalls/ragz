@@ -1,0 +1,500 @@
+{
+  "actions": [],
+  "advisories": {
+    "1123911": {
+      "findings": [
+        {
+          "version": "4.2.0",
+          "paths": [
+            ".>openapi-typescript>@redocly/openapi-core>js-yaml"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/nodeca/js-yaml/security/advisories/GHSA-52cp-r559-cp3m\n- https://nvd.nist.gov/vuln/detail/CVE-2026-59869\n- https://github.com/nodeca/js-yaml/commit/24f13e79ee1343a7e30bd6f6c9d9cdbf0ac9b2b7\n- https://github.com/nodeca/js-yaml/commit/59423c6f8cdc78742ac00e25a4dd39ef16b702e4\n- https://github.com/nodeca/js-yaml/releases/tag/3.15.0\n- https://github.com/nodeca/js-yaml/releases/tag/4.3.0\n- https://github.com/advisories/GHSA-52cp-r559-cp3m",
+      "created": "2026-07-20T21:19:09.000Z",
+      "id": 1123911,
+      "npm_advisory_id": null,
+      "overview": "### Impact\n\njs-yaml can spend quadratic CPU time parsing a document whose size grows only linearly. The issue is triggered by a chain of mappings where each mapping merges the previous one:\n\n```yaml\na0: &a0 { k0: 0 }\na1: &a1 { <<: *a0, k1: 1 }\na2: &a2 { <<: *a1, k2: 2 }\na3: &a3 { <<: *a2, k3: 3 }\n...\nb: *aN\n```\n\nFor each new mapping, the loader has to enumerate the keys inherited from the previous mapping. With N chained mappings, this results in roughly 1 + 2 + ... + N merged-key visits, i.e., O(N^2) work for O(N) input size.\n\n### PoC\n\nFrom N = 4000 delay become > 1s (doc size < 100K)\n\n```js\nimport { performance } from 'node:perf_hooks'\nimport { Buffer } from 'node:buffer'\nimport { load, YAML11_SCHEMA } from 'js-yaml'\n\nconst n = Number(process.argv[2] || 4000)\n\nfunction makeMergeChain (count) {\n  const lines = ['a0: &a0 { k0: 0 }']\n\n  for (let i = 1; i < count; i++) {\n    lines.push(`a${i}: &a${i} { <<: *a${i - 1}, k${i}: ${i} }`)\n  }\n\n  lines.push(`b: *a${count - 1}`)\n  return `${lines.join('\\n')}\\n`\n}\n\nconst source = makeMergeChain(n)\n\nconsole.log(source.split('\\n').slice(0, 8).join('\\n'))\nconsole.log('...')\nconsole.log(source.split('\\n').slice(-4).join('\\n'))\nconsole.log()\nconsole.log(`N: ${n}`)\nconsole.log(`YAML size: ${Buffer.byteLength(source)} bytes`)\n\nconst started = performance.now()\nconst result = load(source, { schema: YAML11_SCHEMA })\nconst elapsed = performance.now() - started\n\nconsole.log(`parse time: ${elapsed.toFixed(1)} ms`)\nconsole.log(`top-level keys: ${Object.keys(result).length}`)\nconsole.log(`b keys: ${Object.keys(result.b).length}`)\n```\n\n### Patches\n\nFix released. The most robust protection is to limit the total number of merged keys per parse call. This should close all past and future edge cases with merge. The default 10K-key limit should be okay in most cases.",
+      "reported_by": null,
+      "title": "js-yaml: YAML merge-key chains can force quadratic CPU consumption",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-59869"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "js-yaml",
+      "vulnerable_versions": ">=4.0.0 <4.3.0",
+      "github_advisory_id": "GHSA-52cp-r559-cp3m",
+      "recommendation": "Upgrade to version 4.3.0 or later",
+      "patched_versions": ">=4.3.0",
+      "updated": "2026-07-20T21:19:10.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-407"
+      ],
+      "url": "https://github.com/advisories/GHSA-52cp-r559-cp3m"
+    },
+    "1130588": {
+      "findings": [
+        {
+          "version": "1.1.16",
+          "paths": [
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-mh99-v99m-4gvg\n- https://nvd.nist.gov/vuln/detail/CVE-2026-14257\n- https://github.com/juliangruber/brace-expansion/commit/a1bd33999ea75262c4749fff3bbb0d1372bd07b5\n- https://github.com/juliangruber/brace-expansion\n- https://www.npmjs.com/package/brace-expansion\n- https://github.com/juliangruber/brace-expansion/pull/129\n- https://github.com/juliangruber/brace-expansion/pull/130\n- https://github.com/juliangruber/brace-expansion/pull/136\n- https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d\n- https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031\n- https://github.com/juliangruber/brace-expansion/commit/d13ff455a58b0d56704f0111e3c2a0b16ceb06eb\n- https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      "created": "2026-07-24T21:53:14.000Z",
+      "id": 1130588,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\n`expand()` bounds the *number* of results it produces (the `max` option,\n`100_000` by default) but not their *length*. By chaining many brace groups,\nan attacker keeps the result count under `max` while making every result grow\nwith the number of groups. Building `max` long results — plus the intermediate\narrays combined at each brace group — exhausts memory and crashes the Node\nprocess with an **uncatchable** out-of-memory error. `try/catch` around\n`expand()` does not help: the fatal error terminates the process.\n\nA ~7.5 KB input (`'{a,b}'.repeat(1500)`) is enough to crash a default Node\nprocess.\n\n### Details\n\nFor `N` chained brace groups such as `'{a,b}'.repeat(N)`:\n\n- the result count is `2^N`, immediately capped at `max` (`100_000`), so the\n  `max` protection appears to hold, but\n- each result is `N` characters long, so the total output size is\n  `max × N` characters, which grows without bound in `N`.\n\n`expand_` combines each brace set with the fully-expanded tail:\n\n```js\nconst post = m.post.length ? expand_(m.post, max, false) : ['']\n...\nfor (let j = 0; j < N.length; j++) {\n  for (let k = 0; k < post.length && expansions.length < max; k++) {\n    const expansion = pre + N[j] + post[k]   // grows one group longer per level\n    ...\n    expansions.push(expansion)\n  }\n}\n```\n\nThe loop guard `expansions.length < max` limits how many strings are built, but\nnothing limits how long they get. Each recursion level materializes another\narray of up to `max` strings, one character longer than the level below, and —\nbecause V8 represents `pre + N[j] + post[k]` as a cons-string (rope) that\nreferences `post[k]` — those intermediate strings stay reachable through the\nwhole chain. Memory therefore scales with `max × N`.\n\nMeasured on `5.0.7` (`'{a,b}'.repeat(N)`, default `max`):\n\n| groups (N) | input bytes | result count | peak RSS |\n|---|---|---|---|\n| 20 | 100 | 100,000 | ~80 MB |\n| 50 | 250 | 100,000 | ~214 MB |\n| 100 | 500 | 100,000 | ~409 MB |\n| 300 | 1,500 | 100,000 | ~1,148 MB |\n| 1500 | 7,500 | — | **OOM crash** |\n\n### Proof of concept\n\n```js\nconst { expand } = require('brace-expansion')\n\n// ~7.5 KB input — crashes the process with a fatal, uncatchable OOM:\n//   FATAL ERROR: ... JavaScript heap out of memory\ntry {\n  expand('{a,b}'.repeat(1500))\n} catch (e) {\n  // never reached — the process is already dead\n}\n```\n\n### Impact\n\nAny application that passes attacker-influenced strings to\n`brace-expansion.expand()` — directly, or transitively via `minimatch` / `glob`\nbrace patterns — can be crashed by a small request. Because the failure is a\nfatal V8 out-of-memory error rather than a thrown exception, it cannot be caught\nand it takes down the whole worker/process, denying service.\n\n### Remediation\n\nUpgrade to a patched release. The fix bounds the total number of characters a\nsingle `expand()` call may accumulate (`EXPANSION_MAX_LENGTH`, default\n`4_000_000`, configurable via a new `maxLength` option), applied inside the\noutput-building loops so intermediate arrays are bounded too. Once the limit is\nreached, output is truncated — consistent with how `max` already truncates —\ninstead of growing without bound. The limit sits well above any realistic\nexpansion (100,000 results hitting `max` measure ~1M characters), so legitimate\ninput is unaffected.\n\nAfter the fix, `'{a,b}'.repeat(1500)` returns a bounded, truncated result in\n~0.7 s using ~340 MB and never crashes, including under a constrained 512 MB\nheap.\n\nThe fix bounds memory but the algorithm still rebuilds intermediate arrays at\neach level (roughly `O(N × maxLength)` work on this input class). A streaming\nrewrite that produces output in `O(total output size)` can be a non-urgent\nfollow-up.\n\nIf immediate upgrade isn't possible, avoid passing untrusted input to\n`expand()` / glob brace patterns, or pass a small explicit `max` **and**\n`maxLength`.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-14257"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": "<1.1.17",
+      "github_advisory_id": "GHSA-mh99-v99m-4gvg",
+      "recommendation": "Upgrade to version 1.1.17 or later",
+      "patched_versions": ">=1.1.17",
+      "updated": "2026-07-31T19:37:57.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg"
+    },
+    "1130589": {
+      "findings": [
+        {
+          "version": "2.1.2",
+          "paths": [
+            ".>openapi-typescript>@redocly/openapi-core>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-mh99-v99m-4gvg\n- https://nvd.nist.gov/vuln/detail/CVE-2026-14257\n- https://github.com/juliangruber/brace-expansion/commit/a1bd33999ea75262c4749fff3bbb0d1372bd07b5\n- https://github.com/juliangruber/brace-expansion\n- https://www.npmjs.com/package/brace-expansion\n- https://github.com/juliangruber/brace-expansion/pull/129\n- https://github.com/juliangruber/brace-expansion/pull/130\n- https://github.com/juliangruber/brace-expansion/pull/136\n- https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d\n- https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031\n- https://github.com/juliangruber/brace-expansion/commit/d13ff455a58b0d56704f0111e3c2a0b16ceb06eb\n- https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      "created": "2026-07-24T21:53:14.000Z",
+      "id": 1130589,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\n`expand()` bounds the *number* of results it produces (the `max` option,\n`100_000` by default) but not their *length*. By chaining many brace groups,\nan attacker keeps the result count under `max` while making every result grow\nwith the number of groups. Building `max` long results — plus the intermediate\narrays combined at each brace group — exhausts memory and crashes the Node\nprocess with an **uncatchable** out-of-memory error. `try/catch` around\n`expand()` does not help: the fatal error terminates the process.\n\nA ~7.5 KB input (`'{a,b}'.repeat(1500)`) is enough to crash a default Node\nprocess.\n\n### Details\n\nFor `N` chained brace groups such as `'{a,b}'.repeat(N)`:\n\n- the result count is `2^N`, immediately capped at `max` (`100_000`), so the\n  `max` protection appears to hold, but\n- each result is `N` characters long, so the total output size is\n  `max × N` characters, which grows without bound in `N`.\n\n`expand_` combines each brace set with the fully-expanded tail:\n\n```js\nconst post = m.post.length ? expand_(m.post, max, false) : ['']\n...\nfor (let j = 0; j < N.length; j++) {\n  for (let k = 0; k < post.length && expansions.length < max; k++) {\n    const expansion = pre + N[j] + post[k]   // grows one group longer per level\n    ...\n    expansions.push(expansion)\n  }\n}\n```\n\nThe loop guard `expansions.length < max` limits how many strings are built, but\nnothing limits how long they get. Each recursion level materializes another\narray of up to `max` strings, one character longer than the level below, and —\nbecause V8 represents `pre + N[j] + post[k]` as a cons-string (rope) that\nreferences `post[k]` — those intermediate strings stay reachable through the\nwhole chain. Memory therefore scales with `max × N`.\n\nMeasured on `5.0.7` (`'{a,b}'.repeat(N)`, default `max`):\n\n| groups (N) | input bytes | result count | peak RSS |\n|---|---|---|---|\n| 20 | 100 | 100,000 | ~80 MB |\n| 50 | 250 | 100,000 | ~214 MB |\n| 100 | 500 | 100,000 | ~409 MB |\n| 300 | 1,500 | 100,000 | ~1,148 MB |\n| 1500 | 7,500 | — | **OOM crash** |\n\n### Proof of concept\n\n```js\nconst { expand } = require('brace-expansion')\n\n// ~7.5 KB input — crashes the process with a fatal, uncatchable OOM:\n//   FATAL ERROR: ... JavaScript heap out of memory\ntry {\n  expand('{a,b}'.repeat(1500))\n} catch (e) {\n  // never reached — the process is already dead\n}\n```\n\n### Impact\n\nAny application that passes attacker-influenced strings to\n`brace-expansion.expand()` — directly, or transitively via `minimatch` / `glob`\nbrace patterns — can be crashed by a small request. Because the failure is a\nfatal V8 out-of-memory error rather than a thrown exception, it cannot be caught\nand it takes down the whole worker/process, denying service.\n\n### Remediation\n\nUpgrade to a patched release. The fix bounds the total number of characters a\nsingle `expand()` call may accumulate (`EXPANSION_MAX_LENGTH`, default\n`4_000_000`, configurable via a new `maxLength` option), applied inside the\noutput-building loops so intermediate arrays are bounded too. Once the limit is\nreached, output is truncated — consistent with how `max` already truncates —\ninstead of growing without bound. The limit sits well above any realistic\nexpansion (100,000 results hitting `max` measure ~1M characters), so legitimate\ninput is unaffected.\n\nAfter the fix, `'{a,b}'.repeat(1500)` returns a bounded, truncated result in\n~0.7 s using ~340 MB and never crashes, including under a constrained 512 MB\nheap.\n\nThe fix bounds memory but the algorithm still rebuilds intermediate arrays at\neach level (roughly `O(N × maxLength)` work on this input class). A streaming\nrewrite that produces output in `O(total output size)` can be a non-urgent\nfollow-up.\n\nIf immediate upgrade isn't possible, avoid passing untrusted input to\n`expand()` / glob brace patterns, or pass a small explicit `max` **and**\n`maxLength`.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-14257"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=2.0.0 <2.1.3",
+      "github_advisory_id": "GHSA-mh99-v99m-4gvg",
+      "recommendation": "Upgrade to version 2.1.3 or later",
+      "patched_versions": ">=2.1.3",
+      "updated": "2026-07-31T19:37:57.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg"
+    },
+    "1130591": {
+      "findings": [
+        {
+          "version": "5.0.7",
+          "paths": [
+            ".>typescript-eslint>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-mh99-v99m-4gvg\n- https://nvd.nist.gov/vuln/detail/CVE-2026-14257\n- https://github.com/juliangruber/brace-expansion/commit/a1bd33999ea75262c4749fff3bbb0d1372bd07b5\n- https://github.com/juliangruber/brace-expansion\n- https://www.npmjs.com/package/brace-expansion\n- https://github.com/juliangruber/brace-expansion/pull/129\n- https://github.com/juliangruber/brace-expansion/pull/130\n- https://github.com/juliangruber/brace-expansion/pull/136\n- https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d\n- https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031\n- https://github.com/juliangruber/brace-expansion/commit/d13ff455a58b0d56704f0111e3c2a0b16ceb06eb\n- https://github.com/advisories/GHSA-mh99-v99m-4gvg",
+      "created": "2026-07-24T21:53:14.000Z",
+      "id": 1130591,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\n`expand()` bounds the *number* of results it produces (the `max` option,\n`100_000` by default) but not their *length*. By chaining many brace groups,\nan attacker keeps the result count under `max` while making every result grow\nwith the number of groups. Building `max` long results — plus the intermediate\narrays combined at each brace group — exhausts memory and crashes the Node\nprocess with an **uncatchable** out-of-memory error. `try/catch` around\n`expand()` does not help: the fatal error terminates the process.\n\nA ~7.5 KB input (`'{a,b}'.repeat(1500)`) is enough to crash a default Node\nprocess.\n\n### Details\n\nFor `N` chained brace groups such as `'{a,b}'.repeat(N)`:\n\n- the result count is `2^N`, immediately capped at `max` (`100_000`), so the\n  `max` protection appears to hold, but\n- each result is `N` characters long, so the total output size is\n  `max × N` characters, which grows without bound in `N`.\n\n`expand_` combines each brace set with the fully-expanded tail:\n\n```js\nconst post = m.post.length ? expand_(m.post, max, false) : ['']\n...\nfor (let j = 0; j < N.length; j++) {\n  for (let k = 0; k < post.length && expansions.length < max; k++) {\n    const expansion = pre + N[j] + post[k]   // grows one group longer per level\n    ...\n    expansions.push(expansion)\n  }\n}\n```\n\nThe loop guard `expansions.length < max` limits how many strings are built, but\nnothing limits how long they get. Each recursion level materializes another\narray of up to `max` strings, one character longer than the level below, and —\nbecause V8 represents `pre + N[j] + post[k]` as a cons-string (rope) that\nreferences `post[k]` — those intermediate strings stay reachable through the\nwhole chain. Memory therefore scales with `max × N`.\n\nMeasured on `5.0.7` (`'{a,b}'.repeat(N)`, default `max`):\n\n| groups (N) | input bytes | result count | peak RSS |\n|---|---|---|---|\n| 20 | 100 | 100,000 | ~80 MB |\n| 50 | 250 | 100,000 | ~214 MB |\n| 100 | 500 | 100,000 | ~409 MB |\n| 300 | 1,500 | 100,000 | ~1,148 MB |\n| 1500 | 7,500 | — | **OOM crash** |\n\n### Proof of concept\n\n```js\nconst { expand } = require('brace-expansion')\n\n// ~7.5 KB input — crashes the process with a fatal, uncatchable OOM:\n//   FATAL ERROR: ... JavaScript heap out of memory\ntry {\n  expand('{a,b}'.repeat(1500))\n} catch (e) {\n  // never reached — the process is already dead\n}\n```\n\n### Impact\n\nAny application that passes attacker-influenced strings to\n`brace-expansion.expand()` — directly, or transitively via `minimatch` / `glob`\nbrace patterns — can be crashed by a small request. Because the failure is a\nfatal V8 out-of-memory error rather than a thrown exception, it cannot be caught\nand it takes down the whole worker/process, denying service.\n\n### Remediation\n\nUpgrade to a patched release. The fix bounds the total number of characters a\nsingle `expand()` call may accumulate (`EXPANSION_MAX_LENGTH`, default\n`4_000_000`, configurable via a new `maxLength` option), applied inside the\noutput-building loops so intermediate arrays are bounded too. Once the limit is\nreached, output is truncated — consistent with how `max` already truncates —\ninstead of growing without bound. The limit sits well above any realistic\nexpansion (100,000 results hitting `max` measure ~1M characters), so legitimate\ninput is unaffected.\n\nAfter the fix, `'{a,b}'.repeat(1500)` returns a bounded, truncated result in\n~0.7 s using ~340 MB and never crashes, including under a constrained 512 MB\nheap.\n\nThe fix bounds memory but the algorithm still rebuilds intermediate arrays at\neach level (roughly `O(N × maxLength)` work on this input class). A streaming\nrewrite that produces output in `O(total output size)` can be a non-urgent\nfollow-up.\n\nIf immediate upgrade isn't possible, avoid passing untrusted input to\n`expand()` / glob brace patterns, or pass a small explicit `max` **and**\n`maxLength`.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-14257"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=4.0.0 <5.0.8",
+      "github_advisory_id": "GHSA-mh99-v99m-4gvg",
+      "recommendation": "Upgrade to version 5.0.8 or later",
+      "patched_versions": ">=5.0.8",
+      "updated": "2026-07-31T19:37:57.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg"
+    },
+    "1130709": {
+      "findings": [
+        {
+          "version": "8.5.19",
+          "paths": [
+            ".>postcss"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/postcss/postcss/security/advisories/GHSA-fxqj-rqcc-2cmp\n- https://github.com/postcss/postcss/commit/7beca139e70f9075c6b19700fcb00dd8033e5da8\n- https://github.com/postcss/postcss/releases/tag/8.5.19\n- https://github.com/advisories/GHSA-fxqj-rqcc-2cmp",
+      "created": "2026-08-03T17:11:39.000Z",
+      "id": 1130709,
+      "npm_advisory_id": null,
+      "overview": "## Summary\n\nThe fix for GHSA-6g55-p6wh-862q added a guard in `lib/previous-map.js` `PreviousMap.loadFile()` that restricts an attacker-controlled `sourceMappingURL` (from a CSS comment) to a `.map` extension and, for untrusted maps, rejects `..` traversal and absolute paths. The traversal/absolute rejection is nested inside `if (cssFile) { ... }`. When PostCSS is invoked without the `from` option, `cssFile` is falsy and that branch is skipped, leaving only the `.map` extension check.\n\n`PreviousMap` is constructed by `lib/input.js` whenever `pathAvailable && sourceMapAvailable` (under Node with source-map available), independent of `opts.from`/`opts.map` (the constructor returns early only for `opts.map === false`). So `postcss([]).process(css)` on attacker CSS reaches `loadFile` with `cssFile` undefined, and an attacker `/*# sourceMappingURL=/abs/path/x.map */` (or `../`-traversing path) is read via `readFileSync`. When the file is valid JSON, its `sources` (filesystem paths) and `sourcesContent` (source contents) are disclosed in the generated source map.\n\n## Affected code (v8.5.22 — the release carrying the GHSA-6g55 fix)\n\n```js\n// lib/previous-map.js\nloadFile(path, cssFile, trusted) {\n  if (!trusted && !this.unsafeMap) {\n    if (!/\\.map$/i.test(path)) {\n      return undefined\n    }\n    if (cssFile) {                       // guard runs ONLY when `from` is set\n      let relativePath = relative(dirname(cssFile), path)\n      if (relativePath === '..' ||\n          relativePath.startsWith('..' + sep) ||\n          isAbsolute(relativePath)) {\n        return undefined\n      }\n    }\n  }\n  this.root = dirname(path)\n  if (existsSync(path)) {\n    this.mapFile = path\n    return readFileSync(path, 'utf-8').toString().trim()   // sink\n  }\n}\n\n// loadMap(): untrusted annotation path, trusted=false; file === opts.from\n} else if (this.annotation) {\n  let map = this.annotation\n  if (file) map = join(dirname(file), map)   // no `from` -> map stays the raw URL\n  let unknown = this.loadFile(map, file, false)  // file undefined -> cssFile falsy\n```\n\n## Proof of concept (verified on postcss 8.5.22)\n\n```js\nconst postcss = require('postcss')\nconst fs = require('fs')\n\n// a 'secret' sourcemap OUTSIDE any expected tree (stand-in for another project's .map)\nconst secret = '/tmp/pcpoc/secret_out_of_tree.map'\nfs.writeFileSync(secret, JSON.stringify({\n  version: 3, sources: ['/etc/REAL_PATH_LEAK'], mappings: '', names: [],\n  sourcesContent: ['TOP_SECRET_abcdef']\n}))\n\nconst css = 'a{color:red}\\n/*# sourceMappingURL=' + secret + ' */'\nconst leaks = m => m && JSON.stringify(m.toJSON ? m.toJSON() : m).includes('TOP_SECRET_abcdef')\n\n;(async () => {\n  // A) NO `from`  -> guard skipped -> arbitrary absolute .map read + disclosed\n  const a = await postcss([]).process(css, { map: true })\n  console.log('no from   -> leaked:', !!leaks(a.map))   // true\n\n  // B) WITH `from` -> guard active -> blocked\n  const b = await postcss([]).process(css, { from: '/tmp/pcpoc/in.css', map: true })\n  console.log('with from -> leaked:', !!leaks(b.map))    // false\n})()\n```\n\nObserved output on postcss 8.5.22:\n\n```\nno from   -> leaked: true      # sourcesContent 'TOP_SECRET_abcdef' AND sources '/etc/REAL_PATH_LEAK' appear in result.map\nwith from -> leaked: false     # guard rejects the absolute path\n```\n\n`../` traversal (no `from`) also succeeds; non-`.map` targets (`.txt`, `?x=.map`, `#.map`) are blocked by the `.map` check. The tested build contains the GHSA-6g55 fix (`this.json = JSON.parse(...)` in `loadMap`, `consumer()` uses `this.json || this.text`), so this is a residual of that fix.\n\n## Impact\n\nArbitrary `.map`-file read (absolute path or `../` traversal) and disclosure of the target map's `sources` (local filesystem paths) and `sourcesContent` (source) into the generated source map, for any consumer that runs PostCSS on attacker-influenced CSS without a `from` option and exposes `result.map` (online CSS playgrounds, minify/lint services, string-input build steps). Bounded to files ending in `.map` that parse as JSON.\n\n## Suggested fix\n\nApply the traversal/absolute-path rejection to the untrusted map path regardless of whether `cssFile` is present (resolve against `process.cwd()` when there is no `cssFile`, and reject absolute paths and `..` escape in all untrusted cases), or refuse to load an untrusted external map when no base file is known.",
+      "reported_by": null,
+      "title": "PostCSS: incomplete fix of GHSA-6g55-p6wh-862q — attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-69153"
+      ],
+      "access": "public",
+      "severity": "moderate",
+      "module_name": "postcss",
+      "vulnerable_versions": "<=8.5.22",
+      "github_advisory_id": "GHSA-fxqj-rqcc-2cmp",
+      "recommendation": "Upgrade to version 8.5.23 or later",
+      "patched_versions": ">=8.5.23",
+      "updated": "2026-08-03T17:11:40.000Z",
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      },
+      "cwe": [
+        "CWE-22",
+        "CWE-200"
+      ],
+      "url": "https://github.com/advisories/GHSA-fxqj-rqcc-2cmp"
+    },
+    "1130734": {
+      "findings": [
+        {
+          "version": "5.0.7",
+          "paths": [
+            ".>typescript-eslint>@typescript-eslint/typescript-estree>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-rgw5-rvv9-x895\n- https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d\n- https://github.com/juliangruber/brace-expansion/commit/1e30c930238d7162802d88a94189182def178dac\n- https://github.com/juliangruber/brace-expansion/commit/688a99eeaab02627c2b89ba8ba4821fecfa659cf\n- https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031\n- https://nvd.nist.gov/vuln/detail/CVE-2026-69152\n- https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+      "created": "2026-08-03T16:35:32.000Z",
+      "id": 1130734,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\nThe `maxLength` mitigation added in `5.0.8` for GHSA-mh99-v99m-4gvg / CVE-2026-14257 is incomplete. It bounds the accumulator where results are *combined*, but not the intermediate arrays that feed it. A ~25 KB input still crashes the Node process with an **uncatchable** out-of-memory error, so `try/catch` around `expand()` does not help.\n\nA second, related path in the same function lets a ~400 KB input block the event loop for over two minutes without ever exceeding the memory bound.\n\n### Details\n\n`maxLength` was enforced in `combine()`, the single place output grows. Two arrays are built *before* `combine()` runs, and neither was bounded.\n\n**1. Comma alternatives accumulate without a running total (memory exhaustion)**\n\nEach alternative in `{a,b,c,...}` is expanded by its own recursive `expand_()` call, so each receives a full, independent `maxLength` allowance. The results were then concatenated into a single `values` array with no cumulative limit:\n\n```js\nvalues = []\nfor (let j = 0; j < n.length; j++) {\n  values.push.apply(values, expand_(n[j], max, maxLength, false))\n}\n\nacc = combine(acc, pre, values, max, maxLength, ...)\n```\n\nWith `A` alternatives, `values` can reach `A * maxLength` characters before `combine()` gets a chance to truncate it. At the default `maxLength` of 4,000,000 and 400 alternatives, that is well past any default heap.\n\n**2. Padded sequences ignore `maxLength` while generating (CPU exhaustion)**\n\n`expandSequence()` was bounded by `max` (the result *count*) but never consulted `maxLength`. A padded sequence's element width follows the input, so `{0...01..100000}` with a wide pad generates `max` elements, each as wide as the input, only for `combine()` to discard all but a handful.\n\nMemory stays flat here, because V8 represents the padded strings as cons-strings, which is likely why this path was not caught alongside the original issue. The cost is time: work proportional to `max * width`.\n\n| pad width | input bytes | results kept | time (5.0.8) | time (patched) |\n|---|---|---|---|---|\n| 20,000 | 20 KB | 199 | ~7.3 s | ~20 ms |\n| 100,000 | 100 KB | 39 | ~32 s | ~20 ms |\n| 400,000 | 400 KB | 9 | ~124 s | ~18 ms |\n\nOutput is byte-identical before and after the fix; only the wasted work is removed.\n\n### Proof of concept\n\nMemory exhaustion, against `5.0.8`:\n\n```js\nimport { expand } from 'brace-expansion'\n\nconst part = '{' + '0'.repeat(50) + '1..100000}'\nconst input = '{' + Array(400).fill(part).join(',') + '}'  // ~25 KB\n\ntry {\n  expand(input)\n} catch (e) {\n  // never reached - the process is already dead\n}\n```\n\n```\nFATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory\nAborted\n```\n\nEvent-loop stall, against `5.0.8`:\n\n```js\nimport { expand } from 'brace-expansion'\n\n// ~400 KB input, returns 9 results after roughly two minutes of blocking CPU\nexpand('{' + '0'.repeat(400_000) + '1..100000}')\n```\n\n### Impact\n\nDenial of service. Any application that passes attacker-controlled input to `expand()`, directly or transitively through a glob or pattern-matching library, can be remotely crashed or stalled. The out-of-memory variant terminates the process and cannot be handled with `try/catch`.\n\nApplications already on `5.0.8` are affected: the `5.0.8` mitigation does not cover these paths.\n\n### Patches\n\nBoth intermediate arrays are now bounded as they are built, using the same `max` and `maxLength` limits already applied in `combine()`:\n\n- `values` tracks a running result count and character length while alternatives are appended, and stops once either bound is reached.\n- `expandSequence()` accepts `maxLength` and stops generating once the sequence's own characters reach it.\n\nAs with the existing limits, output is truncated rather than allowed to grow without bound, which matches how `max` already behaves. The defaults sit well above any realistic expansion, so legitimate input is unaffected.\n\n### Workarounds\n\nIf upgrading is not immediately possible, avoid passing untrusted input to `expand()` or to glob brace patterns, or pass an explicitly small `max` **and** `maxLength`.\n\nNote that a small `maxLength` alone was not sufficient on affected versions: it was applied per alternative rather than cumulatively, which is the root of the first issue above.\n\n### Credits\n\nThe memory-exhaustion bypass was reported by Alessio Della Libera, CEO & Co-founder at [Numyra](https://numyra.ai/).\n\nThe sequence-generation issue was found while verifying that report.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-69152"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=4.0.0 <5.0.9",
+      "github_advisory_id": "GHSA-rgw5-rvv9-x895",
+      "recommendation": "Upgrade to version 5.0.9 or later",
+      "patched_versions": ">=5.0.9",
+      "updated": "2026-08-03T20:17:20.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895"
+    },
+    "1130736": {
+      "findings": [
+        {
+          "version": "2.1.2",
+          "paths": [
+            ".>openapi-typescript>@redocly/openapi-core>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-rgw5-rvv9-x895\n- https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d\n- https://github.com/juliangruber/brace-expansion/commit/1e30c930238d7162802d88a94189182def178dac\n- https://github.com/juliangruber/brace-expansion/commit/688a99eeaab02627c2b89ba8ba4821fecfa659cf\n- https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031\n- https://nvd.nist.gov/vuln/detail/CVE-2026-69152\n- https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+      "created": "2026-08-03T16:35:32.000Z",
+      "id": 1130736,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\nThe `maxLength` mitigation added in `5.0.8` for GHSA-mh99-v99m-4gvg / CVE-2026-14257 is incomplete. It bounds the accumulator where results are *combined*, but not the intermediate arrays that feed it. A ~25 KB input still crashes the Node process with an **uncatchable** out-of-memory error, so `try/catch` around `expand()` does not help.\n\nA second, related path in the same function lets a ~400 KB input block the event loop for over two minutes without ever exceeding the memory bound.\n\n### Details\n\n`maxLength` was enforced in `combine()`, the single place output grows. Two arrays are built *before* `combine()` runs, and neither was bounded.\n\n**1. Comma alternatives accumulate without a running total (memory exhaustion)**\n\nEach alternative in `{a,b,c,...}` is expanded by its own recursive `expand_()` call, so each receives a full, independent `maxLength` allowance. The results were then concatenated into a single `values` array with no cumulative limit:\n\n```js\nvalues = []\nfor (let j = 0; j < n.length; j++) {\n  values.push.apply(values, expand_(n[j], max, maxLength, false))\n}\n\nacc = combine(acc, pre, values, max, maxLength, ...)\n```\n\nWith `A` alternatives, `values` can reach `A * maxLength` characters before `combine()` gets a chance to truncate it. At the default `maxLength` of 4,000,000 and 400 alternatives, that is well past any default heap.\n\n**2. Padded sequences ignore `maxLength` while generating (CPU exhaustion)**\n\n`expandSequence()` was bounded by `max` (the result *count*) but never consulted `maxLength`. A padded sequence's element width follows the input, so `{0...01..100000}` with a wide pad generates `max` elements, each as wide as the input, only for `combine()` to discard all but a handful.\n\nMemory stays flat here, because V8 represents the padded strings as cons-strings, which is likely why this path was not caught alongside the original issue. The cost is time: work proportional to `max * width`.\n\n| pad width | input bytes | results kept | time (5.0.8) | time (patched) |\n|---|---|---|---|---|\n| 20,000 | 20 KB | 199 | ~7.3 s | ~20 ms |\n| 100,000 | 100 KB | 39 | ~32 s | ~20 ms |\n| 400,000 | 400 KB | 9 | ~124 s | ~18 ms |\n\nOutput is byte-identical before and after the fix; only the wasted work is removed.\n\n### Proof of concept\n\nMemory exhaustion, against `5.0.8`:\n\n```js\nimport { expand } from 'brace-expansion'\n\nconst part = '{' + '0'.repeat(50) + '1..100000}'\nconst input = '{' + Array(400).fill(part).join(',') + '}'  // ~25 KB\n\ntry {\n  expand(input)\n} catch (e) {\n  // never reached - the process is already dead\n}\n```\n\n```\nFATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory\nAborted\n```\n\nEvent-loop stall, against `5.0.8`:\n\n```js\nimport { expand } from 'brace-expansion'\n\n// ~400 KB input, returns 9 results after roughly two minutes of blocking CPU\nexpand('{' + '0'.repeat(400_000) + '1..100000}')\n```\n\n### Impact\n\nDenial of service. Any application that passes attacker-controlled input to `expand()`, directly or transitively through a glob or pattern-matching library, can be remotely crashed or stalled. The out-of-memory variant terminates the process and cannot be handled with `try/catch`.\n\nApplications already on `5.0.8` are affected: the `5.0.8` mitigation does not cover these paths.\n\n### Patches\n\nBoth intermediate arrays are now bounded as they are built, using the same `max` and `maxLength` limits already applied in `combine()`:\n\n- `values` tracks a running result count and character length while alternatives are appended, and stops once either bound is reached.\n- `expandSequence()` accepts `maxLength` and stops generating once the sequence's own characters reach it.\n\nAs with the existing limits, output is truncated rather than allowed to grow without bound, which matches how `max` already behaves. The defaults sit well above any realistic expansion, so legitimate input is unaffected.\n\n### Workarounds\n\nIf upgrading is not immediately possible, avoid passing untrusted input to `expand()` or to glob brace patterns, or pass an explicitly small `max` **and** `maxLength`.\n\nNote that a small `maxLength` alone was not sufficient on affected versions: it was applied per alternative rather than cumulatively, which is the root of the first issue above.\n\n### Credits\n\nThe memory-exhaustion bypass was reported by Alessio Della Libera, CEO & Co-founder at [Numyra](https://numyra.ai/).\n\nThe sequence-generation issue was found while verifying that report.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-69152"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=2.0.0 <2.1.4",
+      "github_advisory_id": "GHSA-rgw5-rvv9-x895",
+      "recommendation": "Upgrade to version 2.1.4 or later",
+      "patched_versions": ">=2.1.4",
+      "updated": "2026-08-03T20:17:20.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895"
+    },
+    "1130737": {
+      "findings": [
+        {
+          "version": "1.1.16",
+          "paths": [
+            ".>eslint>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-rgw5-rvv9-x895\n- https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d\n- https://github.com/juliangruber/brace-expansion/commit/1e30c930238d7162802d88a94189182def178dac\n- https://github.com/juliangruber/brace-expansion/commit/688a99eeaab02627c2b89ba8ba4821fecfa659cf\n- https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031\n- https://nvd.nist.gov/vuln/detail/CVE-2026-69152\n- https://github.com/advisories/GHSA-rgw5-rvv9-x895",
+      "created": "2026-08-03T16:35:32.000Z",
+      "id": 1130737,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\nThe `maxLength` mitigation added in `5.0.8` for GHSA-mh99-v99m-4gvg / CVE-2026-14257 is incomplete. It bounds the accumulator where results are *combined*, but not the intermediate arrays that feed it. A ~25 KB input still crashes the Node process with an **uncatchable** out-of-memory error, so `try/catch` around `expand()` does not help.\n\nA second, related path in the same function lets a ~400 KB input block the event loop for over two minutes without ever exceeding the memory bound.\n\n### Details\n\n`maxLength` was enforced in `combine()`, the single place output grows. Two arrays are built *before* `combine()` runs, and neither was bounded.\n\n**1. Comma alternatives accumulate without a running total (memory exhaustion)**\n\nEach alternative in `{a,b,c,...}` is expanded by its own recursive `expand_()` call, so each receives a full, independent `maxLength` allowance. The results were then concatenated into a single `values` array with no cumulative limit:\n\n```js\nvalues = []\nfor (let j = 0; j < n.length; j++) {\n  values.push.apply(values, expand_(n[j], max, maxLength, false))\n}\n\nacc = combine(acc, pre, values, max, maxLength, ...)\n```\n\nWith `A` alternatives, `values` can reach `A * maxLength` characters before `combine()` gets a chance to truncate it. At the default `maxLength` of 4,000,000 and 400 alternatives, that is well past any default heap.\n\n**2. Padded sequences ignore `maxLength` while generating (CPU exhaustion)**\n\n`expandSequence()` was bounded by `max` (the result *count*) but never consulted `maxLength`. A padded sequence's element width follows the input, so `{0...01..100000}` with a wide pad generates `max` elements, each as wide as the input, only for `combine()` to discard all but a handful.\n\nMemory stays flat here, because V8 represents the padded strings as cons-strings, which is likely why this path was not caught alongside the original issue. The cost is time: work proportional to `max * width`.\n\n| pad width | input bytes | results kept | time (5.0.8) | time (patched) |\n|---|---|---|---|---|\n| 20,000 | 20 KB | 199 | ~7.3 s | ~20 ms |\n| 100,000 | 100 KB | 39 | ~32 s | ~20 ms |\n| 400,000 | 400 KB | 9 | ~124 s | ~18 ms |\n\nOutput is byte-identical before and after the fix; only the wasted work is removed.\n\n### Proof of concept\n\nMemory exhaustion, against `5.0.8`:\n\n```js\nimport { expand } from 'brace-expansion'\n\nconst part = '{' + '0'.repeat(50) + '1..100000}'\nconst input = '{' + Array(400).fill(part).join(',') + '}'  // ~25 KB\n\ntry {\n  expand(input)\n} catch (e) {\n  // never reached - the process is already dead\n}\n```\n\n```\nFATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory\nAborted\n```\n\nEvent-loop stall, against `5.0.8`:\n\n```js\nimport { expand } from 'brace-expansion'\n\n// ~400 KB input, returns 9 results after roughly two minutes of blocking CPU\nexpand('{' + '0'.repeat(400_000) + '1..100000}')\n```\n\n### Impact\n\nDenial of service. Any application that passes attacker-controlled input to `expand()`, directly or transitively through a glob or pattern-matching library, can be remotely crashed or stalled. The out-of-memory variant terminates the process and cannot be handled with `try/catch`.\n\nApplications already on `5.0.8` are affected: the `5.0.8` mitigation does not cover these paths.\n\n### Patches\n\nBoth intermediate arrays are now bounded as they are built, using the same `max` and `maxLength` limits already applied in `combine()`:\n\n- `values` tracks a running result count and character length while alternatives are appended, and stops once either bound is reached.\n- `expandSequence()` accepts `maxLength` and stops generating once the sequence's own characters reach it.\n\nAs with the existing limits, output is truncated rather than allowed to grow without bound, which matches how `max` already behaves. The defaults sit well above any realistic expansion, so legitimate input is unaffected.\n\n### Workarounds\n\nIf upgrading is not immediately possible, avoid passing untrusted input to `expand()` or to glob brace patterns, or pass an explicitly small `max` **and** `maxLength`.\n\nNote that a small `maxLength` alone was not sufficient on affected versions: it was applied per alternative rather than cumulatively, which is the root of the first issue above.\n\n### Credits\n\nThe memory-exhaustion bypass was reported by Alessio Della Libera, CEO & Co-founder at [Numyra](https://numyra.ai/).\n\nThe sequence-generation issue was found while verifying that report.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-69152"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": "<1.1.18",
+      "github_advisory_id": "GHSA-rgw5-rvv9-x895",
+      "recommendation": "Upgrade to version 1.1.18 or later",
+      "patched_versions": ">=1.1.18",
+      "updated": "2026-08-03T20:17:20.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-rgw5-rvv9-x895"
+    },
+    "1138115": {
+      "findings": [
+        {
+          "version": "4.3.0",
+          "paths": [
+            ".>eslint>@eslint/eslintrc>js-yaml"
+          ]
+        },
+        {
+          "version": "4.2.0",
+          "paths": [
+            ".>openapi-typescript>@redocly/openapi-core>js-yaml"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/nodeca/js-yaml/security/advisories/GHSA-5p4m-2wfm-xmqj\n- https://github.com/advisories/GHSA-5p4m-2wfm-xmqj",
+      "created": "2026-08-06T20:27:32.000Z",
+      "id": 1138115,
+      "npm_advisory_id": null,
+      "overview": "# Quadratic CPU consumption in `!!omap` resolution (js-yaml 3.x and 4.x)\n\n## Summary\n\n`resolveYamlOmap()` enforces key uniqueness for `!!omap` sequences with a linear\nscan (`objectKeys.indexOf(...)`) inside the per-element loop, making resolution\n**O(n²)** in the number of entries. A modestly sized YAML document therefore\nconsumes disproportionate CPU inside `yaml.load()`, giving a denial of service\nagainst any consumer that parses untrusted YAML.\n\n`!!omap` is registered in the **default schema**\n(`lib/schema/default.js` → `require('../type/omap')`), so a plain\n`yaml.load(untrustedInput)` with no options is affected — no custom schema or\nnon-default configuration is required.\n\n**This is the same weakness as CVE-2026-59870 / GHSA-724g-mxrg-4qvm**, which was\nfixed in the 5.x line in 5.2.1. That fix was never backported: both currently\nmaintained legacy lines still carry the original implementation.\n\n## Affected versions\n\n| Line | Latest tested | Status |\n|---|---|---|\n| 3.x | **3.15.0** | Affected — `objectKeys.indexOf(pairKey)` at `lib/type/omap.js:29` |\n| 4.x | **4.3.0** | Affected — `objectKeys.indexOf(pairKey)` at `lib/type/omap.js:30` |\n| 5.x | 5.2.2 | **Not affected** — fixed in 5.2.1 (uses a `Set`) |\n\nBoth figures are the newest release of each line at the time of writing, so\nthis is not a \"you are on an old version\" issue.\n\n## Details\n\n`lib/type/omap.js` (js-yaml 4.3.0):\n\n```js\nif (objectKeys.indexOf(pairKey) === -1) objectKeys.push(pairKey)\nelse return false\n```\n\n`objectKeys` grows by one element per entry, and `Array.prototype.indexOf` is a\nlinear scan, so resolving an `n`-entry `!!omap` performs roughly\n`1 + 2 + … + n` comparisons — quadratic in `n`. The work happens synchronously\ninside `yaml.load()`, blocking the event loop for its whole duration.\n\nThe 5.x line already solves exactly this by tracking seen keys in a `Set`\n(`src/tag/sequence/omap.ts`):\n\n```ts\nif (carrier.seen.has(key)) return 'duplicate key in ordered map'\ncarrier.seen.add(key)\n```\n\n## Proof of concept\n\n```js\n// poc.js  —  node poc.js\nconst yaml = require('js-yaml');\nconst doc = n => '!!omap\\n' + Array.from({length: n}, (_, i) => `- k${i}: ${i}`).join('\\n') + '\\n';\n\nfor (const n of [10000, 20000, 40000, 80000]) {\n  const d = doc(n), t = Date.now();\n  yaml.load(d);                      // default schema, no options\n  console.log(`n=${n} bytes=${d.length} load=${Date.now() - t}ms`);\n}\n```\n\n### Measured (node v20.20.2, default heap, no flags)\n\n**js-yaml 4.3.0**\n\n```\nn=10000  bytes=137787   load=54ms\nn=20000  bytes=297787   load=169ms\nn=40000  bytes=617787   load=646ms\nn=80000  bytes=1257787  load=2607ms\n```\n\n**js-yaml 3.15.0**\n\n```\nn=10000  bytes=137787   load=53ms\nn=20000  bytes=297787   load=166ms\nn=40000  bytes=617787   load=641ms\nn=80000  bytes=1257787  load=2567ms\n```\n\nRuntime grows by a factor of ~4 for each doubling of `n`, which is the\nsignature of O(n²) (linear growth would be ~2×).\n\nScaling further: a **2.48 MB** document with 150,000 entries blocked\n`yaml.load()` for **10.8 seconds**.\n\n## Impact\n\nAny service that parses attacker-influenced YAML with js-yaml 3.x or 4.x can be\nstalled with a small input. Because the loop is synchronous, a single request\nblocks the Node.js event loop and stalls every other request in the process —\nso the amplification is per-process, not just per-request.\n\nSuggested severity: consistent with **CVE-2026-59870** (the same weakness in\n5.x), i.e. Availability-only impact, network attack vector, no privileges or\nuser interaction required.\n\n## Suggested fix\n\nMirror the 5.x fix — replace the linear scan with a `Set`:\n\n```js\n// lib/type/omap.js\nconst seen = new Set()\n// ...\nif (seen.has(pairKey)) return false\nseen.add(pairKey)\n```\n\nThis preserves the existing duplicate-key rejection semantics exactly while\nmaking resolution O(n). A `maxOmapLength`-style cap would also work, but the\n`Set` matches what 5.x already ships and requires no new option.\n\n## References\n\n- CVE-2026-59870 / GHSA-724g-mxrg-4qvm — same weakness in 5.0.0–5.2.0, fixed in 5.2.1\n- `lib/type/omap.js` (3.x, 4.x) — the affected resolver\n- `lib/schema/default.js` — registers `!!omap` in the default schema\n\n## Discovery\n\nFound by an automated static-analysis and executed-proof-of-concept scanner run\nagainst js-yaml 4.2.0, then manually verified against 3.15.0 and 4.3.0 by\nexecuting the proof of concept above. All timings in this report were measured\non the **current** releases of each line, not on the version originally scanned.",
+      "reported_by": null,
+      "title": "JS-YAML: Quadratic CPU consumption in !!omap resolution (3.x and 4.x) — CVE-2026-59870 fix not backported",
+      "metadata": null,
+      "cves": [],
+      "access": "public",
+      "severity": "high",
+      "module_name": "js-yaml",
+      "vulnerable_versions": ">=4.0.0 <4.3.1",
+      "github_advisory_id": "GHSA-5p4m-2wfm-xmqj",
+      "recommendation": "Upgrade to version 4.3.1 or later",
+      "patched_versions": ">=4.3.1",
+      "updated": "2026-08-06T20:27:32.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-407"
+      ],
+      "url": "https://github.com/advisories/GHSA-5p4m-2wfm-xmqj"
+    },
+    "1139427": {
+      "findings": [
+        {
+          "version": "3.3.16",
+          "paths": [
+            ".>postcss>nanoid"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://nvd.nist.gov/vuln/detail/CVE-2026-67213\n- https://github.com/ai/nanoid/commit/cb3626d0f3342fdf179cd425fd9c4fbb92c7d0e7\n- https://github.com/ai/nanoid/releases/tag/5.1.6\n- https://www.vulncheck.com/advisories/nanoid-before-infinite-loop-via-zero-size-in-customalphabet-and-customrandom\n- https://github.com/ai/nanoid/commit/f9d13f150847d117877adee3460a46eceb0cf49b\n- https://github.com/ai/nanoid/releases/tag/3.3.17\n- https://github.com/ai/nanoid/commit/e10f8d40ce9d1ab47f66d65a16b48086432730d0\n- https://github.com/ai/nanoid/releases/tag/3.3.18\n- https://github.com/advisories/GHSA-2v37-7h3g-55p8",
+      "created": "2026-07-29T15:31:12.000Z",
+      "id": 1139427,
+      "npm_advisory_id": null,
+      "overview": "nanoid (Nano ID) before 5.1.6 contains an infinite loop in the customAlphabet and customRandom functions. When these functions are configured with a size of 0, the internal generation loop never satisfies its exit condition and spins indefinitely, hanging the calling thread. An application that passes an unvalidated, attacker-controlled size of 0 to these functions is exposed to a denial-of-service condition.",
+      "reported_by": null,
+      "title": "nanoid: custom generators can loop indefinitely when size is zero",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-67213"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "nanoid",
+      "vulnerable_versions": "<3.3.18",
+      "github_advisory_id": "GHSA-2v37-7h3g-55p8",
+      "recommendation": "Upgrade to version 3.3.18 or later",
+      "patched_versions": ">=3.3.18",
+      "updated": "2026-08-13T15:43:02.000Z",
+      "cvss": {
+        "score": 5.9,
+        "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-835"
+      ],
+      "url": "https://github.com/advisories/GHSA-2v37-7h3g-55p8"
+    },
+    "1153171": {
+      "findings": [
+        {
+          "version": "4.28.6",
+          "paths": [
+            ".>@vitejs/plugin-react>@babel/core>@babel/helper-compilation-targets>browserslist"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/browserslist/browserslist/security/advisories/GHSA-c83g-rgw3-j3cx\n- https://nvd.nist.gov/vuln/detail/CVE-2026-73089\n- https://github.com/browserslist/browserslist/commit/f2931a3ff2a3a31abf84ef01a7400b270aad6405\n- https://github.com/browserslist/browserslist/releases/tag/4.28.7\n- https://github.com/advisories/GHSA-c83g-rgw3-j3cx",
+      "created": "2026-09-01T16:42:13.000Z",
+      "id": 1153171,
+      "npm_advisory_id": null,
+      "overview": "## Vulnerability Details\n\n**File**: `index.js`\n**Location**: `cache` (browserslist()'s result cache, line ~402) and\n`parseCache` (parseQueries()'s AST cache)\n\n### Root Cause\n```js\nvar cache = {}\nvar parseCache = {}\n\nfunction browserslist(queries, opts) {\n  ...\n  var cacheKey = JSON.stringify([queries, context])\n  if (cache[cacheKey]) return cache[cacheKey]\n  ...\n  if (!env.env.BROWSERSLIST_DISABLE_CACHE) { cache[cacheKey] = result }\n  return result\n}\n\nfunction parseQueries(queries) {\n  var cacheKey = JSON.stringify(queries)\n  if (cacheKey in parseCache) return parseCache[cacheKey]\n  var result = parseWithoutCache(QUERIES, queries)\n  if (!env.env.BROWSERSLIST_DISABLE_CACHE) { parseCache[cacheKey] = result }\n  ...\n}\n```\nEvery distinct `(queries, context)` pair is cached forever — no size cap,\nTTL, or eviction. `browserslist.clearCaches()` never resets either object\n(it only resets `node.js`'s own filesystem caches); the only opt-out is the\n`BROWSERSLIST_DISABLE_CACHE` env var, controlled by the *calling\napplication*, not an attacker.\n\nSome short, valid queries amplify this badly. The `since <year>-<month>-<day>`\nquery type (`/^since (\\d+)-(\\d+)-(\\d+)$/i`) accepts **any** digit\ncombination — `Date.UTC()` normalizes rather than rejects out-of-range\nvalues — giving an effectively unbounded space of ~17-byte distinct cache\nkeys, each of which resolves to (and caches) a result close to the full\n~8.5 KB browser list for any sufficiently old year.\n\n### Measured Impact\n20,000 distinct `since <year>-<month>-<day>` queries (~330 KB total input,\n`--expose-gc` before/after measurement to rule out uncollected garbage)\nretained **over 50 MB** of heap permanently — roughly **150x**\namplification, growing linearly with no cap observed up to 40,000 queries\n(52.3 MB).\n\n### Attack Scenario\nAny long-running process (server, daemon, warm CI worker) that calls\n`browserslist()` with a query value that varies across requests/items and is\ninfluenced, even partially, by external input accumulates one cache entry\nper distinct value ever seen. An attacker who can influence that value\nacross *many* requests (this is a volumetric attack, unlike the\nsingle-request DoS findings from this same research pass) sends a stream of\ncheap, distinct queries (e.g. `since 1900-01-01`, `since 1900-01-02`, ...)\nuntil the process runs out of memory and crashes.\n\n### Recommended Fix (implemented and verified)\nReplace both plain-object caches with `Map`s bounded to a fixed maximum\nentry count, evicting the oldest entry once the cap is reached (`Map`\npreserves insertion order, so `.keys().next().value` is always oldest):\n\n```js\nvar CACHE_MAX_ENTRIES = 500\n\nfunction boundedCacheSet(map, key, value) {\n  if (map.size >= CACHE_MAX_ENTRIES) {\n    map.delete(map.keys().next().value)\n  }\n  map.set(key, value)\n}\n\nvar cache = new Map()\nvar parseCache = new Map()\n```\n(read sites changed to `.has()`/`.get()`, write sites to `boundedCacheSet()`)\n\n**Verification**:\n- `NODE_ENV=test npx uvu test .test.js` → 301/301 pass unmodified\n  (`test/cache.test.js` exercises `clearCaches()`/`BROWSERSLIST_DISABLE_CACHE`\n  against `node.js`'s separate filesystem caches, unaffected here); confirmed\n  a repeated identical call still returns the cached reference.\n- Re-ran the memory PoC post-fix: heap stayed flat at ~4.9 MB after 5,000,\n  10,000, 20,000, and 40,000 distinct `since`-date queries (was\n  10.5 → 16.5 → 28.4 → 52.3 MB pre-fix).\n\n### Impact\n- **Who is affected**: Long-running processes calling `browserslist()` with\n  query values that vary across requests/items and are influenced by\n  external input.\n- **What an attacker achieves**: DoS via eventual out-of-memory crash, given\n  sustained traffic over time (not a single small payload).\n- **Conditions required**: No authentication; requires volume rather than a\n  single request, hence Medium rather than High severity.\n\n### Verification Environment\nbrowserslist @ HEAD (== v4.28.6, current latest stable release) under local\nNode.js v20.19.5, run with `--expose-gc` for accurate heap measurement.\n\n### Note\nFound during a broader review of this codebase in the same research pass\nthat produced GHSA-rrmg-cfrq-23vv (parse.js algorithmic complexity),\nGHSA-g6p8-hj8g-x889 (baseline regexp ReDoS), GHSA-73wf-gq98-2v4g\n(normalizeStats crash/prototype write), and GHSA-h633-868p-5rfw\n(SCOPED_CONFIG__PATTERN ReDoS) — all single-request DoS vectors. This one is\ndifferent in character (volumetric, not single-request) and is reported\nseparately/scored lower accordingly.",
+      "reported_by": null,
+      "title": "Browserslist: Unbounded memory growth (no cache eviction) via distinct query results, leading to eventual OOM",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-73089"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "browserslist",
+      "vulnerable_versions": "<=4.28.6",
+      "github_advisory_id": "GHSA-c83g-rgw3-j3cx",
+      "recommendation": "Upgrade to version 4.28.7 or later",
+      "patched_versions": ">=4.28.7",
+      "updated": "2026-09-01T16:42:15.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-c83g-rgw3-j3cx"
+    },
+    "1153172": {
+      "findings": [
+        {
+          "version": "4.28.6",
+          "paths": [
+            ".>@vitejs/plugin-react>@babel/core>@babel/helper-compilation-targets>browserslist"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/browserslist/browserslist/security/advisories/GHSA-73wf-gq98-2v4g\n- https://nvd.nist.gov/vuln/detail/CVE-2026-73088\n- https://github.com/browserslist/browserslist/commit/f9914ad9effc865ccc27d816255625890b31ca51\n- https://github.com/browserslist/browserslist/releases/tag/4.28.7\n- https://github.com/advisories/GHSA-73wf-gq98-2v4g",
+      "created": "2026-09-01T16:41:54.000Z",
+      "id": 1153172,
+      "npm_advisory_id": null,
+      "overview": "## Vulnerability Details\n\n**File**: `node.js`\n**Function**: `normalizeStats()` (line ~214), reached from `getStat()` (called\n**unconditionally** on every `browserslist()` call) and `loadStat()`\n\n### Root Cause\n```js\nfunction normalizeStats(data, stats) {\n  if (!data) { data = {} }\n  if (stats && 'dataByBrowser' in stats) { stats = stats.dataByBrowser }\n  if (typeof stats !== 'object') return undefined\n\n  var normalized = {}\n  for (var i in stats) {\n    var versions = Object.keys(stats[i])\n    if (versions.length === 1 && data[i] && data[i].versions.length === 1) {\n      var normal = data[i].versions[0]\n      normalized[i] = {}\n      normalized[i][normal] = stats[i][versions[0]]\n    } else {\n      normalized[i] = stats[i]\n    }\n  }\n  return normalized\n}\n```\n`stats` is untrusted: it comes from `JSON.parse()`-ing a\n`browserslist-stats.json` file — auto-discovered by walking up the directory\ntree from the project root **on every `browserslist()` call, regardless of\nthe query** (`env.getStat(opts, browserslist.data)` runs unconditionally\ninside `browserslist()`) — or from `opts.stats` passed programmatically /\nvia the CLI's `--stats=` flag. `data` is `browserslist.data`, a plain object\npopulated only with real browser names.\n\nTwo independent bugs from the same root cause (unguarded `for...in` over\nuntrusted keys used with plain-object bracket access/assignment):\n\n1. **Crash**: `data[i]` has no `hasOwnProperty` guard. If `stats` contains a\n   key that also happens to be an inherited `Object.prototype` member name —\n   `\"__proto__\"`, `\"toString\"`, `\"valueOf\"`, `\"constructor\"`,\n   `\"hasOwnProperty\"`, `\"isPrototypeOf\"`, etc. — `data[i]` resolves to that\n   inherited function/object (always truthy), and the code then does\n   `data[i].versions.length` → `undefined.length` → **uncaught `TypeError`**,\n   for any such key whose JSON value has exactly one sub-key, e.g.:\n   ```json\n   { \"toString\": { \"onekey\": 5 }, \"chrome\": { \"100\": 50 } }\n   ```\n2. **Prototype write**: `normalized[i] = ...` on the fresh\n   `normalized = {}` — if `i` is exactly `\"__proto__\"` (and `normalized` has\n   no own property by that name yet), this computed assignment invokes the\n   real `Object.prototype.__proto__` setter, changing `normalized`'s actual\n   `[[Prototype]]` instead of creating a plain property.\n\nBecause this runs on **every** `browserslist()` call regardless of the\nquery, simply committing a poisoned `browserslist-stats.json` anywhere in a\nproject's directory tree breaks every subsequent Browserslist call in that\nproject — including calls made by Autoprefixer, Babel `preset-env`,\nStylelint, or PostCSS internally, for completely unrelated queries.\n\n### Attack Scenario\n1. Attacker submits a PR (or a compromised dependency) adding a\n   `browserslist-stats.json` file anywhere between the project root and\n   filesystem root, containing e.g.\n   `{\"toString\": {\"onekey\": 5}, \"chrome\": {\"100\": 50}}`.\n2. The victim's build/CI pipeline runs any tool that calls `browserslist()`\n   internally, for **any** query.\n3. The auto-discovered poisoned file crashes the process with an uncaught\n   `TypeError` on the very first call.\n\n### Measured Impact\nConfirmed crash (real `browserslist()` call, v4.28.6) with `stats` keys:\n`__proto__`, `toString`, `valueOf`, `hasOwnProperty`, `constructor`,\n`isPrototypeOf` — each paired with a one-key JSON object — for any query,\nincluding `browserslist('defaults')` which never mentions stats.\n\n### Recommended Fix (implemented and verified)\n```js\nvar normalized = Object.create(null)\nfor (var i in stats) {\n  var versions = Object.keys(stats[i])\n  var known = Object.prototype.hasOwnProperty.call(data, i) && data[i]\n  if (versions.length === 1 && known && known.versions.length === 1) {\n    var normal = known.versions[0]\n    normalized[i] = Object.create(null)\n    normalized[i][normal] = stats[i][versions[0]]\n  } else {\n    normalized[i] = stats[i]\n  }\n}\nreturn normalized\n```\n`normalized` uses `Object.create(null)` so a write to `\"__proto__\"` is an\nordinary property set, never a `[[Prototype]]` change; `data[i]` is replaced\nwith an explicit `hasOwnProperty` check so it never resolves to an inherited\n`Object.prototype` member.\n\n**Verification**:\n- `NODE_ENV=test npx uvu test .test.js` → 301/301 pass unmodified\n  (`test/custom.test.js`, `test/shareable-stats.test.js`, `test/cover.test.js`\n  exercise the stats-handling paths).\n- All 6 previously crash-inducing keys, tested individually, now resolve\n  without error.\n- The realistic file-based auto-discovery scenario (poisoned\n  `browserslist-stats.json` + an unrelated `browserslist('defaults')` call)\n  now returns a normal result instead of crashing.\n\n### Impact\n- **Who is affected**: Any project whose build/CI invokes Browserslist\n  (directly or via Autoprefixer/Babel/Stylelint/PostCSS) in a directory tree\n  an attacker can place a file into (external PR, compromised dependency),\n  or any app that passes user-influenced data into `opts.stats`.\n- **What an attacker achieves**: Immediate DoS — crashes the invoking\n  process on the first Browserslist call after the file is present, for any\n  query, no special syntax needed.\n- **Conditions required**: No authentication — only the ability to add a\n  file to the project's directory tree, or influence `opts.stats`.\n\n### Verification Environment\nbrowserslist @ HEAD (== v4.28.6, current latest stable release) under local\nNode.js v20.19.5. Pure JS library — executed directly, no server needed.\n\n### Note\nFound via a systematic review of prototype-pollution-adjacent patterns in\nthis codebase after confirming two unrelated algorithmic-complexity issues\n(reported separately as GHSA-rrmg-cfrq-23vv and GHSA-g6p8-hj8g-x889) in the\nsame research pass. A similar `for...in` + bracket-write pattern in\n`index.js`'s `copyObject()` (used by `normalizeAndroidData`) was already\nguarded against `__proto__`/`constructor`/`prototype` keys by a prior,\nunrelated commit — that guard was never applied to this function.",
+      "reported_by": null,
+      "title": "Browserslist: Uncaught crash / prototype write via untrusted browserslist-stats.json custom stats (normalizeStats)",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-73088"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "browserslist",
+      "vulnerable_versions": "<=4.28.6",
+      "github_advisory_id": "GHSA-73wf-gq98-2v4g",
+      "recommendation": "Upgrade to version 4.28.7 or later",
+      "patched_versions": ">=4.28.7",
+      "updated": "2026-09-01T16:41:55.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-248",
+        "CWE-1321"
+      ],
+      "url": "https://github.com/advisories/GHSA-73wf-gq98-2v4g"
+    }
+  },
+  "muted": [],
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 1,
+      "high": 12,
+      "critical": 0
+    },
+    "dependencies": 625,
+    "devDependencies": 0,
+    "optionalDependencies": 0,
+    "totalDependencies": 625
+  }
+}

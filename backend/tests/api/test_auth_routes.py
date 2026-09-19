@@ -2,9 +2,13 @@ import hashlib
 import hmac
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import Settings
+from ragz.modules.audit.models import AuditEvent
 from ragz.modules.auth.models import User
+from ragz.modules.auth.passwords import hash_password
 from ragz.modules.auth.service import _hash
 
 
@@ -18,12 +22,22 @@ async def test_login_ok(client: httpx.AsyncClient, seeded_user: User) -> None:
 
 
 async def test_login_bad_password_problem_json(
-    client: httpx.AsyncClient, seeded_user: User
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
 ) -> None:
     r = await client.post("/api/v1/auth/login", json={"email": "a@acme.com", "password": "bad"})
     assert r.status_code == 401
     assert r.headers["content-type"].startswith("application/problem+json")
     assert r.json()["title"] == "Authentication failed"
+    event = (
+        await session.execute(select(AuditEvent).where(AuditEvent.action == "login.failure"))
+    ).scalar_one()
+    assert event.result == "denied"
+    assert event.reason_code == "invalid_credentials"
+    assert event.auth_method == "password"
+    assert event.source_ip == "127.0.0.1"
+    assert event.org_id == seeded_user.org_id
+    assert event.actor_id == seeded_user.id
+    assert event.target_id == str(seeded_user.id)
 
 
 async def test_failed_login_increments_account_failure_counter(
@@ -99,6 +113,36 @@ async def test_refresh_and_logout(client: httpx.AsyncClient, seeded_user: User) 
     r3 = await client.post("/api/v1/auth/logout")
     assert r3.status_code == 204
     assert (await client.post("/api/v1/auth/refresh")).status_code == 401
+
+
+async def test_successful_login_revokes_the_refresh_family_presented_by_browser(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    first = await client.post(
+        "/api/v1/auth/login", json={"email": "a@acme.com", "password": "pw123456"}
+    )
+    assert first.status_code == 200
+    rotated = await client.post("/api/v1/auth/refresh")
+    old_family_cookie = rotated.cookies["refresh_token"]
+
+    replacement = User(
+        org_id=seeded_user.org_id,
+        email="replacement@acme.com",
+        password_hash=hash_password("pw123456"),
+        role="user",
+    )
+    session.add(replacement)
+    await session.commit()
+
+    second = await client.post(
+        "/api/v1/auth/login",
+        json={"email": replacement.email, "password": "pw123456"},
+    )
+    new_family_cookie = second.cookies["refresh_token"]
+    client.cookies.set("refresh_token", old_family_cookie, path="/api/v1/auth")
+    assert (await client.post("/api/v1/auth/refresh")).status_code == 401
+    client.cookies.set("refresh_token", new_family_cookie, path="/api/v1/auth")
+    assert (await client.post("/api/v1/auth/refresh")).status_code == 200
 
 
 async def test_refresh_concurrent_tabs_grace_reissue(

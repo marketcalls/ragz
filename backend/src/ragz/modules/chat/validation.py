@@ -14,7 +14,7 @@ outputs are scores, never surfaced as model-authored text to end users").
 
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from ragz.modules.chat.llm import LLMCompleter, LLMUsage
@@ -171,6 +171,7 @@ async def synthesize_with_gatekeeper(
     system_prompt_override: str | None,
     rebuild_prompt: Callable[[str | None], list[dict[str, object]]],
     reasoning_effort: str | None = None,
+    record_usage: Callable[[str, LLMUsage], Awaitable[None]] | None = None,
 ) -> GatekeptAnswer:
     """Gatekeeper (design §3): one non-streaming synth, one utility-model
     judge call. On failure, ONE critique-guided regeneration via
@@ -184,10 +185,14 @@ async def synthesize_with_gatekeeper(
     attempt = await completer.complete(
         model=chat_model_name, messages=prompt, reasoning_effort=reasoning_effort
     )
+    if record_usage is not None:
+        await record_usage("attempt", attempt.usage)
     verdict_completion = await completer.complete(
         model=utility_model_name,
         messages=build_gatekeeper_messages(question=question, answer=attempt.text, sources=sources),
     )
+    if record_usage is not None:
+        await record_usage("judge", verdict_completion.usage)
     verdict = parse_gatekeeper_verdict(verdict_completion.text)
     extra_prompt = verdict_completion.usage.prompt_tokens
     extra_completion = verdict_completion.usage.completion_tokens
@@ -208,6 +213,8 @@ async def synthesize_with_gatekeeper(
         model=chat_model_name, messages=rebuild_prompt(critique_note),
         reasoning_effort=reasoning_effort,
     )
+    if record_usage is not None:
+        await record_usage("retry", retry.usage)
     return GatekeptAnswer(
         text=retry.text, usage=retry.usage, validation_failed=True,
         extra_prompt_tokens=extra_prompt + attempt.usage.prompt_tokens,

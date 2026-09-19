@@ -17,6 +17,25 @@ def test_extract_text_from_plain_document(monkeypatch) -> None:
     assert "Hello attachment world" in text
 
 
+def test_extracted_page_and_text_limits_stop_downstream_work(monkeypatch) -> None:
+    from ragz.modules.chat import attachments
+    from ragz.modules.documents.pipeline import PageBlock
+
+    monkeypatch.setattr(
+        attachments,
+        "parse_bytes",
+        lambda data, filename: [
+            PageBlock(page=1, text="a" * 60, kind="text"),
+            PageBlock(page=2, text="b" * 60, kind="text"),
+        ],
+    )
+
+    with pytest.raises(attachments.AttachmentParserLimitExceeded, match="page"):
+        attachments.extract_text(b"data", "notes.txt", max_pages=1, max_chars=1000)
+    with pytest.raises(attachments.AttachmentParserLimitExceeded, match="text"):
+        attachments.extract_text(b"data", "notes.txt", max_pages=2, max_chars=100)
+
+
 @pytest.mark.skipif(
     not os.environ.get("RAGZ_TEST_OCR"), reason="set RAGZ_TEST_OCR=1 to run OCR e2e"
 )

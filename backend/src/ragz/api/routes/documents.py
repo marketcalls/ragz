@@ -1,8 +1,12 @@
+from io import BytesIO
+from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
@@ -17,6 +21,11 @@ from ragz.core.storage import build_storage
 from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents import metadata as metadata_service
 from ragz.modules.documents import service
+from ragz.modules.documents.file_types import (
+    PreviewKind,
+    classify_stored_file,
+    classify_upload,
+)
 from ragz.modules.documents.models import Document
 from ragz.modules.documents.schemas import (
     AclUpdate,
@@ -86,7 +95,7 @@ ApproveDep = Annotated[TenantContext, Depends(require_action("documents.approve"
 
 
 def _serialize_document(doc: Document, ctx: TenantContext) -> DocumentOut:
-    """`acl_group_ids` is admin-only metadata (CLAUDE.md ACL posture): a
+    """`acl_group_ids` is admin-only metadata (AGENTS.md ACL posture): a
     restricted document still shows up in workspace listings for plain
     members (existence is visible, Drive-style) but the group ids themselves
     are blanked to `null` unless the caller is admin/superadmin. Contents and
@@ -115,7 +124,7 @@ async def upload_document(
             pass  # Invalid Content-Length, let chunked read handle it
 
     # Measure without accumulating. This used to build a bytearray and then
-    # copy it into bytes -- two full copies of a file that may be 100 MB, held
+    # copy it into bytes -- two full copies of a file that may be 1 GiB, held
     # for the whole request, so a few concurrent uploads could exhaust the API's
     # memory. Starlette has already spooled the body to a temp file, so size and
     # digest come from one streaming pass and the bytes stay on disk.
@@ -124,10 +133,18 @@ async def upload_document(
         max_bytes=max_bytes,
         limit_message=f"file exceeds {get_settings().max_upload_mb} MB limit",
     )
+    file_type = classify_upload(file.filename or "upload.bin", content.stream)
+    if (
+        file_type.preview is PreviewKind.TEXT
+        and content.size_bytes > get_settings().document_max_text_mb * 1024 * 1024
+    ):
+        raise PayloadTooLarge(
+            f"text document exceeds {get_settings().document_max_text_mb} MB parser limit"
+        )
     doc = await service.create_from_upload(
         session, ctx, workspace_id,
         filename=file.filename or "upload.bin",
-        mime=file.content_type or "application/octet-stream",
+        mime=file_type.mime,
         data=content, folder_id=folder_id,
     )
     # The work is already durable: create_from_upload committed an outbox event
@@ -152,7 +169,7 @@ async def list_workspace_documents(
 @router.get("/documents/{document_id}/file")
 async def get_document_file(
     document_id: UUID, session: SessionDep, ctx: FileReadDep
-) -> Response:
+) -> StreamingResponse:
     """Streams the original uploaded file bytes for the citation viewer.
     ACL-CRITICAL: get_document_checked only gates existence/workspace/org
     membership (Drive-style -- a restricted document still appears in
@@ -166,7 +183,7 @@ async def get_document_file(
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     storage = build_storage(get_settings())
     try:
-        data = await storage.get(doc.storage_key)
+        prefix = await storage.get_prefix(doc.storage_key, 8192)
     except NotFoundError as exc:
         # The document ROW exists (it just passed get_document_checked) but its
         # original file object is absent from storage -- typically the file was
@@ -183,13 +200,25 @@ async def get_document_file(
             "The original file is not available in storage. It may need to be "
             "re-uploaded (the document's indexed content is unaffected)."
         ) from exc
-    return Response(
-        content=data,
-        media_type=doc.mime or "application/octet-stream",
+    file_type = classify_stored_file(doc.filename, BytesIO(prefix))
+    disposition = "attachment" if file_type.preview is PreviewKind.DOWNLOAD else "inline"
+    cleaned_filename = (
+        doc.filename.replace("\\", "_")
+        .replace('"', "'")
+        .replace("\r", "")
+        .replace("\n", "")
+    )
+    ascii_filename = cleaned_filename.encode("ascii", "ignore").decode("ascii")
+    if not ascii_filename or ascii_filename.startswith("."):
+        ascii_filename = f"download{Path(doc.filename).suffix.lower()}"
+    content_disposition = f'{disposition}; filename="{ascii_filename}"'
+    if ascii_filename != cleaned_filename:
+        content_disposition += f"; filename*=UTF-8''{quote(cleaned_filename, safe='')}"
+    return StreamingResponse(
+        storage.iter_bytes(doc.storage_key),
+        media_type=file_type.mime,
         headers={
-            # inline (not attachment): the frontend viewer renders it (PDF
-            # viewer etc.) rather than the browser force-downloading it.
-            "Content-Disposition": f'inline; filename="{doc.filename}"',
+            "Content-Disposition": content_disposition,
         },
     )
 

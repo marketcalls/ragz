@@ -29,7 +29,8 @@ from ragz.modules.auth.service import _hash
 from ragz.modules.tenancy.models import Workspace, WorkspaceMember
 
 RAW_PREFIX = "ragz_sk_"
-KEY_PREFIX_LEN = 12
+KEY_PREFIX_LEN = 24
+_LEGACY_KEY_PREFIX_LEN = 12
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class ApiKeyPrincipal:
 async def generate_api_key(
     session: AsyncSession, settings: Settings, *, actor_id: UUID, name: str,
     user_id: UUID, workspace_id: UUID, expires_at: datetime | None,
+    commit: bool = True,
 ) -> tuple[ApiKey, str]:
     ws = (
         await session.execute(select(Workspace).where(Workspace.id == workspace_id))
@@ -68,7 +70,10 @@ async def generate_api_key(
         expires_at=_bound_expiry(expires_at, settings.api_key_max_lifetime_days),
     )
     session.add(row)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return row, raw
 
 
@@ -90,11 +95,14 @@ async def get_api_key(session: AsyncSession, *, key_id: UUID) -> ApiKey:
     return row
 
 
-async def revoke_api_key(session: AsyncSession, *, key_id: UUID) -> None:
+async def revoke_api_key(
+    session: AsyncSession, *, key_id: UUID, commit: bool = True
+) -> None:
     await session.execute(
         update(ApiKey).where(ApiKey.id == key_id).values(revoked_at=naive_utc())
     )
-    await session.commit()
+    if commit:
+        await session.commit()
 
 
 async def resolve_api_key(
@@ -102,15 +110,21 @@ async def resolve_api_key(
 ) -> ApiKeyPrincipal | None:
     if not raw_key.startswith(RAW_PREFIX):
         return None
-    row = (
-        await session.execute(
-            select(ApiKey).where(ApiKey.prefix == raw_key[:KEY_PREFIX_LEN])
-        )
-    ).scalar_one_or_none()
-    if row is None:
+    prefixes = {raw_key[:KEY_PREFIX_LEN], raw_key[:_LEGACY_KEY_PREFIX_LEN]}
+    rows = list(
+        (
+            await session.execute(
+                select(ApiKey).where(ApiKey.prefix.in_(prefixes))
+            )
+        ).scalars()
+    )
+    candidate_hash = _hash(raw_key, settings.api_key_pepper)
+    matches = [
+        row for row in rows if secrets.compare_digest(row.key_hash, candidate_hash)
+    ]
+    if len(matches) != 1:
         return None
-    if not secrets.compare_digest(row.key_hash, _hash(raw_key, settings.api_key_pepper)):
-        return None
+    row = matches[0]
     if row.revoked_at is not None:
         return None
     now = datetime.now(UTC)

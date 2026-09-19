@@ -29,6 +29,7 @@ primary control, not the only one that should ever exist.
 
 import asyncio
 import ipaddress
+from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 from ragz.core.config import Settings
@@ -43,12 +44,7 @@ _MAX_TARGET_LENGTH = 2048
 # two are "real", publicly reachable deployment modes.
 _ENFORCED_ENVIRONMENTS = ("production", "staging")
 
-# RFC 6598 shared address space (Carrier-Grade NAT) -- not covered by
-# `ipaddress.IPv4Address.is_private` in the stdlib, so checked explicitly.
-_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
-
-
-def is_blocked_ip(ip: str) -> bool:
+def is_blocked_ip(ip: str, *, allowed_cidrs: Sequence[str] = ()) -> bool:
     """True if `ip` (IPv4 or IPv6, textual form) is private (RFC 1918),
     loopback, link-local (incl. the 169.254.169.254 cloud metadata address
     and IPv6 fe80::/10), CGNAT (100.64.0.0/10), unspecified (0.0.0.0 / ::),
@@ -61,18 +57,30 @@ def is_blocked_ip(ip: str) -> bool:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return True
-    return (
-        addr.is_private
-        or addr.is_loopback
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        return is_blocked_ip(str(mapped), allowed_cidrs=allowed_cidrs)
+    # These destinations are never valid operator integrations, even when a
+    # broad CIDR was configured: link-local includes cloud metadata endpoints.
+    if (
+        addr.is_loopback
         or addr.is_link_local
         or addr.is_unspecified
-        or addr.is_reserved
         or addr.is_multicast
-        or (isinstance(addr, ipaddress.IPv4Address) and addr in _CGNAT_NETWORK)
-    )
+    ):
+        return True
+    for cidr in allowed_cidrs:
+        try:
+            if addr in ipaddress.ip_network(cidr, strict=False):
+                return False
+        except ValueError:
+            continue
+    # is_global is the maintained IANA classification and includes shared,
+    # private, reserved and documentation ranges on both IPv4 and IPv6.
+    return not addr.is_global
 
 
-async def _assert_resolves_public(host: str) -> None:
+async def _assert_resolves_public(host: str, *, allowed_cidrs: Sequence[str] = ()) -> None:
     """Resolve `host` off-loop and raise `SsrfBlocked` if ANY returned
     address is blocked. A resolution failure itself is also `SsrfBlocked`
     (fail closed) rather than left to surface as a generic connection error
@@ -86,7 +94,7 @@ async def _assert_resolves_public(host: str) -> None:
         raise SsrfBlocked(f"host {host!r} resolved to no addresses")
     for *_rest, sockaddr in infos:
         ip = str(sockaddr[0])
-        if is_blocked_ip(ip):
+        if is_blocked_ip(ip, allowed_cidrs=allowed_cidrs):
             raise SsrfBlocked(
                 f"host {host!r} resolves to a blocked address ({ip}) -- "
                 "private/loopback/link-local/metadata targets are not permitted"
@@ -108,7 +116,9 @@ async def assert_public_url(url: str, settings: Settings, *, require_https: bool
         raise SsrfBlocked(f"URL scheme must be https, got {parsed.scheme!r}")
     if not parsed.hostname:
         raise SsrfBlocked("URL has no host")
-    await _assert_resolves_public(parsed.hostname)
+    await _assert_resolves_public(
+        parsed.hostname, allowed_cidrs=settings.egress_allowed_cidrs
+    )
 
 
 async def assert_public_host(host: str, settings: Settings) -> None:
@@ -119,4 +129,4 @@ async def assert_public_host(host: str, settings: Settings) -> None:
         return
     if not host or len(host) > _MAX_TARGET_LENGTH:
         raise SsrfBlocked("host is empty or exceeds the maximum allowed length")
-    await _assert_resolves_public(host)
+    await _assert_resolves_public(host, allowed_cidrs=settings.egress_allowed_cidrs)

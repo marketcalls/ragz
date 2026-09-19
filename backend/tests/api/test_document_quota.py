@@ -7,11 +7,12 @@ captured_enqueues) and test_oversized_upload_413's env-var + cache-clear
 pattern for setting config per test.
 """
 
+import asyncio
 from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
@@ -190,3 +191,158 @@ async def test_quota_is_per_org_not_global(
 
 def select_documents(workspace_id: str):  # type: ignore[no-untyped-def]
     return select(Document).where(Document.workspace_id == UUID(workspace_id))
+
+
+@pytest.mark.parametrize(
+    ("max_documents", "max_storage_bytes", "first_body", "second_body"),
+    [
+        (1, 0, b"first", b"second"),
+        (0, 10, b"123456", b"abcdef"),
+    ],
+)
+async def test_parallel_uploads_reserve_quota_before_storage(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    session: AsyncSession,
+    quota_settings,
+    captured_enqueues: dict,  # type: ignore[type-arg]  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    max_documents: int,
+    max_storage_bytes: int,
+    first_body: bytes,
+    second_body: bytes,
+) -> None:
+    """A second request must see the first request's in-flight reservation.
+
+    Holding the first object write opens the historical check/use gap. The
+    rejected request must return before storage and before an ingest outbox
+    event exists.
+    """
+
+    from ragz.core.storage import ObjectStorage
+
+    quota_settings(max_documents=max_documents, max_storage_bytes=max_storage_bytes)
+    headers = await auth(client, "a@acme.com")
+    workspace_id = await make_workspace(client, headers)
+    first_storage_started = asyncio.Event()
+    release_first_storage = asyncio.Event()
+    storage_keys: list[str] = []
+    original_put_stream = ObjectStorage.put_stream
+
+    async def _hold_first_put(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        storage_keys.append(key)
+        if len(storage_keys) == 1:
+            first_storage_started.set()
+            await release_first_storage.wait()
+        return await original_put_stream(self, key, fileobj, content_type=content_type)
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _hold_first_put)
+
+    first = asyncio.create_task(
+        client.post(
+            f"/api/v1/workspaces/{workspace_id}/documents",
+            headers=headers,
+            files={"file": ("first.txt", first_body, "text/plain")},
+        )
+    )
+    await asyncio.wait_for(first_storage_started.wait(), timeout=5)
+    second = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/documents",
+        headers=headers,
+        files={"file": ("second.txt", second_body, "text/plain")},
+    )
+    release_first_storage.set()
+    first_response = await asyncio.wait_for(first, timeout=5)
+
+    assert first_response.status_code == 201
+    assert second.status_code == 413
+    assert len(storage_keys) == 1
+    assert len(captured_enqueues["ingest"]) == 1
+    reservation_count = (
+        await session.execute(text("SELECT count(*) FROM resource_reservations"))
+    ).scalar_one()
+    assert reservation_count == 0
+
+
+async def test_failed_storage_releases_document_reservation(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    quota_settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    quota_settings(max_documents=1)
+    headers = await auth(client, "a@acme.com")
+    workspace_id = await make_workspace(client, headers)
+    original_put_stream = ObjectStorage.put_stream
+    calls = 0
+
+    async def _fail_once(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("isolated storage failure")
+        return await original_put_stream(self, key, fileobj, content_type=content_type)
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _fail_once)
+
+    with pytest.raises(RuntimeError, match="isolated storage failure"):
+        await client.post(
+            f"/api/v1/workspaces/{workspace_id}/documents",
+            headers=headers,
+            files={"file": ("failed.txt", b"failed", "text/plain")},
+        )
+    retry = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/documents",
+        headers=headers,
+        files={"file": ("retry.txt", b"retry", "text/plain")},
+    )
+
+    assert retry.status_code == 201
+
+
+async def test_cancelled_storage_releases_document_reservation(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    quota_settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragz.core.storage import ObjectStorage
+
+    quota_settings(max_documents=1)
+    headers = await auth(client, "a@acme.com")
+    workspace_id = await make_workspace(client, headers)
+    storage_started = asyncio.Event()
+    never_release = asyncio.Event()
+    original_put_stream = ObjectStorage.put_stream
+    calls = 0
+
+    async def _hold_once(self, key, fileobj, content_type="application/octet-stream"):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            storage_started.set()
+            await never_release.wait()
+        return await original_put_stream(self, key, fileobj, content_type=content_type)
+
+    monkeypatch.setattr(ObjectStorage, "put_stream", _hold_once)
+    cancelled = asyncio.create_task(
+        client.post(
+            f"/api/v1/workspaces/{workspace_id}/documents",
+            headers=headers,
+            files={"file": ("cancelled.txt", b"cancelled", "text/plain")},
+        )
+    )
+    await asyncio.wait_for(storage_started.wait(), timeout=5)
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+
+    retry = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/documents",
+        headers=headers,
+        files={"file": ("retry.txt", b"retry", "text/plain")},
+    )
+
+    assert retry.status_code == 201

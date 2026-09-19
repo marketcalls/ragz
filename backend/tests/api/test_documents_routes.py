@@ -203,6 +203,58 @@ async def test_oversized_upload_chunked_abort_413(
     get_settings.cache_clear()
 
 
+async def test_text_parser_limit_rejects_before_storage_or_enqueue(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    stack_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    captured_enqueues: dict,  # type: ignore[type-arg]
+) -> None:
+    from ragz.core.config import get_settings
+
+    monkeypatch.setenv("RAGZ_DOCUMENT_MAX_TEXT_MB", "1")
+    get_settings.cache_clear()
+    headers = await auth(client, "a@acme.com")
+    workspace_id = await make_workspace(client, headers)
+    response = await client.post(
+        f"/api/v1/workspaces/{workspace_id}/documents",
+        headers=headers,
+        files={"file": ("large.txt", b"x" * (1024 * 1024 + 1), "text/plain")},
+    )
+
+    assert response.status_code == 413
+    assert captured_enqueues["ingest"] == []
+    get_settings.cache_clear()
+
+
+async def test_spoofed_active_content_is_rejected_before_storage_or_enqueue(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    stack_env: None,
+    captured_enqueues: dict,  # type: ignore[type-arg]
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+
+    response = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents",
+        headers=h,
+        files={
+            "file": (
+                "quarterly-report.pdf",
+                b"<!doctype html><script>parent.previewPwned=true</script>",
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 415
+    assert response.headers["content-type"].startswith("application/problem+json")
+    listing = await client.get(f"/api/v1/workspaces/{ws_id}/documents", headers=h)
+    assert listing.json() == []
+    assert captured_enqueues["ingest"] == []
+
+
 async def test_approve_route_enqueues_reindex_when_needed(
     client: httpx.AsyncClient, seeded_user: User, session: AsyncSession,
     stack_env: None, qdrant_collection: None,

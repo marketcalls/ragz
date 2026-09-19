@@ -6,6 +6,7 @@ writes live in modules/documents/ingest.py; Celery wrappers in worker/tasks.py.
 
 import asyncio
 import tempfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -101,19 +102,28 @@ def _convert_blocks(tmp_path: Path, suffix: str, *, ocr: bool) -> list["PageBloc
 
 
 def parse_bytes(
-    data: bytes,
+    data: bytes | str | Path,
     filename: str,
     *,
     ocr_enabled: bool = True,
     ocr_min_chars_per_page: int = 200,
 ) -> list[PageBlock]:
-    """Docling parse to page-aware blocks. Sync/CPU — call via asyncio.to_thread."""
-    if not data:
+    """Docling parse to page-aware blocks from bytes or an existing path."""
+    if isinstance(data, bytes) and not data:
+        raise IngestFailure("file is empty")
+    source_path = Path(data) if not isinstance(data, bytes) else None
+    if source_path is not None and (
+        not source_path.is_file() or source_path.stat().st_size == 0
+    ):
         raise IngestFailure("file is empty")
     suffix = Path(filename).suffix.lower()
     if suffix == ".txt":  # docling has no plain-text input format
         try:
-            text = data.decode("utf-8")
+            text = (
+                data.decode("utf-8")
+                if isinstance(data, bytes)
+                else Path(data).read_text(encoding="utf-8")
+            )
         except UnicodeDecodeError as exc:
             raise IngestFailure("text file is not valid UTF-8") from exc
         txt_blocks = [
@@ -124,9 +134,14 @@ def parse_bytes(
             raise IngestFailure("document contains no extractable text")
         return txt_blocks
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(data)
-        tmp_path = Path(tmp.name)
+    if isinstance(data, bytes):
+        owns_temp = True
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+    else:
+        owns_temp = False
+        tmp_path = Path(data)
     try:
         blocks = _convert_blocks(tmp_path, suffix, ocr=False)
         if (
@@ -136,7 +151,8 @@ def parse_bytes(
         ):
             blocks = _convert_blocks(tmp_path, suffix, ocr=True)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if owns_temp:
+            tmp_path.unlink(missing_ok=True)
     if not blocks:
         raise IngestFailure("document contains no extractable text")
     return blocks
@@ -342,6 +358,7 @@ def chunk_document(
 async def embed_batch(
     texts: list[str], dense_embedder: DenseEmbedder, *,
     sparse_texts: list[str] | None = None, usage_sink: list[int] | None = None,
+    record_usage: Callable[[int], Awaitable[None]] | None = None,
 ) -> tuple[list[list[float]], list[models.SparseVector]]:
     """Embed one batch dense + sparse (spec §3.2 stage 3). `sparse_texts`
     (Plan K §4) lets keyword-augmented text feed ONLY the sparse/BM25 side —
@@ -353,9 +370,12 @@ async def embed_batch(
     batch's billed dense-embedding token count is appended to it so the caller
     can sum one embedding usage record per document run. Omitted (the default)
     -> byte-identical to the pre-cost-reporting call: plain `embed`, no usage."""
-    if usage_sink is not None:
+    if usage_sink is not None or record_usage is not None:
         dense, tokens = await dense_embedder.embed_with_usage(texts)
-        usage_sink.append(tokens)
+        if usage_sink is not None:
+            usage_sink.append(tokens)
+        if tokens > 0 and record_usage is not None:
+            await record_usage(tokens)
     else:
         dense = await dense_embedder.embed(texts)
     sparse = await asyncio.to_thread(embed_sparse, sparse_texts or texts)
@@ -378,6 +398,7 @@ async def upsert_points(
     collection_name: str,
     is_current: bool = False,
     summaries: list[str | None] | None = None,
+    security_revision: int = 0,
 ) -> None:
     """Upsert one batch of chunk points with the spec §2.2 payload. Constructs
     points, never filters (iron rule 1 — filters live in retrieval only).
@@ -413,6 +434,7 @@ async def upsert_points(
                 "is_current": is_current,
                 "meta": meta or {},
                 "summary": summary,
+                "security_revision": security_revision,
             },
         )
         for c, d, s, summary in zip(chunks, dense, sparse, summaries, strict=True)
@@ -442,6 +464,7 @@ async def upsert_hq_points(
     hq_dense: list[list[list[float]]],
     hq_sparse: list[list[models.SparseVector]],
     collection_name: str,
+    security_revision: int = 0,
 ) -> None:
     """Hypothetical-question points (spec §4): one per generated question, up
     to 3 per chunk. Payload is a FULL COPY of the parent chunk's payload
@@ -477,6 +500,7 @@ async def upsert_hq_points(
                         "meta": meta or {},
                         "summary": summary,
                         "kind": "hq",
+                        "security_revision": security_revision,
                     },
                 )
             )

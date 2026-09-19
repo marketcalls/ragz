@@ -124,6 +124,30 @@ async def test_fetch_redirect_to_private_host_blocked(monkeypatch: pytest.Monkey
     assert calls["n"] == 1  # first GET happened, redirect target never fetched
 
 
+async def test_fetch_redirect_to_cgnat_host_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _resolve(host: str, *a: object, **k: object) -> list[tuple]:
+        if host == "pub.example.com":
+            return _addrinfo("93.184.216.34")
+        return _addrinfo("100.64.0.1")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _resolve)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(302, headers={"location": "http://shared.internal/data"})
+
+    out = await web_content.fetch_page_text(
+        "https://pub.example.com/start", transport=httpx.MockTransport(handler)
+    )
+
+    assert out is None
+    assert calls == 1
+
+
 async def test_fetch_follows_redirect_to_public_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """A redirect to another PUBLIC host is followed exactly once and its text
     extracted."""

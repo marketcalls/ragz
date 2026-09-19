@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
 
 import type { WorkspaceOut } from '@/api/types';
 import { Button } from '@/components/ui/button';
@@ -6,12 +6,20 @@ import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/toaster';
+import { useAuthorization } from '@/lib/use-authorization';
 
 import { EmbeddingModelSection } from './embedding-model-section';
-import { EvalsSection } from './evals-section';
 import { MembersSection } from './members-section';
 import { MetadataFieldsSection } from './metadata-fields-section';
 import { usePatchWorkspace } from './queries';
+
+// Evals pulls in Markdown rendering and citation UI. It is a secondary tab in
+// a settings dialog, so keep that dependency graph out of the initial app
+// download and load it only after the user opens the tab.
+const EvalsSection = lazy(async () => {
+  const module = await import('./evals-section');
+  return { default: module.EvalsSection };
+});
 
 export function WorkspaceSettingsDialog({
   workspace,
@@ -23,9 +31,19 @@ export function WorkspaceSettingsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const patch = usePatchWorkspace();
+  const { data: authorization } = useAuthorization();
+  const isSuperadmin = authorization?.role === 'superadmin';
+  const canReadEvals = isSuperadmin || authorization?.permissions.has('evals.read') === true;
+  const canManageEvals = isSuperadmin || authorization?.permissions.has('evals.manage') === true;
+  const canRunEvals = isSuperadmin || authorization?.permissions.has('evals.run') === true;
+  const canListDocuments =
+    isSuperadmin || authorization?.permissions.has('documents.list') === true;
+  const canReadModels = isSuperadmin || authorization?.permissions.has('models.read') === true;
+  const canAccessEvals = canReadEvals || canManageEvals || canRunEvals;
   const [topK, setTopK] = useState(String(workspace.top_k));
   const [minScore, setMinScore] = useState(String(workspace.min_score));
   const [rerank, setRerank] = useState(workspace.rerank_enabled);
+  const [multiQuery, setMultiQuery] = useState(workspace.multi_query_enabled);
   const [override, setOverride] = useState(workspace.system_prompt_override ?? '');
   const [fallback, setFallback] = useState<'general_knowledge' | 'decline'>(
     workspace.fallback_policy as 'general_knowledge' | 'decline',
@@ -40,6 +58,10 @@ export function WorkspaceSettingsDialog({
   // strip matches dashboard-page.tsx's RANGES day-picker style.
   const [tab, setTab] = useState<'settings' | 'members' | 'evals'>('settings');
 
+  useEffect(() => {
+    if (tab === 'evals' && !canAccessEvals) setTab('settings');
+  }, [canAccessEvals, tab]);
+
   const submit = (e: FormEvent): void => {
     e.preventDefault();
 
@@ -51,6 +73,7 @@ export function WorkspaceSettingsDialog({
       top_k?: number;
       min_score?: number;
       rerank_enabled?: boolean;
+      multi_query_enabled?: boolean;
       system_prompt_override?: string | null;
       fallback_policy?: 'general_knowledge' | 'decline';
       web_search_enabled?: boolean;
@@ -64,6 +87,9 @@ export function WorkspaceSettingsDialog({
     if (nextTopK !== workspace.top_k) changes.top_k = nextTopK;
     if (nextMinScore !== workspace.min_score) changes.min_score = nextMinScore;
     if (rerank !== workspace.rerank_enabled) changes.rerank_enabled = rerank;
+    if (isSuperadmin && multiQuery !== workspace.multi_query_enabled) {
+      changes.multi_query_enabled = multiQuery;
+    }
     if (nextOverride !== workspace.system_prompt_override) {
       changes.system_prompt_override = nextOverride;
     }
@@ -95,10 +121,13 @@ export function WorkspaceSettingsDialog({
       <DialogContent
         title={`Retrieval settings — ${workspace.name}`}
         description="Tuning applies to every chat and search in this workspace."
-        className="max-w-lg"
+        className={tab === 'evals' ? 'max-w-[calc(100vw-2rem)] xl:max-w-7xl' : 'max-w-lg'}
       >
         <div className="mb-3 flex gap-1">
-          {(['settings', 'members', 'evals'] as const).map((t) => (
+          {(canAccessEvals
+            ? (['settings', 'members', 'evals'] as const)
+            : (['settings', 'members'] as const)
+          ).map((t) => (
             <button
               key={t}
               type="button"
@@ -136,8 +165,8 @@ export function WorkspaceSettingsDialog({
                   <option value="table_qa">Table Q&amp;A (tabular data)</option>
                 </select>
                 <p className="text-[12px] text-muted">
-                  How new uploads are split into chunks. Applies to documents ingested after
-                  this change — re-index existing docs to apply it to them.
+                  How new uploads are split into chunks. Applies to documents ingested after this
+                  change — re-index existing docs to apply it to them.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -180,6 +209,24 @@ export function WorkspaceSettingsDialog({
                 With reranking on, the confidence threshold reads the reranker&apos;s 0–1 relevance
                 score instead of cosine similarity — recheck it after toggling.
               </p>
+              {isSuperadmin ? (
+                <div className="space-y-1">
+                  <label className="flex items-center gap-2 text-[13px] text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={multiQuery}
+                      onChange={(e) => setMultiQuery(e.target.checked)}
+                      aria-label="Expand each question into multiple searches"
+                    />
+                    Expand each question into multiple searches
+                  </label>
+                  <p className="text-[12px] text-muted">
+                    Superadmin control. Uses the utility model to generate up to two alternative
+                    searches, then fuses all results. This can improve recall but adds one model
+                    call and extra retrieval latency.
+                  </p>
+                </div>
+              ) : null}
               <div className="space-y-1">
                 <Label htmlFor="ws-fallback">If retrieval finds nothing</Label>
                 <select
@@ -221,9 +268,9 @@ export function WorkspaceSettingsDialog({
                   onChange={(e) => setEnrichment(e.target.checked)}
                   aria-label="Enable search-recall enrichment"
                 />
-                Enrich chunks for better search recall (uses the utility model) — turning this
-                off stops new enrichment but does not remove enrichment already applied to
-                existing documents
+                Enrich chunks for better search recall (uses the utility model) — turning this off
+                stops new enrichment but does not remove enrichment already applied to existing
+                documents
               </label>
               <div className="space-y-1">
                 <Label htmlFor="ws-prompt-override">System prompt additions</Label>
@@ -253,7 +300,17 @@ export function WorkspaceSettingsDialog({
         ) : tab === 'members' ? (
           <MembersSection workspaceId={workspace.id} />
         ) : (
-          <EvalsSection workspaceId={workspace.id} />
+          <Suspense fallback={<div className="text-sm text-muted">Loading evaluations…</div>}>
+            <EvalsSection
+              workspaceId={workspace.id}
+              defaultModelId={workspace.default_model_id ?? null}
+              canRead={canReadEvals}
+              canManage={canManageEvals}
+              canRun={canRunEvals}
+              canListDocuments={canListDocuments}
+              canReadModels={canReadModels}
+            />
+          </Suspense>
         )}
       </DialogContent>
     </Dialog>

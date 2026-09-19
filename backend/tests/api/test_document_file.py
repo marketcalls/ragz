@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 import httpx
@@ -21,10 +22,11 @@ async def make_workspace(client: httpx.AsyncClient, h: dict[str, str]) -> str:
 async def upload(
     client: httpx.AsyncClient, h: dict[str, str], ws_id: str,
     filename: str = "notes.txt", content: bytes = b"the flux capacitor hums",
+    content_type: str = "text/plain",
 ) -> dict:  # type: ignore[type-arg]
     r = await client.post(
         f"/api/v1/workspaces/{ws_id}/documents", headers=h,
-        files={"file": (filename, content, "text/plain")},
+        files={"file": (filename, content, content_type)},
     )
     assert r.status_code == 201
     return r.json()  # type: ignore[no-any-return]
@@ -145,3 +147,87 @@ async def test_unknown_document_id_returns_404(
         "/api/v1/documents/00000000-0000-0000-0000-000000000000/file", headers=h
     )
     assert r.status_code == 404
+
+
+async def test_active_html_is_download_only_even_when_stored_with_active_mime(
+    client: httpx.AsyncClient, seeded_user: User, stack_env: None,
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    body = b"<!doctype html><script>parent.previewPwned=true</script>"
+    doc = await upload(client, h, ws_id, "legacy.html", body, "text/html")
+
+    response = await client.get(f"/api/v1/documents/{doc['id']}/file", headers=h)
+
+    assert response.status_code == 200
+    assert response.content == body
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_verified_pdf_remains_inline_and_page_previewable(
+    client: httpx.AsyncClient, seeded_user: User, stack_env: None,
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    body = b"%PDF-1.7\n% synthetic harmless preview fixture\n%%EOF\n"
+    doc = await upload(client, h, ws_id, "manual.pdf", body, "text/html")
+
+    response = await client.get(f"/api/v1/documents/{doc['id']}/file", headers=h)
+
+    assert response.status_code == 200
+    assert response.content == body
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_file_response_streams_after_a_bounded_signature_read(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    stack_env: None,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    from ragz.core.storage import ObjectStorage
+
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    body = b"%PDF-1.7\nstreamed fixture\n%%EOF\n"
+    doc = await upload(client, h, ws_id, "streamed.pdf", body, "application/pdf")
+
+    async def _forbid_buffered_get(self, key):  # type: ignore[no-untyped-def]
+        raise AssertionError("document route buffered the whole object")
+
+    async def _prefix(self, key, max_bytes):  # type: ignore[no-untyped-def]
+        assert max_bytes == 8192
+        return body[:max_bytes]
+
+    async def _stream(self, key, chunk_size=1024 * 1024) -> AsyncIterator[bytes]:  # type: ignore[no-untyped-def]
+        assert chunk_size == 1024 * 1024
+        yield body[:9]
+        yield body[9:]
+
+    monkeypatch.setattr(ObjectStorage, "get", _forbid_buffered_get)
+    monkeypatch.setattr(ObjectStorage, "get_prefix", _prefix, raising=False)
+    monkeypatch.setattr(ObjectStorage, "iter_bytes", _stream, raising=False)
+
+    response = await client.get(f"/api/v1/documents/{doc['id']}/file", headers=h)
+
+    assert response.status_code == 200
+    assert response.content == body
+
+
+async def test_unicode_filename_uses_an_ascii_fallback_and_rfc5987_value(
+    client: httpx.AsyncClient, seeded_user: User, stack_env: None,
+) -> None:
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+    doc = await upload(client, h, ws_id, "契約📄.txt", b"terms", "text/plain")
+
+    response = await client.get(f"/api/v1/documents/{doc['id']}/file", headers=h)
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert 'filename="download.txt"' in disposition
+    assert "filename*=UTF-8''%E5%A5%91%E7%B4%84%F0%9F%93%84.txt" in disposition

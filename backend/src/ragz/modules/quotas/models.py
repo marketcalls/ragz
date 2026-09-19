@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ragz.core.db import Base, UUIDPk
@@ -28,6 +29,12 @@ class UsageRecord(UUIDPk, Base):
         Index("ix_usage_org_created", "org_id", "created_at"),
         Index("ix_usage_user_created", "user_id", "created_at"),
         Index("ix_usage_workspace_created", "workspace_id", "created_at"),
+        Index(
+            "uq_usage_records_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     org_id: Mapped[UUID]
@@ -44,3 +51,26 @@ class UsageRecord(UUIDPk, Base):
     # Token features leave it 0. NEVER summed into any token aggregation:
     # units are calls, not tokens, and must not inflate a token budget.
     units: Mapped[int] = mapped_column(default=0, server_default="0")
+    idempotency_key: Mapped[str | None] = mapped_column(default=None)
+
+
+class ResourceReservation(UUIDPk, Base):
+    """Durable in-flight admission counted before external storage work."""
+
+    __tablename__ = "resource_reservations"
+    __table_args__ = (
+        CheckConstraint("size_bytes >= 0", name="ck_resource_reservations_size"),
+        CheckConstraint(
+            "kind IN ('document', 'attachment')", name="ck_resource_reservations_kind"
+        ),
+        Index("ix_resource_reservations_org_kind_expiry", "org_id", "kind", "expires_at"),
+        Index("ix_resource_reservations_user_kind_expiry", "user_id", "kind", "expires_at"),
+    )
+
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str]
+    size_bytes: Mapped[int] = mapped_column(BigInteger())
+    expires_at: Mapped[datetime]

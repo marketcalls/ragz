@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragz.core.errors import AuthorizationError
 from ragz.modules.evals import service as evals_service
 from ragz.modules.outbox import service as outbox_service
 from ragz.modules.tenancy import service
@@ -68,11 +69,58 @@ async def test_fallback_policy_change_does_not_trigger_eval_run(
     assert enqueued == []
 
 
-async def test_assign_custom_role_now_allows_admin_target(session: AsyncSession) -> None:
-    """RBAC-05: an org admin is now a valid assign_custom_role target -- an
-    admin needs an EXPLICIT template (e.g. Content Manager) for content-ACL
-    bypass, exactly as a 'user'-tier account needs one for upload/delete.
-    Before this change an admin target 409'd."""
+async def test_admin_cannot_mutate_multi_query_or_sibling_setting(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    original_top_k = ws.top_k
+
+    with pytest.raises(AuthorizationError, match="requires superadmin"):
+        await service.update_retrieval_settings(
+            session,
+            ctx,
+            ws.id,
+            {"top_k": 12, "multi_query_enabled": True},
+        )
+
+    await session.refresh(ws)
+    assert ws.top_k == original_top_k
+    assert ws.multi_query_enabled is False
+
+
+async def test_default_model_assignment_rejects_disabled_and_embedding_models(
+    session: AsyncSession, ctx: TenantContext, ws: Workspace
+) -> None:
+    from ragz.core.errors import NotFoundError
+    from ragz.modules.models.models import Model
+
+    disabled = Model(
+        litellm_model_name="disabled-chat-default",
+        display_name="Disabled chat",
+        provider_kind="ollama",
+        modality="chat",
+        enabled=False,
+    )
+    embedding = Model(
+        litellm_model_name="embedding-default",
+        display_name="Embedding",
+        provider_kind="tei",
+        modality="embedding",
+        dimension=8,
+        collection_name="embedding-default",
+    )
+    session.add_all([disabled, embedding])
+    await session.commit()
+
+    for model in (disabled, embedding):
+        with pytest.raises(NotFoundError):
+            await service.set_default_model(session, ctx, ws.id, model.id)
+        await session.refresh(ws)
+        assert ws.default_model_id is None
+
+
+async def test_admin_without_independent_authority_cannot_grant_sensitive_role(
+    session: AsyncSession,
+) -> None:
     from ragz.modules.auth.models import User
     from ragz.modules.tenancy.models import Organization, RoleTemplate
 
@@ -96,8 +144,126 @@ async def test_assign_custom_role_now_allows_admin_target(session: AsyncSession)
     seeded_ctx = TenantContext(
         user_id=actor.id, org_id=org.id, role="admin", workspace_ids=frozenset()
     )
-    updated = await service.assign_custom_role(session, seeded_ctx, target.id, template.id)
-    assert updated.custom_role_id == template.id
+    with pytest.raises(AuthorizationError, match="sensitive role grant"):
+        await service.assign_custom_role(session, seeded_ctx, target.id, template.id)
+    await session.refresh(target)
+    assert target.custom_role_id is None
+
+
+async def test_delegated_sensitive_grantor_can_grant_to_another_same_org_admin(
+    session: AsyncSession,
+) -> None:
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization, RoleTemplate
+
+    org = Organization(name="delegated-sensitive-grant-org")
+    session.add(org)
+    await session.flush()
+    actor = User(
+        org_id=org.id,
+        email="grantor@assign.example",
+        password_hash="x",  # noqa: S106
+        role="admin",
+    )
+    target = User(
+        org_id=org.id,
+        email="grantee@assign.example",
+        password_hash="x",  # noqa: S106
+        role="admin",
+    )
+    sensitive = RoleTemplate(
+        name="delegated-audit-reader",
+        permissions=["audit.read"],
+        status="active",
+    )
+    session.add_all([actor, target, sensitive])
+    await session.flush()
+    grantor_ctx = TenantContext(
+        user_id=actor.id,
+        org_id=org.id,
+        role="admin",
+        workspace_ids=frozenset(),
+        permissions=frozenset({"roles.sensitive.assign"}),
+    )
+
+    updated = await service.assign_custom_role(
+        session, grantor_ctx, target.id, sensitive.id
+    )
+
+    assert updated.custom_role_id == sensitive.id
+
+
+async def test_sensitive_grantor_still_cannot_grant_to_self(session: AsyncSession) -> None:
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization, RoleTemplate
+
+    org = Organization(name="sensitive-self-grant-org")
+    session.add(org)
+    await session.flush()
+    actor = User(
+        org_id=org.id,
+        email="self-grantor@assign.example",
+        password_hash="x",  # noqa: S106
+        role="admin",
+    )
+    sensitive = RoleTemplate(
+        name="self-sensitive-template",
+        permissions=["documents.acl.bypass"],
+        status="active",
+    )
+    session.add_all([actor, sensitive])
+    await session.flush()
+    grantor_ctx = TenantContext(
+        user_id=actor.id,
+        org_id=org.id,
+        role="admin",
+        workspace_ids=frozenset(),
+        permissions=frozenset({"roles.sensitive.assign"}),
+    )
+
+    with pytest.raises(AuthorizationError, match="self-grant"):
+        await service.assign_custom_role(session, grantor_ctx, actor.id, sensitive.id)
+
+
+async def test_superadmin_can_bootstrap_cross_org_sensitive_grantor(
+    session: AsyncSession,
+) -> None:
+    from ragz.modules.auth.models import User
+    from ragz.modules.tenancy.models import Organization, RoleTemplate
+
+    platform = Organization(name="sensitive-platform-org")
+    tenant = Organization(name="sensitive-tenant-org")
+    session.add_all([platform, tenant])
+    await session.flush()
+    superadmin = User(
+        org_id=platform.id,
+        email="bootstrap-superadmin@assign.example",
+        password_hash="x",  # noqa: S106
+        role="superadmin",
+    )
+    target = User(
+        org_id=tenant.id,
+        email="bootstrap-grantor@assign.example",
+        password_hash="x",  # noqa: S106
+        role="admin",
+    )
+    grantor = RoleTemplate(
+        name="bootstrap-sensitive-grantor",
+        permissions=["roles.sensitive.assign"],
+        status="active",
+    )
+    session.add_all([superadmin, target, grantor])
+    await session.flush()
+    super_ctx = TenantContext(
+        user_id=superadmin.id,
+        org_id=platform.id,
+        role="superadmin",
+        workspace_ids=frozenset(),
+    )
+
+    updated = await service.assign_custom_role(session, super_ctx, target.id, grantor.id)
+
+    assert updated.custom_role_id == grantor.id
 
 
 @pytest.fixture

@@ -246,6 +246,49 @@ async def test_research_shares_daily_cap_with_links_and_redacts_query(
     assert refused.error == "daily web search limit reached"
 
 
+async def test_successful_paid_research_records_usage_at_provider_boundary(
+    session: AsyncSession,
+    test_settings: Settings,
+    seeded_user: User,
+    chat_env: dict[str, Any],
+) -> None:
+    researcher = await _researcher(
+        session,
+        test_settings,
+        lambda request: httpx.Response(200, json=_response()),
+    )
+    ctx = TenantContext(
+        user_id=seeded_user.id,
+        org_id=seeded_user.org_id,
+        role="admin",
+        workspace_ids=frozenset({chat_env["workspace"].id}),
+    )
+    recorded = 0
+
+    async def record_usage() -> None:
+        nonlocal recorded
+        recorded += 1
+
+    outcome = await execute_tool(
+        session,
+        ctx,
+        PlannerAction(action="web_research", query="public guidance"),
+        workspace=chat_env["workspace"],
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(),
+        web_searcher=FakeWebSearcher(),
+        web_researcher=researcher,
+        collection_name="unused",
+        question="public guidance",
+        web_search_consented=True,
+        web_search_budget_remaining=1,
+        record_billable_web_usage=record_usage,
+    )
+
+    assert outcome.error is None
+    assert recorded == 1
+
+
 async def test_loop_combines_link_and_research_budget_and_paid_usage(
     session: AsyncSession,
     test_settings: Settings,

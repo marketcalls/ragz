@@ -32,7 +32,8 @@ PERMISSIONS = frozenset({
     "users.read", "users.invite", "users.activate", "users.role.assign",
     "groups.read", "groups.manage",
     # Policy/audit
-    "roles.read", "roles.author", "roles.assign", "audit.read", "audit.export",
+    "roles.read", "roles.author", "roles.assign", "roles.sensitive.assign",
+    "audit.read", "audit.export",
     # Operations
     "models.read", "models.manage", "secrets.manage", "sso.manage",
     "integrations.manage", "api_keys.manage", "quota.read", "quota.manage",
@@ -51,6 +52,13 @@ PERMISSIONS = frozenset({
     # no route checks this flag after Task 6 retires it from new grants)
     "chat.use",
 })
+
+# Assignment of any permission in this set requires a different, independently
+# authorized grantor. The authority flag is itself sensitive so an ordinary
+# org admin cannot bootstrap another account and route the grant back.
+SENSITIVE_ROLE_PERMISSIONS = frozenset(
+    {"documents.acl.bypass", "audit.read", "audit.export", "roles.sensitive.assign"}
+)
 
 # RBAC-04 (deny-by-default): the non-destructive read floor a "user"-tier
 # account with no custom role receives. The legacy destructive trio

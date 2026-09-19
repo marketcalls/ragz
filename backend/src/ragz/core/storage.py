@@ -1,4 +1,5 @@
 import inspect
+from collections.abc import AsyncIterator
 from typing import Any
 
 from aiobotocore.session import get_session
@@ -18,6 +19,13 @@ async def _read_chunk(fileobj: Any, size: int) -> bytes:
     if inspect.isawaitable(chunk):
         chunk = await chunk
     return chunk or b""
+
+
+async def _write_chunk(fileobj: Any, chunk: bytes) -> None:
+    """Write one chunk to a sync OR async file-like object."""
+    written = fileobj.write(chunk)
+    if inspect.isawaitable(written):
+        await written
 
 
 class ObjectStorage:
@@ -68,8 +76,8 @@ class ObjectStorage:
         """Upload from a file-like object instead of a bytes blob.
 
         `put` needs the whole object resident before the first byte goes out,
-        which for a 100 MB upload (the max_upload_mb default) means 100 MB of
-        RSS per concurrent request. This reads the stream one part at a time
+        which at a large configured upload boundary can mean the whole object
+        resident per concurrent request. This reads the stream one part at a time
         and switches to multipart past `_PART_SIZE`, so peak memory is bounded
         by the part size rather than by the file.
 
@@ -136,6 +144,67 @@ class ObjectStorage:
                     raise
             body: bytes = await obj["Body"].read()
             return body
+
+    async def download_to_fileobj(self, key: str, fileobj: Any) -> None:
+        """Download into a writable file object while keeping peak RAM bounded."""
+
+        async with self._client() as s3:
+            try:
+                obj = await s3.get_object(Bucket=self.bucket, Key=key)
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code in {"NoSuchKey", "404"}:
+                    raise NotFoundError(f"object not found: {key}") from exc
+                raise
+            body = obj["Body"]
+            while chunk := await body.read(_PART_SIZE):
+                await _write_chunk(fileobj, chunk)
+
+    async def get_prefix(self, key: str, max_bytes: int) -> bytes:
+        """Read only the bounded prefix needed for server-side type checks."""
+
+        async with self._client() as s3:
+            try:
+                obj = await s3.get_object(
+                    Bucket=self.bucket,
+                    Key=key,
+                    Range=f"bytes=0-{max_bytes - 1}",
+                )
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code in {"NoSuchKey", "404"}:
+                    raise NotFoundError(f"object not found: {key}") from exc
+                raise
+            body: bytes = await obj["Body"].read()
+            return body
+
+    async def iter_bytes(
+        self, key: str, chunk_size: int = 1024 * 1024
+    ) -> AsyncIterator[bytes]:
+        """Stream an object while keeping the S3 client alive for the body."""
+
+        async with self._client() as s3:
+            try:
+                obj = await s3.get_object(Bucket=self.bucket, Key=key)
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code in {"NoSuchKey", "404"}:
+                    raise NotFoundError(f"object not found: {key}") from exc
+                raise
+            body = obj["Body"]
+            while chunk := await body.read(chunk_size):
+                yield chunk
+
+    async def iter_keys(self, prefix: str = "") -> AsyncIterator[str]:
+        """List object keys incrementally for read-only reconciliation tools."""
+
+        async with self._client() as s3:
+            paginator = s3.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                for item in page.get("Contents", []):
+                    key = item.get("Key")
+                    if isinstance(key, str):
+                        yield key
 
     async def delete(self, key: str) -> None:
         async with self._client() as s3:

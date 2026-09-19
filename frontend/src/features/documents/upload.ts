@@ -1,5 +1,5 @@
 import { refreshAccessToken } from '@/api/client';
-import { getAccessToken } from '@/lib/auth-store';
+import { getAccessToken, getAuthGeneration } from '@/lib/auth-store';
 
 interface AttemptResult {
   status: number;
@@ -52,10 +52,14 @@ async function uploadOne(
   file: File,
   folderId: string | null,
   onLoaded: (loaded: number) => void,
+  generation: number,
 ): Promise<void> {
+  if (getAuthGeneration() !== generation) throw new Error('session expired');
   let result = await attempt(workspaceId, file, folderId, onLoaded);
   if (result.status === 401) {
-    if (!(await refreshAccessToken())) throw new Error('session expired');
+    if (!(await refreshAccessToken(generation)) || getAuthGeneration() !== generation) {
+      throw new Error('session expired');
+    }
     result = await attempt(workspaceId, file, folderId, onLoaded);
     if (result.status === 401) throw new Error('session expired');
   }
@@ -97,11 +101,18 @@ export async function uploadDocuments(
   const totalBytes = items.reduce((sum, item) => sum + item.file.size, 0) || 1;
   let doneBytes = 0;
   const failures: UploadFailure[] = [];
+  const generation = getAuthGeneration();
   for (const item of items) {
     try {
-      await uploadOne(workspaceId, item.file, item.folderId, (loaded) => {
-        onProgress(Math.round(((doneBytes + loaded) / totalBytes) * 100));
-      });
+      await uploadOne(
+        workspaceId,
+        item.file,
+        item.folderId,
+        (loaded) => {
+          onProgress(Math.round(((doneBytes + loaded) / totalBytes) * 100));
+        },
+        generation,
+      );
     } catch (err) {
       failures.push({ file: item.file, message: err instanceof Error ? err.message : 'upload failed' });
     }

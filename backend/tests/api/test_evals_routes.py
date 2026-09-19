@@ -9,8 +9,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.modules.auth.models import User
+from ragz.modules.evals.schemas import ComparisonVariantOut
+from ragz.modules.models.models import Model
 from ragz.modules.outbox import service as outbox_service
-from ragz.modules.tenancy.models import RoleTemplate, WorkspaceMember
+from ragz.modules.tenancy.models import RoleTemplate, Workspace, WorkspaceMember
 
 
 async def auth(client: httpx.AsyncClient, email: str) -> dict[str, str]:
@@ -124,6 +126,114 @@ async def test_eval_run_routes_require_configure_permission(
     assert r.status_code == 403
     r = await evals_client.get(f"/api/v1/workspaces/{ws_id}/evals/runs", headers=h_engineer)
     assert r.status_code == 403
+    r = await evals_client.post(
+        f"/api/v1/workspaces/{ws_id}/evals/compare",
+        json={"question": "compare this"},
+        headers=h_engineer,
+    )
+    assert r.status_code == 403
+
+
+async def test_compare_route_returns_ordered_variants(
+    evals_client: httpx.AsyncClient,
+    ws_id: str,
+    h_admin: dict[str, str],
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = Model(
+        litellm_model_name="comparison-model",
+        display_name="Comparison model",
+        provider_kind="ollama",
+        enabled=True,
+    )
+    session.add(model)
+    await session.flush()
+    workspace = await session.get(Workspace, UUID(ws_id))
+    assert workspace is not None
+    workspace.default_model_id = model.id
+    await session.commit()
+
+    from ragz.modules.evals import comparison
+
+    captured: dict[str, object] = {}
+
+    async def fake_compare(*args, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        common = {
+            "answer": "Grounded answer [1].",
+            "sources": [],
+            "citation_markers": [],
+            "no_answer": False,
+            "retrieval_ms": 4.0,
+            "generation_ms": 6.0,
+            "total_ms": 10.0,
+            "prompt_tokens": 12,
+            "completion_tokens": 3,
+        }
+        return [
+            ComparisonVariantOut(mode="single", query_count=1, **common),
+            ComparisonVariantOut(mode="multi", query_count=3, **common),
+        ]
+
+    monkeypatch.setattr(comparison, "compare_answers", fake_compare)
+    # The route resolves a completer before delegating. Supplying one on the
+    # app keeps this test provider-free; comparison behavior is covered in the
+    # module tests above.
+    transport = evals_client._transport  # type: ignore[attr-defined]
+    transport.app.state.llm_completer = object()  # type: ignore[attr-defined]
+
+    response = await evals_client.post(
+        f"/api/v1/workspaces/{ws_id}/evals/compare",
+        json={"question": "Why does the receive window matter?", "model_id": str(model.id)},
+        headers=h_admin,
+    )
+
+    assert response.status_code == 200
+    assert [item["mode"] for item in response.json()["variants"]] == ["single", "multi"]
+    assert captured["question"] == "Why does the receive window matter?"
+    assert captured["model_id"] == model.id
+
+
+async def test_compare_route_rejects_embedding_model_id(
+    evals_client: httpx.AsyncClient,
+    ws_id: str,
+    h_admin: dict[str, str],
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    embedding_model = Model(
+        litellm_model_name="text-embedding-3-large",
+        display_name="Embedding only",
+        provider_kind="openai",
+        enabled=True,
+        modality="embedding",
+        dimension=1024,
+        collection_name="embedding-only-test",
+    )
+    session.add(embedding_model)
+    await session.commit()
+    called = False
+
+    async def fake_compare(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal called
+        called = True
+        return []
+
+    from ragz.modules.evals import comparison
+
+    monkeypatch.setattr(comparison, "compare_answers", fake_compare)
+    transport = evals_client._transport  # type: ignore[attr-defined]
+    transport.app.state.llm_completer = object()  # type: ignore[attr-defined]
+
+    response = await evals_client.post(
+        f"/api/v1/workspaces/{ws_id}/evals/compare",
+        json={"question": "compare this", "model_id": str(embedding_model.id)},
+        headers=h_admin,
+    )
+
+    assert response.status_code == 404
+    assert called is False
 
 
 async def test_trigger_eval_run_rejects_cross_org_workspace(

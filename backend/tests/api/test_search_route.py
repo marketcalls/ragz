@@ -1,8 +1,13 @@
 from uuid import UUID
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ragz.core.db import build_session_factory
 from ragz.modules.auth.models import User
+from ragz.modules.quotas.models import UsageRecord
+from ragz.modules.retrieval.service import RetrievalResult
 from ragz.modules.tenancy.models import WorkspaceMember
 from tests.api.test_documents_routes import auth, make_workspace
 from tests.api.test_permissions_routes import make_templated_member
@@ -73,6 +78,52 @@ async def test_search_requires_auth(client: httpx.AsyncClient, seeded_user: User
     r = await client.post("/api/v1/workspaces/00000000-0000-0000-0000-000000000000/search",
                           json={"query": "x"})
     assert r.status_code == 401
+
+
+async def test_direct_search_commits_staged_provider_usage(
+    client: httpx.AsyncClient,
+    seeded_user: User,
+    engine: AsyncEngine,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    h = await auth(client, "a@acme.com")
+    ws_id = await make_workspace(client, h)
+
+    async def staged_usage(session, ctx, workspace_id, query, **kwargs):  # type: ignore[no-untyped-def]
+        session.add(
+            UsageRecord(
+                org_id=ctx.org_id,
+                user_id=ctx.user_id,
+                workspace_id=workspace_id,
+                model_id=None,
+                feature="query_expansion",
+                prompt_tokens=7,
+                completion_tokens=3,
+                units=0,
+            )
+        )
+        return RetrievalResult(chunks=[], no_answer=True)
+
+    monkeypatch.setattr("ragz.api.routes.search.retrieve", staged_usage)
+
+    response = await client.post(
+        f"/api/v1/workspaces/{ws_id}/search",
+        json={"query": "anything"},
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    factory = build_session_factory(engine)
+    async with factory() as verification_session:
+        row = (
+            await verification_session.execute(
+                select(UsageRecord).where(
+                    UsageRecord.workspace_id == UUID(ws_id),
+                    UsageRecord.feature == "query_expansion",
+                )
+            )
+        ).scalar_one()
+    assert (row.prompt_tokens, row.completion_tokens) == (7, 3)
 
 
 async def test_search_with_metadata_filter_excludes_non_matching_doc(

@@ -212,6 +212,25 @@ async def test_chunked_body_within_limit_passes_through(
     assert r.text == "received 15"
 
 
+async def test_attachment_body_has_a_smaller_pre_multipart_limit() -> None:
+    wrapped = BodySizeLimitMiddleware(
+        _echo_app,
+        max_bytes=100,
+        attachment_max_bytes=16,
+    )
+    transport = httpx.ASGITransport(app=wrapped)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        attachment = await client.post(
+            "/api/v1/chats/chat-id/attachments", content=b"x" * 17
+        )
+        document = await client.post(
+            "/api/v1/workspaces/workspace-id/documents", content=b"x" * 17
+        )
+
+    assert attachment.status_code == 413
+    assert document.status_code == 200
+
+
 async def test_oversized_body_rejected_through_real_create_app_stack(
     test_settings: Settings,
 ) -> None:

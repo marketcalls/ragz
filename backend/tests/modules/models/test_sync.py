@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import ragz
 from ragz.core.config import Settings
-from ragz.core.errors import UpstreamError
+from ragz.core.errors import SsrfBlocked, UpstreamError
 from ragz.modules.auth.models import User
 from ragz.modules.models.service import create_model, list_models, update_model
 from ragz.modules.models.sync import sync_models_to_litellm
@@ -110,6 +110,32 @@ async def test_proxy_failure_maps_to_upstream_error(
             session, settings, transport=Recorder(fail=True).transport
         )
     assert {m.sync_status for m in await list_models(session)} == {"error"}
+
+
+async def test_sync_revalidates_persisted_model_target_before_proxy_mutation(
+    session: AsyncSession,
+    seeded_user: User,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await seed_two_models(session, seeded_user, settings)
+    model = next(
+        row for row in await list_models(session) if row.litellm_model_name == "gpt-4o-mini"
+    )
+    model.base_url = "https://legacy-target.example"
+    await session.commit()
+    recorder = Recorder(deployed_ids=["must-survive"])
+
+    async def _blocked(*args: object, **kwargs: object) -> None:
+        raise SsrfBlocked("blocked persisted target")
+
+    monkeypatch.setattr("ragz.modules.models.sync.assert_public_url", _blocked)
+
+    with pytest.raises(SsrfBlocked):
+        await sync_models_to_litellm(session, settings, transport=recorder.transport)
+
+    assert recorder.calls == []
+    assert {row.sync_status for row in await list_models(session)} == {"error"}
 
 
 async def test_litellm_kind_passes_catalog_name_verbatim(

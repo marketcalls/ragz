@@ -101,10 +101,21 @@ async def test_generate_blocks_empty_array_is_a_valid_no_op() -> None:
 
 async def test_generate_blocks_garbage_text_never_raises() -> None:
     completer = _script("I don't think a visualization is needed here.")
+    recorded: list[LLMUsage] = []
+
+    async def _record(usage: LLMUsage) -> None:
+        recorded.append(usage)
+
     blocks = await generate_blocks(
-        completer, question="q", answer="a", context="c", model=_MODEL,
+        completer,
+        question="q",
+        answer="a",
+        context="c",
+        model=_MODEL,
+        record_usage=_record,
     )
     assert blocks == []
+    assert recorded == [LLMUsage(prompt_tokens=1, completion_tokens=1)]
 
 
 async def test_generate_blocks_hostile_payload_dropped_not_raised() -> None:

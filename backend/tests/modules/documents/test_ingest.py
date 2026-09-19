@@ -55,10 +55,13 @@ async def test_full_runner_sequence_indexes_document(
     ctx, ws, doc = await _upload(session, "ing1")
     await run_parse(doc.id)
     await run_chunk(doc.id)
+    # A successful retry/reindex must clear a previous terminal error.
+    doc.error = "stale embedding failure"
+    await session.commit()
     await run_embed_upsert(doc.id)
 
     await session.refresh(doc)
-    assert doc.status == "indexed" and doc.page_count == 1
+    assert doc.status == "indexed" and doc.page_count == 1 and doc.error is None
     jobs = {j.stage: j for j in (await session.execute(
         select(IngestJob).where(IngestJob.document_id == doc.id))).scalars()}
     assert set(jobs) == {"parse", "chunk", "embed", "upsert"}

@@ -12,7 +12,7 @@ answer-quality scoring; the scores it writes are what chat.analytics reports on.
 Re-exported from chat.service; every existing caller keeps working unchanged.
 """
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,22 +66,27 @@ async def audit_message(session: AsyncSession, message_id: UUID) -> bool:
     ]
     settings = get_settings()
     completer = _completer_for_audit(settings)
+    chat = await session.get(Chat, msg.chat_id)
+    assert chat is not None  # FK guarantees the parent chat row exists
     completion = await completer.complete(
         model=utility_model.litellm_model_name,
         messages=build_auditor_messages(question=question, answer=msg.content, sources=sources),
+    )
+    await quota_service.record_usage_durable(
+        session,
+        org_id=chat.org_id,
+        user_id=chat.user_id,
+        workspace_id=chat.workspace_id,
+        model_id=utility_model.id,
+        feature="validation",
+        prompt_tokens=completion.usage.prompt_tokens,
+        completion_tokens=completion.usage.completion_tokens,
+        idempotency_key=f"audit-message:{msg.id}:{uuid4().hex}:validation",
     )
     scores = parse_auditor_scores(completion.text)
     if scores is None:
         return False
     msg.grounding_score = scores.grounding_score
     msg.completeness_score = scores.completeness_score
-    chat = await session.get(Chat, msg.chat_id)
-    assert chat is not None  # FK guarantees the parent chat row exists
-    await quota_service.record_usage(
-        session, org_id=chat.org_id, user_id=chat.user_id, workspace_id=chat.workspace_id,
-        model_id=utility_model.id,
-        feature="validation", prompt_tokens=completion.usage.prompt_tokens,
-        completion_tokens=completion.usage.completion_tokens,
-    )
     await session.commit()
     return True

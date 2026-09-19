@@ -183,6 +183,80 @@ async def test_cross_org_assignment_is_404(
     assert r.status_code == 404
 
 
+async def test_sensitive_role_assignment_requires_independent_grantor_via_api(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    from ragz.modules.tenancy.models import RoleTemplate
+
+    sensitive = RoleTemplate(
+        name="API Audit Reader",
+        permissions=["audit.read", "audit.export"],
+        status="active",
+    )
+    target = User(
+        org_id=seeded_user.org_id,
+        email="sensitive-target@acme.com",
+        password_hash=seeded_user.password_hash,
+        role="admin",
+    )
+    session.add_all([sensitive, target])
+    await session.commit()
+    ordinary_admin = await auth(client, seeded_user.email)
+
+    denied = await client.put(
+        f"/api/v1/users/{target.id}/custom-role",
+        headers=ordinary_admin,
+        json={"role_template_id": str(sensitive.id)},
+    )
+
+    assert denied.status_code == 403
+
+
+async def test_delegated_sensitive_grant_works_through_api(
+    client: httpx.AsyncClient, seeded_user: User, session: AsyncSession
+) -> None:
+    from ragz.modules.tenancy.models import RoleTemplate
+
+    grantor_role = RoleTemplate(
+        name="API Sensitive Grantor",
+        permissions=["roles.sensitive.assign"],
+        status="active",
+    )
+    sensitive = RoleTemplate(
+        name="API Content Reader",
+        permissions=["documents.acl.bypass"],
+        status="active",
+    )
+    session.add_all([grantor_role, sensitive])
+    await session.flush()
+    grantor = User(
+        org_id=seeded_user.org_id,
+        email="delegated-grantor@acme.com",
+        password_hash=seeded_user.password_hash,
+        role="admin",
+        custom_role_id=grantor_role.id,
+    )
+    target = User(
+        org_id=seeded_user.org_id,
+        email="delegated-target@acme.com",
+        password_hash=seeded_user.password_hash,
+        role="admin",
+    )
+    session.add_all([grantor, target])
+    await session.commit()
+    grantor_headers = await auth(client, grantor.email)
+
+    response = await client.put(
+        f"/api/v1/users/{target.id}/custom-role",
+        headers=grantor_headers,
+        json={"role_template_id": str(sensitive.id)},
+    )
+
+    assert response.status_code == 204
+    await session.refresh(target)
+    assert target.custom_role_id == sensitive.id
+
+
 async def test_activate_route(
     client: httpx.AsyncClient, seeded_superadmin: User, superadmin_headers: dict[str, str]
 ) -> None:

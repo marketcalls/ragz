@@ -25,22 +25,37 @@ EITHER filter function — `test_tenant_isolation.py`-style tests for
 """
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from uuid import UUID, uuid5
+from time import perf_counter
+from typing import Any
+from uuid import UUID, uuid4, uuid5
 
 import structlog
 from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
-from ragz.core.errors import NotFoundError, WorkspaceAccessDenied
-from ragz.core.metrics import observe_stage
+from ragz.core.errors import NotFoundError, UpstreamError, WorkspaceAccessDenied
+from ragz.core.metrics import observe_stage, query_expansion_outcomes_total
 from ragz.modules.documents.pipeline import Chunk
 from ragz.modules.quotas import service as quota_service
 from ragz.modules.retrieval.client import EPHEMERAL_COLLECTION, get_qdrant
-from ragz.modules.retrieval.embeddings import embed_sparse, get_dense_embedder
+from ragz.modules.retrieval.embeddings import (
+    DenseEmbedder,
+    QueryEmbeddingCache,
+    embed_sparse,
+    get_dense_embedder,
+    get_query_embedding_cache,
+    query_embedding_cache_namespace,
+)
+from ragz.modules.retrieval.query_expansion import (
+    ExpandedQueries,
+    QueryExpander,
+    build_query_expander,
+)
 from ragz.modules.retrieval.rerank import RerankUnavailable, get_reranker
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.service import get_workspace_checked
@@ -55,12 +70,112 @@ class RetrievedChunk:
     score: float
     section: str | None = None
     version: int = 1
+    security_revision: int | None = None
 
 
 @dataclass(frozen=True)
 class RetrievalResult:
     chunks: list[RetrievedChunk]
     no_answer: bool
+    query_count: int = 1
+    embedding_cache_hits: int = 0
+    embedding_cache_misses: int = 0
+
+
+@dataclass(frozen=True)
+class _EmbeddedQueryBatch:
+    vectors: list[list[float]]
+    billed_tokens: int
+    cache_hits: int
+    cache_misses: int
+
+
+@contextmanager
+def _capture_stage(
+    timings_ms: dict[str, float] | None, stage: str
+) -> Iterator[None]:
+    """Optionally capture one non-overlapping retrieval stage for diagnostics.
+
+    The production path passes no sink and pays only this context-manager call.
+    Benchmark callers supply a request-local dictionary. Values contain timing
+    only—never query, document, tenant, model response, or credential data—and
+    the failure path is recorded just like the Prometheus stage histograms.
+    """
+    if timings_ms is None:
+        yield
+        return
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_ms = (perf_counter() - started) * 1000
+        timings_ms[stage] = round(timings_ms.get(stage, 0.0) + elapsed_ms, 4)
+
+
+async def _embed_query_batch(
+    *,
+    queries: Sequence[str],
+    dense_embedder: DenseEmbedder,
+    query_cache: QueryEmbeddingCache | None,
+    cache_namespace: str,
+    expected_dimension: int,
+    stage_timings_ms: dict[str, float] | None,
+    record_billed_usage: Callable[[int], Awaitable[None]] | None = None,
+) -> _EmbeddedQueryBatch:
+    async def compute(miss_texts: list[str]) -> tuple[list[list[float]], int]:
+        with _capture_stage(stage_timings_ms, "dense_embedding"), observe_stage(
+            "embed_dense"
+        ):
+            try:
+                computed, billed = await dense_embedder.embed_with_usage(miss_texts)
+            except UpstreamError as exc:
+                billed = int(getattr(exc, "billed_tokens", 0))
+                if billed > 0 and record_billed_usage is not None:
+                    await record_billed_usage(billed)
+                raise
+        if billed > 0 and record_billed_usage is not None:
+            await record_billed_usage(billed)
+        if len(computed) != len(miss_texts):
+            raise UpstreamError("dense embedder returned the wrong vector count")
+        if any(len(vector) != expected_dimension for vector in computed):
+            raise UpstreamError("dense embedder returned the wrong vector width")
+        return computed, billed
+
+    if query_cache is None:
+        vectors, billed_tokens = await compute(list(queries))
+        cache_hits = 0
+        cache_misses = len(queries)
+    else:
+        (
+            vectors,
+            billed_tokens,
+            cache_hits,
+            cache_misses,
+            cache_lookup_ms,
+            cache_store_ms,
+            cache_wait_ms,
+        ) = await query_cache.get_or_compute(cache_namespace, queries, compute)
+        if stage_timings_ms is not None:
+            for stage, elapsed_ms in (
+                ("embedding_cache_lookup", cache_lookup_ms),
+                ("embedding_cache_store", cache_store_ms),
+                ("embedding_cache_wait", cache_wait_ms),
+            ):
+                if elapsed_ms > 0:
+                    stage_timings_ms[stage] = round(
+                        stage_timings_ms.get(stage, 0.0) + elapsed_ms,
+                        4,
+                    )
+    if len(vectors) != len(queries):
+        raise UpstreamError("dense embedder returned the wrong vector count")
+    if any(len(vector) != expected_dimension for vector in vectors):
+        raise UpstreamError("query embedding cache returned the wrong vector width")
+    return _EmbeddedQueryBatch(
+        vectors=vectors,
+        billed_tokens=billed_tokens,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
+    )
 
 
 @dataclass(frozen=True)
@@ -443,6 +558,26 @@ def _dedupe_hq(candidates: list[RetrievedChunk]) -> list[RetrievedChunk]:
     return [best[key] for key in order]
 
 
+def _stable_identity(chunk: RetrievedChunk) -> tuple[str, int, int, int]:
+    return (str(chunk.document_id), chunk.page, chunk.chunk_index, chunk.version)
+
+
+def _stable_chunk_order(candidates: Sequence[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Make equal-score RRF output deterministic across Qdrant executions."""
+    return sorted(candidates, key=lambda chunk: (-chunk.score, *_stable_identity(chunk)))
+
+
+def _stable_rerank_order(
+    scores: Sequence[float], candidates: Sequence[RetrievedChunk]
+) -> list[int]:
+    if len(scores) != len(candidates):
+        raise ValueError("rerank scores and candidates must have the same length")
+    return sorted(
+        range(len(candidates)),
+        key=lambda index: (-scores[index], *_stable_identity(candidates[index])),
+    )
+
+
 def _chunk_from_point(point: models.ScoredPoint) -> RetrievedChunk:
     payload = point.payload or {}
     return RetrievedChunk(
@@ -453,7 +588,42 @@ def _chunk_from_point(point: models.ScoredPoint) -> RetrievedChunk:
         score=float(point.score),
         section=payload.get("section"),
         version=int(payload.get("version", 1)),
+        security_revision=(
+            int(payload["security_revision"])
+            if payload.get("security_revision") is not None
+            else None
+        ),
     )
+
+
+def _best_eligible_dense_score(
+    results: Sequence[Any], chunks: Sequence[RetrievedChunk]
+) -> float:
+    """Use dense scores only for exact candidates authorized for generation."""
+
+    eligible = {
+        (str(chunk.document_id), chunk.page, chunk.chunk_index, chunk.security_revision)
+        for chunk in chunks
+    }
+    scores: list[float] = []
+    for result in results:
+        for point in result.points:
+            raw_payload = getattr(point, "payload", None)
+            payload = raw_payload if isinstance(raw_payload, dict) else {}
+            try:
+                identity = (
+                    str(UUID(str(payload["document_id"]))),
+                    int(payload["page"]),
+                    int(payload["chunk_index"]),
+                    int(payload["security_revision"])
+                    if payload.get("security_revision") is not None
+                    else None,
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if identity in eligible:
+                scores.append(float(point.score))
+    return max(scores, default=0.0)
 
 
 async def retrieve(
@@ -463,25 +633,41 @@ async def retrieve(
     query: str,
     top_k: int | None = None,
     metadata_clauses: Sequence[MetadataClause] | None = None,
+    *,
+    query_expander: QueryExpander | None = None,
+    multi_query_enabled_override: bool | None = None,
+    multi_query_count_override: int | None = None,
+    rerank_candidate_pool_override: int | None = None,
+    query_embedding_cache: QueryEmbeddingCache | None = None,
+    query_embedding_cache_enabled_override: bool | None = None,
+    multi_query_expansion_timeout_ms_override: int | None = None,
+    strict_rerank: bool = False,
+    stage_timings_ms: dict[str, float] | None = None,
 ) -> RetrievalResult:
     """Hybrid retrieval — the one code path (spec §3.3), Plan E additions:
 
     1. Workspace access gate (typed WorkspaceAccessDenied).
     2. top_k=None resolves to workspace.top_k (ADM-3).
-    3. Qdrant prefetch dense + sparse under the tenant filter → RRF fusion
+    3. multi_query_enabled: a designated utility model produces at most two
+       alternatives; missing/malformed/unavailable expansion degrades to the
+       exact original query. Generated queries are retrieval aids, not evidence.
+    4. Qdrant prefetch dense + sparse for every query under the SAME tenant
+       filter → one RRF fusion
        (top-50 candidates when workspace.rerank_enabled, else top_k).
        Plan K Task 5: fused candidates are then deduped by (document_id,
        page, chunk_index) via `_dedupe_hq` — collapses a chunk's own point
        and its hq siblings into one RetrievedChunk (max score wins) before
        any no_answer/top_k decision. No-op when no hq points exist.
-    4. rerank_enabled: cross-encoder scores the candidates; final top_k come
+    5. rerank_enabled: cross-encoder scores the candidates against the ORIGINAL
+       user query; final top_k come
        back in reranker order carrying RERANKER scores, and no_answer compares
        the best reranker score against workspace.min_score. CALIBRATION: that
        threshold now reads in sigmoid cross-encoder space, not dense-cosine
        space — revisit min_score when flipping rerank_enabled.
-    5. Reranker down → structlog warning and EXACTLY the pre-rerank behavior:
-       fusion order, no_answer via best dense cosine (NFR graceful degradation).
-    6. Plan H: current_only=True — only the current version of each document
+    6. Reranker down → structlog warning and fusion order, with no_answer based
+       on the best dense cosine across valid query variants (NFR graceful
+       degradation).
+    7. Plan H: current_only=True — only the current version of each document
        (or legacy pre-H points) is ever retrievable; metadata_clauses narrow
        further per Task 10's route wiring.
 
@@ -493,33 +679,217 @@ async def retrieve(
     """
     from ragz.modules.models import service as models_service
 
-    ws = await get_workspace_checked(session, ctx, workspace_id)
-    k = top_k if top_k is not None else ws.top_k
-    embedding_model = await models_service.get_model(session, ws.embedding_model_id)
+    if multi_query_count_override not in (None, 1, 3, 5):
+        raise ValueError("multi_query_count_override must be 1, 3, or 5")
+    if rerank_candidate_pool_override not in (None, 10, 20, 50):
+        raise ValueError("rerank_candidate_pool_override must be 10, 20, or 50")
+    if (
+        multi_query_expansion_timeout_ms_override is not None
+        and multi_query_expansion_timeout_ms_override < 1
+    ):
+        raise ValueError("multi_query_expansion_timeout_ms_override must be positive")
+    requested_query_count = multi_query_count_override or 3
+    settings = get_settings()
+    usage_operation_id = uuid4().hex
+
+    with _capture_stage(stage_timings_ms, "workspace_model_resolution"):
+        ws = await get_workspace_checked(session, ctx, workspace_id)
+        k = top_k if top_k is not None else ws.top_k
+        multi_query_enabled = (
+            ws.multi_query_enabled
+            if multi_query_enabled_override is None
+            else multi_query_enabled_override
+        ) and requested_query_count > 1
+        embedding_model = await models_service.get_model(session, ws.embedding_model_id)
+        utility_model = (
+            await models_service.resolve_utility_model(session)
+            if multi_query_enabled
+            else None
+        )
+    # Workspace/model resolution above is read-only. End that transaction before
+    # waiting on Qdrant setup, the expansion LLM, and embedding providers so a
+    # slow external service never pins an otherwise-idle pooled DB connection.
+    # All production callers enter retrieve() with prior writes already committed;
+    # retrieve owns the usage rows it stages after this boundary.
+    with _capture_stage(stage_timings_ms, "database_release"):
+        await session.commit()
     collection_name = embedding_model.collection_name
     assert collection_name is not None  # embedding-modality models always set this
-    await ensure_collection(collection_name, embedding_model.dimension)  # type: ignore[arg-type]
-    dense_embedder = get_dense_embedder(
-        embedding_model.id, provider_kind=embedding_model.provider_kind,
-        litellm_model_name=embedding_model.litellm_model_name,
-    )
-    with observe_stage("embed_dense"):
-        dense_vecs, embed_tokens = await dense_embedder.embed_with_usage([query])
-    dense_vec = dense_vecs[0]
-    # Cost reporting (design 2026-08-15 §2): the query embedding's billed tokens
-    # (hosted providers only; self-hosted TEI / the hash test backend report 0).
-    # commit=False stages the row so it rides this turn's end-of-turn commit
-    # (the chat/no-answer/general-knowledge record_usage) rather than adding a
-    # blocking round-trip before the LLM even starts streaming. Zero tokens ->
-    # nothing to bill, skip the row entirely.
-    if embed_tokens > 0:
-        await quota_service.record_usage(
-            session, org_id=ctx.org_id, user_id=ctx.user_id, workspace_id=workspace_id,
-            model_id=embedding_model.id, feature="embedding",
-            prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
+    with _capture_stage(stage_timings_ms, "collection_ready"):
+        await ensure_collection(collection_name, embedding_model.dimension)  # type: ignore[arg-type]
+    with _capture_stage(stage_timings_ms, "embedder_resolution"):
+        dense_embedder = get_dense_embedder(
+            embedding_model.id, provider_kind=embedding_model.provider_kind,
+            litellm_model_name=embedding_model.litellm_model_name,
+            dimension=embedding_model.dimension,
         )
-    with observe_stage("embed_sparse"):
-        sparse_vec = (await asyncio.to_thread(embed_sparse, [query]))[0]
+    active_query_embedding_cache = query_embedding_cache
+    if active_query_embedding_cache is None:
+        active_query_embedding_cache = get_query_embedding_cache(
+            settings, enabled_override=query_embedding_cache_enabled_override
+        )
+    cache_namespace = query_embedding_cache_namespace(
+        org_id=ctx.org_id,
+        model_id=embedding_model.id,
+        provider_kind=embedding_model.provider_kind,
+        model=embedding_model.litellm_model_name,
+        dimension=embedding_model.dimension,
+    )
+    expected_dimension = int(embedding_model.dimension or 0)
+    queries: tuple[str, ...] = (query,)
+    expansion_task: asyncio.Task[ExpandedQueries] | None = None
+    if multi_query_enabled:
+        if utility_model is None:
+            query_expansion_outcomes_total.labels(outcome="no_utility_model").inc()
+            structlog.get_logger().warning(
+                "multi_query_no_utility_model",
+                workspace_id=str(workspace_id),
+            )
+        else:
+            expander = query_expander
+            timeout_ms = (
+                settings.multi_query_expansion_timeout_ms
+                if multi_query_expansion_timeout_ms_override is None
+                else multi_query_expansion_timeout_ms_override
+            )
+
+            async def _record_expansion(expanded: ExpandedQueries) -> None:
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=ctx.org_id,
+                    user_id=ctx.user_id,
+                    workspace_id=workspace_id,
+                    model_id=utility_model.id,
+                    feature="query_expansion",
+                    prompt_tokens=expanded.prompt_tokens,
+                    completion_tokens=expanded.completion_tokens,
+                    idempotency_key=f"retrieval:{usage_operation_id}:query-expansion",
+                )
+
+            if query_expander is None:
+                expander = build_query_expander(
+                    settings,
+                    max_queries=requested_query_count,
+                    cache_namespace=str(ctx.org_id),
+                    record_usage=_record_expansion,
+                )
+            assert expander is not None
+
+            async def _expand_and_account() -> ExpandedQueries:
+                expanded = await asyncio.wait_for(
+                    expander.expand(query, model=utility_model.litellm_model_name),
+                    timeout=timeout_ms / 1000,
+                )
+                if query_expander is not None and (
+                    expanded.prompt_tokens or expanded.completion_tokens
+                ):
+                    await _record_expansion(expanded)
+                return expanded
+
+            expansion_task = asyncio.create_task(
+                _expand_and_account()
+            )
+    try:
+        async def _record_q1_embedding(billed_tokens: int) -> None:
+            await quota_service.record_usage_durable(
+                session,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id,
+                workspace_id=workspace_id,
+                model_id=embedding_model.id,
+                feature="embedding",
+                prompt_tokens=billed_tokens,
+                completion_tokens=0,
+                idempotency_key=f"retrieval:{usage_operation_id}:embedding:q1",
+            )
+
+        original_batch = await _embed_query_batch(
+            queries=(query,),
+            dense_embedder=dense_embedder,
+            query_cache=active_query_embedding_cache,
+            cache_namespace=cache_namespace,
+            expected_dimension=expected_dimension,
+            stage_timings_ms=stage_timings_ms,
+            record_billed_usage=_record_q1_embedding,
+        )
+    except BaseException:
+        if expansion_task is not None:
+            if not expansion_task.done():
+                expansion_task.cancel()
+            await asyncio.gather(expansion_task, return_exceptions=True)
+        raise
+    dense_vecs = list(original_batch.vectors)
+    embedding_cache_hits = original_batch.cache_hits
+    embedding_cache_misses = original_batch.cache_misses
+    if expansion_task is not None:
+        assert utility_model is not None
+        try:
+            with _capture_stage(stage_timings_ms, "query_expansion"):
+                expanded = await expansion_task
+        except TimeoutError:
+            query_expansion_outcomes_total.labels(outcome="timeout").inc()
+            structlog.get_logger().info(
+                "multi_query_expansion_timeout",
+                workspace_id=str(workspace_id),
+            )
+        except UpstreamError as exc:
+            query_expansion_outcomes_total.labels(outcome="provider_failure").inc()
+            structlog.get_logger().warning(
+                "multi_query_expansion_failed",
+                workspace_id=str(workspace_id),
+                error=type(exc).__name__,
+            )
+        else:
+            query_expansion_outcomes_total.labels(outcome="success").inc()
+            queries = (expanded.queries or (query,))[:requested_query_count]
+            if len(queries) > 1:
+                try:
+                    async def _record_alternative_embedding(
+                        billed_tokens: int,
+                    ) -> None:
+                        await quota_service.record_usage_durable(
+                            session,
+                            org_id=ctx.org_id,
+                            user_id=ctx.user_id,
+                            workspace_id=workspace_id,
+                            model_id=embedding_model.id,
+                            feature="embedding",
+                            prompt_tokens=billed_tokens,
+                            completion_tokens=0,
+                            idempotency_key=(
+                                f"retrieval:{usage_operation_id}:embedding:alternatives"
+                            ),
+                        )
+
+                    alternative_batch = await _embed_query_batch(
+                        queries=queries[1:],
+                        dense_embedder=dense_embedder,
+                        query_cache=active_query_embedding_cache,
+                        cache_namespace=cache_namespace,
+                        expected_dimension=expected_dimension,
+                        stage_timings_ms=stage_timings_ms,
+                        record_billed_usage=_record_alternative_embedding,
+                    )
+                except UpstreamError as exc:
+                    structlog.get_logger().warning(
+                        "multi_query_alternative_embedding_failed",
+                        workspace_id=str(workspace_id),
+                        error=type(exc).__name__,
+                    )
+                    queries = (query,)
+                else:
+                    dense_vecs.extend(alternative_batch.vectors)
+                    embedding_cache_hits += alternative_batch.cache_hits
+                    embedding_cache_misses += alternative_batch.cache_misses
+            structlog.get_logger().info(
+                "multi_query_expanded",
+                workspace_id=str(workspace_id),
+                query_count=len(queries),
+            )
+    with _capture_stage(stage_timings_ms, "sparse_embedding"), observe_stage(
+        "embed_sparse"
+    ):
+        sparse_vecs = await asyncio.to_thread(embed_sparse, list(queries))
     # Fail-closed ACL projection (review P0): documents whose committed security
     # state has not reached this collection are excluded from the query. Local
     # import for the same reason as models_service above -- documents.service
@@ -527,34 +897,125 @@ async def retrieve(
     # service call, never that module's ORM.
     from ragz.modules.documents import service as documents_service
 
-    unprojected = await documents_service.unprojected_document_ids(
-        session, ctx.org_id, workspace_id
-    )
-    flt = _tenant_filter(
-        org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx),
-        current_only=True, metadata_clauses=metadata_clauses,
-        unprojected_document_ids=unprojected,
-    )
-    client = get_qdrant()
-    fetch_k = _RERANK_PREFETCH if ws.rerank_enabled else k
-    prefetch_limit = max(fetch_k, k * 4)
-    with observe_stage("vector_search"):
-        fused = await client.query_points(
-            collection_name,
-            prefetch=[
-                models.Prefetch(
-                    query=dense_vec, using="dense", filter=flt, limit=prefetch_limit
-                ),
-                models.Prefetch(
-                    query=sparse_vec, using="sparse", filter=flt, limit=prefetch_limit
-                ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            query_filter=flt,  # belt and braces on top of the filtered prefetches
-            limit=fetch_k,
-            with_payload=True,
+    with _capture_stage(stage_timings_ms, "authorization_prefilter"):
+        unprojected = await documents_service.unprojected_document_ids(
+            session, ctx.org_id, workspace_id
         )
-    candidates = [_chunk_from_point(p) for p in fused.points]
+        flt = _tenant_filter(
+            org_id=ctx.org_id, workspace_id=workspace_id, acl_group_ids=_ctx_acl(ctx),
+            current_only=True, metadata_clauses=metadata_clauses,
+            unprojected_document_ids=unprojected,
+        )
+    client = get_qdrant()
+    rerank_pool = rerank_candidate_pool_override or _RERANK_PREFETCH
+    fetch_k = rerank_pool if ws.rerank_enabled else k
+    prefetch_limit = rerank_pool if ws.rerank_enabled else k * 4
+    prefetch = [
+        lane
+        for dense_vec, sparse_vec in zip(dense_vecs, sparse_vecs, strict=True)
+        for lane in (
+            models.Prefetch(
+                query=dense_vec,
+                using="dense",
+                filter=flt,
+                limit=prefetch_limit,
+            ),
+            models.Prefetch(
+                query=sparse_vec,
+                using="sparse",
+                filter=flt,
+                limit=prefetch_limit,
+            ),
+        )
+    ]
+    top_dense_results: list[Any] | None = None
+
+    async def run_no_answer_probes() -> list[Any]:
+        with _capture_stage(stage_timings_ms, "no_answer_probe"):
+            return await asyncio.gather(
+                *(
+                    client.query_points(
+                        collection_name,
+                        query=dense_vec,
+                        using="dense",
+                        query_filter=flt,
+                        limit=1,
+                        with_payload=[
+                            "document_id",
+                            "page",
+                            "chunk_index",
+                            "security_revision",
+                        ],
+                    )
+                    for dense_vec in dense_vecs
+                )
+            )
+
+    no_answer_task = (
+        asyncio.create_task(run_no_answer_probes())
+        if not ws.rerank_enabled
+        else None
+    )
+    try:
+        with _capture_stage(stage_timings_ms, "vector_search"), observe_stage(
+            "vector_search"
+        ):
+            fused = await client.query_points(
+                collection_name,
+                prefetch=prefetch,
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                query_filter=flt,  # belt and braces on top of filtered prefetches
+                limit=fetch_k,
+                with_payload=True,
+            )
+        if no_answer_task is not None:
+            top_dense_results = await no_answer_task
+    except BaseException:
+        if no_answer_task is not None and not no_answer_task.done():
+            no_answer_task.cancel()
+            await asyncio.gather(no_answer_task, return_exceptions=True)
+        raise
+    with _capture_stage(stage_timings_ms, "candidate_decode"):
+        candidates = _stable_chunk_order([_chunk_from_point(p) for p in fused.points])
+    revisioned_ids = {
+        candidate.document_id
+        for candidate in candidates
+        if candidate.security_revision is not None
+    }
+    revision_dropped_ids: set[UUID] = set()
+    if revisioned_ids:
+        authorized_revisions = await documents_service.authorized_security_revisions(
+            session, ctx, workspace_id, revisioned_ids
+        )
+        revision_dropped_ids = {
+            candidate.document_id
+            for candidate in candidates
+            if candidate.security_revision is not None
+            and authorized_revisions.get(candidate.document_id)
+            != candidate.security_revision
+        }
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.document_id not in revision_dropped_ids
+        ]
+        if revision_dropped_ids and no_answer_task is not None:
+            # A projection may have completed after the original vector query.
+            # Re-running now evaluates the grounding score under the current
+            # Qdrant ACL payload rather than the stale response snapshot. The
+            # exact stale document ids are excluded too: a delayed old Qdrant
+            # response must not keep contributing its high score.
+            flt = _tenant_filter(
+                org_id=ctx.org_id,
+                workspace_id=workspace_id,
+                acl_group_ids=_ctx_acl(ctx),
+                current_only=True,
+                metadata_clauses=metadata_clauses,
+                unprojected_document_ids=frozenset(
+                    set(unprojected) | revision_dropped_ids
+                ),
+            )
+            top_dense_results = await run_no_answer_probes()
     # Close the read-then-query window (Cubic P0). The pre-query exclusion above
     # is a SNAPSHOT: an ACL can commit between that read and query_points, and
     # Qdrant would still be serving the pre-change payload for a document the
@@ -567,30 +1028,87 @@ async def retrieve(
     # served. This pass can only ever REMOVE candidates, never admit one the
     # vector filter excluded, so its failure mode is a needless denial rather
     # than a leak. The allow-decision still lives entirely in the Qdrant filter.
-    recheck = await documents_service.unprojected_document_ids(
-        session, ctx.org_id, workspace_id
-    )
-    newly_unprojected = recheck - unprojected
-    if newly_unprojected:
-        candidates = [c for c in candidates if c.document_id not in newly_unprojected]
-        structlog.get_logger().info(
-            "retrieval_dropped_newly_unprojected",
-            workspace_id=str(workspace_id), count=len(newly_unprojected),
+    with _capture_stage(stage_timings_ms, "authorization_recheck"):
+        recheck = await documents_service.unprojected_document_ids(
+            session, ctx.org_id, workspace_id
         )
-    candidates = _dedupe_hq(candidates)
+        newly_unprojected = recheck - unprojected
+        if newly_unprojected:
+            candidates = [c for c in candidates if c.document_id not in newly_unprojected]
+            if no_answer_task is not None:
+                # The earlier probes used the pre-query authorization snapshot.
+                # Re-run them under the same post-recheck exclusion set that
+                # now defines the candidates generation may consume.
+                flt = _tenant_filter(
+                    org_id=ctx.org_id,
+                    workspace_id=workspace_id,
+                    acl_group_ids=_ctx_acl(ctx),
+                    current_only=True,
+                    metadata_clauses=metadata_clauses,
+                    unprojected_document_ids=frozenset(
+                        set(recheck) | revision_dropped_ids
+                    ),
+                )
+                top_dense_results = await run_no_answer_probes()
+            structlog.get_logger().info(
+                "retrieval_dropped_newly_unprojected",
+                workspace_id=str(workspace_id), count=len(newly_unprojected),
+            )
+    with _capture_stage(stage_timings_ms, "candidate_dedupe"):
+        candidates = _dedupe_hq(candidates)
     if not candidates:
-        return RetrievalResult(chunks=[], no_answer=True)
+        return RetrievalResult(
+            chunks=[],
+            no_answer=True,
+            query_count=len(queries),
+            embedding_cache_hits=embedding_cache_hits,
+            embedding_cache_misses=embedding_cache_misses,
+        )
 
     if ws.rerank_enabled:
         try:
-            reranker = await get_reranker(session, get_settings())
-            with observe_stage("rerank"):
+            with _capture_stage(stage_timings_ms, "reranker_resolution"):
+                reranker = await get_reranker(session, get_settings())
+            with _capture_stage(stage_timings_ms, "rerank"), observe_stage("rerank"):
                 scores = await reranker.rerank(query, [c.text for c in candidates])
+            if (
+                stage_timings_ms is not None
+                and hasattr(reranker, "last_provider_latency_ms")
+                and hasattr(reranker, "last_retry_wait_ms")
+                and hasattr(reranker, "last_local_latency_ms")
+            ):
+                total = float(stage_timings_ms.pop("rerank"))
+                retry_wait = min(
+                    total,
+                    max(0.0, float(getattr(reranker, "last_retry_wait_ms", 0.0))),
+                )
+                provider = min(
+                    total - retry_wait,
+                    max(
+                        0.0,
+                        float(getattr(reranker, "last_provider_latency_ms", 0.0)),
+                    ),
+                )
+                local = min(
+                    total - retry_wait - provider,
+                    max(0.0, float(getattr(reranker, "last_local_latency_ms", 0.0))),
+                )
+                stage_timings_ms["rerank.retry_wait"] = round(retry_wait, 4)
+                stage_timings_ms["rerank.provider"] = round(provider, 4)
+                stage_timings_ms["rerank.local"] = round(
+                    max(local, total - retry_wait - provider), 4
+                )
         except RerankUnavailable as exc:
+            if strict_rerank:
+                raise
             structlog.get_logger().warning(
                 "reranker_unavailable_falling_back",
                 workspace_id=str(workspace_id), error=str(exc),
             )
+            # The optimistic path did not start dense probes because a healthy
+            # reranker supplies the threshold score. On graceful degradation,
+            # recover the original dense-cosine no-answer semantics now.
+            top_dense_results = await run_no_answer_probes()
         else:
             # Cost reporting (design 2026-08-15 §2): a billable reranker (Cohere)
             # exposes its billed search-units; local TEI/lexical rerankers don't
@@ -599,27 +1117,39 @@ async def retrieve(
             # reasoning as the query-embedding record above).
             rerank_units = getattr(reranker, "last_search_units", 0)
             if rerank_units > 0:
-                await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id,
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=ctx.org_id,
+                    user_id=ctx.user_id,
                     workspace_id=workspace_id,
-                    model_id=None, feature="rerank",
-                    prompt_tokens=0, completion_tokens=0,
-                    units=rerank_units, commit=False,
+                    model_id=None,
+                    feature="rerank",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    units=rerank_units,
+                    idempotency_key=f"retrieval:{usage_operation_id}:rerank",
                 )
-            order = sorted(range(len(candidates)), key=lambda i: scores[i], reverse=True)
+            order = _stable_rerank_order(scores, candidates)
             top = order[:k]
             reranked = [replace(candidates[i], score=scores[i]) for i in top]
             return RetrievalResult(
-                chunks=reranked, no_answer=scores[top[0]] < ws.min_score
+                chunks=reranked,
+                no_answer=scores[top[0]] < ws.min_score,
+                query_count=len(queries),
+                embedding_cache_hits=embedding_cache_hits,
+                embedding_cache_misses=embedding_cache_misses,
             )
 
     chunks = candidates[:k]
-    top_dense = await client.query_points(
-        collection_name, query=dense_vec, using="dense", query_filter=flt,
-        limit=1, with_payload=False,
+    assert top_dense_results is not None
+    best_cosine = _best_eligible_dense_score(top_dense_results, chunks)
+    return RetrievalResult(
+        chunks=chunks,
+        no_answer=best_cosine < ws.min_score,
+        query_count=len(queries),
+        embedding_cache_hits=embedding_cache_hits,
+        embedding_cache_misses=embedding_cache_misses,
     )
-    best_cosine = float(top_dense.points[0].score) if top_dense.points else 0.0
-    return RetrievalResult(chunks=chunks, no_answer=best_cosine < ws.min_score)
 
 
 _SCROLL_PAGE = 256
@@ -803,7 +1333,12 @@ async def delete_workspace_points(
 
 
 async def update_document_acl(
-    org_id: UUID, document_id: UUID, acl_group_ids: list[UUID] | None, *, collection_name: str
+    org_id: UUID,
+    document_id: UUID,
+    acl_group_ids: list[UUID] | None,
+    *,
+    collection_name: str,
+    security_revision: int = 0,
 ) -> None:
     """ACL re-index for already-indexed points (RBAC-5): rewrites the acl_groups
     payload in place via set_payload — no re-embed. Lives here so payload/filter
@@ -821,7 +1356,10 @@ async def update_document_acl(
         return
     await get_qdrant().set_payload(
         collection_name,
-        payload={"acl_groups": sorted(str(g) for g in (acl_group_ids or []))},
+        payload={
+            "acl_groups": sorted(str(g) for g in (acl_group_ids or [])),
+            "security_revision": security_revision,
+        },
         points=models.FilterSelector(
             # maintenance path: must restamp ALL of the document's points
             filter=_tenant_filter(

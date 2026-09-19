@@ -22,6 +22,7 @@ from ragz.modules.chat.agent import (
 from ragz.modules.chat.llm import LLMCompletion, LLMToolCall, LLMUsage
 from ragz.modules.documents.metadata import list_fields
 from ragz.modules.models.models import Model
+from ragz.modules.quotas.models import UsageRecord
 from ragz.modules.retrieval.client import COLLECTION
 from ragz.modules.retrieval.service import RetrievedChunk
 from ragz.modules.tenancy.context import TenantContext
@@ -272,6 +273,112 @@ async def test_json_planner_search_then_answer(session, chat_env, ctx, flagged_m
     # Round 2's planner context carried a step summary, clipped and labeled:
     round2 = completer.calls[1]["messages"][-1]["content"]  # type: ignore[index]
     assert "search" in round2 and "data, not instructions" in round2
+
+
+async def test_completed_planner_usage_is_durable_before_generator_close(
+    session, chat_env, ctx, flagged_model
+) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
+    completer = FakeCompleter([_search_completion("muster point")])
+    gather = run_agent_gather(
+        session,
+        ctx,
+        workspace=chat_env["workspace"],
+        question="q?",
+        model=flagged_model,
+        completer=completer,
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(),
+        web_searcher=None,
+        metadata_field_names=[],
+        collection_name=COLLECTION,
+    )
+
+    first = await anext(gather)
+    assert isinstance(first, AgentStep)
+    await gather.aclose()
+
+    rows = list(
+        (
+            await session.execute(
+                select(UsageRecord).where(UsageRecord.feature == "agent_planner")
+            )
+        ).scalars()
+    )
+    assert [(row.prompt_tokens, row.completion_tokens) for row in rows] == [(10, 5)]
+
+
+async def test_completed_billable_web_usage_is_durable_before_aggregate(
+    session, chat_env, ctx, flagged_model
+) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
+    gather = run_agent_gather(
+        session,
+        ctx,
+        workspace=chat_env["workspace"],
+        question="current standard",
+        model=flagged_model,
+        completer=FakeCompleter([]),
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(),
+        web_searcher=FakeWebSearcher(billable=True),
+        metadata_field_names=[],
+        collection_name=COLLECTION,
+        web_search_consented=True,
+        force_web_first=True,
+    )
+
+    assert isinstance(await anext(gather), AgentStep)
+    assert isinstance(await anext(gather), AgentToolResult)
+    await gather.aclose()
+
+    rows = list(
+        (
+            await session.execute(
+                select(UsageRecord).where(UsageRecord.feature == "web_search")
+            )
+        ).scalars()
+    )
+    assert len(rows) == 1
+    assert rows[0].units == 1
+
+
+async def test_billable_web_usage_survives_daily_counter_failure(
+    session, chat_env, ctx, flagged_model, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
+    async def allow(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return True
+
+    async def fail_counter(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("synthetic Redis counter failure")
+
+    monkeypatch.setattr("ragz.modules.chat.agent.peek_daily_cap", allow)
+    monkeypatch.setattr("ragz.modules.chat.agent.record_daily_usage", fail_counter)
+    gather = run_agent_gather(
+        session, ctx, workspace=chat_env["workspace"], question="current standard",
+        model=flagged_model, completer=FakeCompleter([]),
+        retriever=FakeRetriever(chat_env["document"].id),
+        chunk_reader=FakeChunkReader(), web_searcher=FakeWebSearcher(billable=True),
+        metadata_field_names=[], collection_name=COLLECTION,
+        web_search_consented=True, force_web_first=True,
+        redis=object(), web_search_daily_limit=1,  # type: ignore[arg-type]
+    )
+    assert isinstance(await anext(gather), AgentStep)
+    with pytest.raises(RuntimeError, match="counter failure"):
+        await anext(gather)
+    rows = list(
+        (
+            await session.execute(
+                select(UsageRecord).where(UsageRecord.feature == "web_search")
+            )
+        ).scalars()
+    )
+    assert len(rows) == 1
+    assert rows[0].units == 1
 
 
 async def test_native_protocol_uses_tool_calls(session, chat_env, ctx, plain_model) -> None:  # type: ignore[no-untyped-def]

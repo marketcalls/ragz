@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -31,3 +32,38 @@ class EvalRunOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AnswerComparisonRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    model_id: UUID | None = None
+
+
+class ComparisonSourceOut(BaseModel):
+    marker: int
+    document_id: UUID
+    filename: str
+    page: int
+    chunk_index: int
+    score: float
+    snippet: str
+    section: str | None
+    version: int
+
+
+class ComparisonVariantOut(BaseModel):
+    mode: Literal["single", "multi"]
+    answer: str
+    sources: list[ComparisonSourceOut]
+    citation_markers: list[int]
+    no_answer: bool
+    query_count: int
+    retrieval_ms: float
+    generation_ms: float
+    total_ms: float
+    prompt_tokens: int
+    completion_tokens: int
+
+
+class AnswerComparisonOut(BaseModel):
+    variants: list[ComparisonVariantOut] = Field(min_length=2, max_length=2)

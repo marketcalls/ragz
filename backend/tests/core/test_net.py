@@ -182,6 +182,29 @@ async def test_assert_public_host_allows_public_host_in_production(
     await net.assert_public_host("smtp.sendgrid.net", production_settings)  # must not raise
 
 
+async def test_operator_allowlist_preserves_intended_private_integration(
+    production_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_dns(monkeypatch, _dns_answers("10.20.30.40"))
+    allowed = production_settings.model_copy(
+        update={"egress_allowed_cidrs": ["10.20.0.0/16"]}
+    )
+
+    await net.assert_public_host("smtp.corp.internal", allowed)
+
+
+async def test_operator_allowlist_cannot_enable_link_local_metadata(
+    production_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_dns(monkeypatch, _dns_answers("169.254.169.254"))
+    allowed = production_settings.model_copy(
+        update={"egress_allowed_cidrs": ["169.254.0.0/16"]}
+    )
+
+    with pytest.raises(SsrfBlocked):
+        await net.assert_public_host("metadata.internal", allowed)
+
+
 async def test_assert_public_host_is_noop_in_dev_even_for_localhost(
     dev_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

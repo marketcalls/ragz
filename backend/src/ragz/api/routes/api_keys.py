@@ -17,6 +17,7 @@ async def create_api_key(
     row, raw = await svc.generate_api_key(
         session, settings, actor_id=ctx.user_id, name=body.name,
         user_id=body.user_id, workspace_id=body.workspace_id, expires_at=body.expires_at,
+        commit=False,
     )
     await record_audit(
         session, org_id=row.org_id, actor_id=ctx.user_id,
@@ -39,7 +40,7 @@ async def revoke_api_key_route(key_id: UUID, session: SessionDep, ctx: Superadmi
     # RBAC-07: a missing key must 404 (not silently succeed), and the audit
     # event is attributed to the KEY's own org -- not the acting superadmin's.
     row = await svc.get_api_key(session, key_id=key_id)
-    await svc.revoke_api_key(session, key_id=key_id)
+    await svc.revoke_api_key(session, key_id=key_id, commit=False)
     await record_audit(
         session, org_id=row.org_id, actor_id=ctx.user_id,
         action="api_key.revoked", target_type="api_key", target_id=str(key_id),

@@ -25,6 +25,7 @@ export function usePatchWorkspace() {
       top_k?: number;
       min_score?: number;
       rerank_enabled?: boolean;
+      multi_query_enabled?: boolean;
       system_prompt_override?: string | null;
       fallback_policy?: 'general_knowledge' | 'decline';
       web_search_enabled?: boolean;

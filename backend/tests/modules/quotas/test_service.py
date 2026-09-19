@@ -134,6 +134,41 @@ async def test_units_persist_and_never_count_as_tokens(session: AsyncSession) ->
     assert sum(p.prompt_tokens + p.completion_tokens for p in points) == 150
 
 
+async def test_usage_idempotency_key_prevents_duplicate_charging(
+    session: AsyncSession,
+) -> None:
+    from sqlalchemy import select
+
+    from ragz.modules.quotas.models import UsageRecord
+
+    admin_ctx, _, user = await _seed(session)
+    kwargs = {
+        "org_id": admin_ctx.org_id,
+        "user_id": user.id,
+        "model_id": None,
+        "feature": "web_search",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "units": 1,
+        "idempotency_key": "request-1:web-search-1",
+    }
+
+    await record_usage(session, **kwargs)  # type: ignore[arg-type]
+    await record_usage(session, **kwargs)  # type: ignore[arg-type]
+
+    rows = list(
+        (
+            await session.execute(
+                select(UsageRecord).where(
+                    UsageRecord.idempotency_key == "request-1:web-search-1"
+                )
+            )
+        ).scalars()
+    )
+    assert len(rows) == 1
+    assert rows[0].units == 1
+
+
 # --- Cost reporting Phase 2a: workspace_id dimension --------------------------
 
 

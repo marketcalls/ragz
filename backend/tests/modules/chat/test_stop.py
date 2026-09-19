@@ -2,7 +2,6 @@ import asyncio
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
-import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -145,15 +144,14 @@ async def test_abort_before_first_token_persists_nothing(
 
 
 async def test_late_cancel_after_persist_does_not_duplicate_row(
-    session: AsyncSession, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    session: AsyncSession, engine: AsyncEngine
 ) -> None:
     """Review round 1, finding 1: a cancellation that lands AFTER
     _persist_assistant has already committed the row (but before the
-    subsequent record_usage/citations_event/done_event awaits/yields) must
-    NOT persist a second assistant row via persist_stopped_detached. Forces
-    that exact window by making quota_service.record_usage raise
-    CancelledError once the stream has completed normally and the row is
-    already committed.
+    subsequent citations/done yields) must NOT persist a second assistant row
+    via persist_stopped_detached. Advance to the citations frame, which is the
+    first yield after the normal assistant row has committed, then close the
+    stream at that exact boundary.
 
     This is the regression test for the bug: without `streamed_parts.clear()`
     immediately after the successful persist, `streamed_parts` is still
@@ -165,11 +163,6 @@ async def test_late_cancel_after_persist_does_not_duplicate_row(
     factory = build_session_factory(engine)
     streamer = SlowStreamer(["Hi"])
 
-    async def _boom_after_completed_stream(*args: object, **kwargs: object) -> None:
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(service.quota_service, "record_usage", _boom_after_completed_stream)
-
     agen = service.stream_reply(
         session, ctx, chat=chat, workspace=chat_ws, user_message=user_msg,
         model=_FakeModel(),  # type: ignore[arg-type]
@@ -177,9 +170,9 @@ async def test_late_cancel_after_persist_does_not_duplicate_row(
         chunk_reader=_NeverChunkReader(),  # type: ignore[arg-type]
         settings=SETTINGS, session_factory=factory,
     )
-    with pytest.raises(asyncio.CancelledError):
-        async for _event in agen:
-            pass
+    assert (await anext(agen)).event == "token"
+    assert (await anext(agen)).event == "citations"
+    await agen.aclose()
 
     await asyncio.gather(*service._STOP_PERSISTS)
     rows = (
@@ -191,6 +184,61 @@ async def test_late_cancel_after_persist_does_not_duplicate_row(
     assert len(rows) == 1  # no duplicate row from persist_stopped_detached
     assert rows[0].stopped is False  # it's the normally-persisted row
     assert rows[0].content == "Hi"
+
+
+async def test_cancel_after_durable_usage_before_message_does_not_double_charge(
+    session: AsyncSession,
+    engine: AsyncEngine,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    ctx, chat, user_msg, chat_ws = await _seed(session)
+    factory = build_session_factory(engine)
+    persist_started = asyncio.Event()
+
+    async def _blocked_persist(*args: object, **kwargs: object) -> Message:
+        persist_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(service, "_persist_assistant", _blocked_persist)
+    agen = service.stream_reply(
+        session,
+        ctx,
+        chat=chat,
+        workspace=chat_ws,
+        user_message=user_msg,
+        model=_FakeModel(),  # type: ignore[arg-type]
+        streamer=SlowStreamer(["Hi"]),
+        retriever=_never_retrieve,  # type: ignore[arg-type]
+        chunk_reader=_NeverChunkReader(),  # type: ignore[arg-type]
+        settings=SETTINGS,
+        session_factory=factory,
+    )
+
+    async def _consume() -> None:
+        async for _event in agen:
+            pass
+
+    consumer = asyncio.create_task(_consume())
+    await persist_started.wait()
+    consumer.cancel()
+    try:
+        await consumer
+    except asyncio.CancelledError:
+        pass
+    await asyncio.gather(*service._STOP_PERSISTS)
+
+    usage = list(
+        (
+            await session.execute(
+                select(UsageRecord).where(
+                    UsageRecord.org_id == ctx.org_id,
+                    UsageRecord.feature == "chat",
+                )
+            )
+        ).scalars()
+    )
+    assert len(usage) == 1
 
 
 async def test_persist_stopped_detached_records_partial_usage(

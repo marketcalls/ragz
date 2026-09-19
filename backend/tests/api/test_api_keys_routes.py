@@ -2,9 +2,10 @@ from uuid import UUID
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragz.modules.auth.models import User
+from ragz.modules.auth.models import ApiKey, User
 from ragz.modules.tenancy.models import Workspace, WorkspaceMember
 
 
@@ -47,7 +48,7 @@ async def test_generate_returns_raw_once_then_masked(
     assert r.status_code == 201
     body = r.json()
     assert body["api_key"].startswith("ragz_sk_")  # raw ONLY here
-    assert body["prefix"] == body["api_key"][:12]
+    assert body["prefix"] == body["api_key"][:24]
     lst = (await client.get("/api/v1/admin/api-keys", headers=super_headers)).json()
     assert all("api_key" not in k and "key_hash" not in k for k in lst)  # never in list
 
@@ -134,3 +135,60 @@ async def test_revoke_records_the_keys_own_org_not_actors(
     ).scalars().first()
     assert event is not None
     assert event.org_id == key_owner_org
+
+
+async def test_key_create_and_audit_roll_back_together_on_audit_failure(
+    client: httpx.AsyncClient,
+    super_headers: dict[str, str],
+    ws_and_member: tuple[UUID, UUID],
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws_id, user_id = ws_and_member
+
+    async def _audit_failure(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("synthetic audit failure")
+
+    monkeypatch.setattr("ragz.api.routes.api_keys.record_audit", _audit_failure)
+    with pytest.raises(RuntimeError, match="synthetic audit failure"):
+        await client.post(
+            "/api/v1/admin/api-keys",
+            headers=super_headers,
+            json={"name": "must-rollback", "user_id": str(user_id), "workspace_id": str(ws_id)},
+        )
+
+    session.expire_all()
+    rows = list(
+        (
+            await session.execute(select(ApiKey).where(ApiKey.name == "must-rollback"))
+        ).scalars()
+    )
+    assert rows == []
+
+
+async def test_key_revoke_and_audit_roll_back_together_on_audit_failure(
+    client: httpx.AsyncClient,
+    super_headers: dict[str, str],
+    ws_and_member: tuple[UUID, UUID],
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws_id, user_id = ws_and_member
+    created = await client.post(
+        "/api/v1/admin/api-keys",
+        headers=super_headers,
+        json={"name": "revoke-rollback", "user_id": str(user_id), "workspace_id": str(ws_id)},
+    )
+    key_id = UUID(created.json()["id"])
+
+    async def _audit_failure(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("synthetic audit failure")
+
+    monkeypatch.setattr("ragz.api.routes.api_keys.record_audit", _audit_failure)
+    with pytest.raises(RuntimeError, match="synthetic audit failure"):
+        await client.delete(f"/api/v1/admin/api-keys/{key_id}", headers=super_headers)
+
+    session.expire_all()
+    row = await session.get(ApiKey, key_id)
+    assert row is not None
+    assert row.revoked_at is None

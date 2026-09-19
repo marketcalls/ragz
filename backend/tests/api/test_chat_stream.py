@@ -14,12 +14,17 @@ from ragz.core.config import Settings, get_settings
 from ragz.core.db import build_session_factory
 from ragz.core.errors import UpstreamError
 from ragz.modules.auth.models import User
+from ragz.modules.chat import service as chat_service
 from ragz.modules.chat.llm import LLMCompletion, LLMUsage
 from ragz.modules.chat.models import Chat, Citation, Message
 from ragz.modules.chat.service import NO_ANSWER_TEXT
 from ragz.modules.models.models import Model
+from ragz.modules.quotas import service as quota_service
 from ragz.modules.quotas.models import UsageRecord
 from ragz.modules.retrieval.service import RetrievedChunk
+from ragz.modules.tenancy.context import TenantContext
+from ragz.modules.tenancy.models import Workspace
+from ragz.modules.tenancy.views import WorkspaceView
 from tests.conftest import (
     FakeChunkReader,
     FakeCompleter,
@@ -332,11 +337,26 @@ async def test_upstream_error_yields_generic_message(
                 yield  # Make this an async generator
             raise UpstreamError(detail="<html>502 Bad Gateway</html>")
 
+    class MeteredRetriever(FakeRetriever):
+        async def __call__(self, session, ctx, workspace_id, query, **kwargs):  # type: ignore[no-untyped-def]
+            await quota_service.record_usage(
+                session,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id,
+                workspace_id=workspace_id,
+                model_id=None,
+                feature="embedding",
+                prompt_tokens=17,
+                completion_tokens=0,
+                commit=False,
+            )
+            return await super().__call__(session, ctx, workspace_id, query, **kwargs)
+
     app = create_app(
         session_factory=build_session_factory(engine),
         redis_client=redis_client,
         litellm_transport=httpx.MockTransport(_stub_litellm_handler),
-        retriever=FakeRetriever(chat_env["document"].id),
+        retriever=MeteredRetriever(chat_env["document"].id),
         llm_streamer=FailingStreamer(),
         chunk_reader=FakeChunkReader(),
     )
@@ -353,6 +373,125 @@ async def test_upstream_error_yields_generic_message(
     assert names[-1] == "error"
     # Assert generic message, not the raw gateway detail
     assert events[-1][1]["detail"] == "the language model gateway failed"
+    metered = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == seeded_user.org_id,
+                UsageRecord.feature == "embedding",
+                UsageRecord.prompt_tokens == 17,
+            )
+        )
+    ).scalar_one_or_none()
+    assert metered is not None
+
+
+async def test_disconnect_at_sources_keeps_incurred_retrieval_usage(
+    engine: AsyncEngine,
+    session: AsyncSession,
+    test_settings: Settings,
+    chat_env: dict[str, Any],
+    seeded_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = chat_env["workspace"]
+    assert isinstance(workspace, Workspace)
+    document = chat_env["document"]
+    model = Model(
+        litellm_model_name="test-chat-model",
+        display_name="Test chat model",
+        provider_kind="ollama",
+        enabled=True,
+    )
+    session.add(model)
+    await session.flush()
+    chat = Chat(
+        org_id=seeded_user.org_id,
+        workspace_id=workspace.id,
+        user_id=seeded_user.id,
+    )
+    session.add(chat)
+    await session.commit()
+    ctx = TenantContext(
+        user_id=seeded_user.id,
+        org_id=seeded_user.org_id,
+        role="user",
+        workspace_ids=frozenset({workspace.id}),
+    )
+    user_message = await chat_service.add_message(
+        session,
+        ctx,
+        chat,
+        role=chat_service.ROLE_USER,
+        content="what was revenue?",
+        parent=None,
+    )
+
+    class MeteredRetriever(FakeRetriever):
+        async def __call__(self, session, ctx, workspace_id, query, **kwargs):  # type: ignore[no-untyped-def]
+            await quota_service.record_usage(
+                session,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id,
+                workspace_id=workspace_id,
+                model_id=None,
+                feature="embedding",
+                prompt_tokens=23,
+                completion_tokens=0,
+                commit=False,
+            )
+            return await super().__call__(session, ctx, workspace_id, query, **kwargs)
+
+    retriever = MeteredRetriever(document.id)  # type: ignore[union-attr]
+    real_prepare_sources = chat_service._prepare_sources
+
+    async def checking_prepare_sources(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Source assembly is downstream of retrieval and may itself fail. The
+        # usage row must already be visible from a different transaction here.
+        factory = build_session_factory(engine)
+        async with factory() as verifier:
+            durable = (
+                await verifier.execute(
+                    select(UsageRecord).where(
+                        UsageRecord.org_id == seeded_user.org_id,
+                        UsageRecord.feature == "embedding",
+                        UsageRecord.prompt_tokens == 23,
+                    )
+                )
+            ).scalar_one_or_none()
+        assert durable is not None
+        return await real_prepare_sources(*args, **kwargs)
+
+    monkeypatch.setattr(chat_service, "_prepare_sources", checking_prepare_sources)
+    events = chat_service.stream_reply(
+        session,
+        ctx,
+        chat=chat,
+        workspace=WorkspaceView.of(workspace),
+        user_message=user_message,
+        model=model,
+        streamer=FakeStreamer(),
+        retriever=retriever,
+        chunk_reader=FakeChunkReader(),
+        settings=test_settings,
+    )
+    seen: list[str] = []
+    async for event in events:
+        seen.append(event.event)
+        if event.event == "sources":
+            break
+    await events.aclose()
+
+    assert seen == ["retrieval_started", "sources"]
+    metered = (
+        await session.execute(
+            select(UsageRecord).where(
+                UsageRecord.org_id == seeded_user.org_id,
+                UsageRecord.feature == "embedding",
+                UsageRecord.prompt_tokens == 23,
+            )
+        )
+    ).scalar_one_or_none()
+    assert metered is not None
 
 
 async def test_retrieval_failure_yields_generic_message_and_persists_user_message(

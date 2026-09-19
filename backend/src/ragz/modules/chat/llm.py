@@ -113,10 +113,9 @@ class LiteLLMStreamer:
                     "POST", "/v1/chat/completions", json=payload, headers=headers
                 ) as response:
                     if response.status_code != 200:
-                        body = await response.aread()
-                        body_str = body.decode(errors="replace")[:200]
-                        msg = f"LLM gateway returned {response.status_code}: {body_str}"
-                        raise UpstreamError(msg)
+                        raise UpstreamError(
+                            f"LLM gateway returned HTTP {response.status_code}"
+                        )
                     async for line in response.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -163,7 +162,13 @@ class LiteLLMStreamer:
         payload: dict[str, object] = {"model": model, "messages": messages, "stream": False}
         if tools:
             payload["tools"] = tools
-        if reasoning_effort is not None and reasoning_effort != "off":
+        # GPT-5.6 Chat Completions rejects function tools while its implicit
+        # reasoning default is active. Agent planning is an internal routing
+        # call, so force the provider's explicit non-reasoning mode; the final
+        # answer call still receives the user's requested reasoning effort.
+        if tools and model.startswith("gpt-5.6"):
+            payload["reasoning_effort"] = "none"
+        elif reasoning_effort is not None and reasoning_effort != "off":
             payload["reasoning_effort"] = reasoning_effort
         headers = {"Authorization": f"Bearer {self._master_key}"}
         try:
@@ -177,8 +182,7 @@ class LiteLLMStreamer:
         except httpx.HTTPError as exc:
             raise UpstreamError("LLM gateway unreachable") from exc
         if response.status_code != 200:
-            body_str = response.text[:200]
-            raise UpstreamError(f"LLM gateway returned {response.status_code}: {body_str}")
+            raise UpstreamError(f"LLM gateway returned HTTP {response.status_code}")
         try:
             body = response.json()
         except ValueError as exc:

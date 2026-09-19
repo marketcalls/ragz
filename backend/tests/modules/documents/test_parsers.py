@@ -9,6 +9,7 @@ from ragz.core.app_settings import set_app_setting
 from ragz.core.config import Settings
 from ragz.modules.documents.parsers import (
     AnydocParser,
+    LiteParsePageLimitExceeded,
     LiteParseParser,
     LlamaParseParser,
     _markdown_to_blocks,
@@ -80,11 +81,15 @@ async def test_llamaparse_malformed_result_body_raises_ingest_failure() -> None:
         await p.parse(b"x", "doc.pdf")
 
 
-async def test_parse_document_defaults_to_anydoc(session, settings) -> None:
-    # No app_setting -> anydoc path; page==1 is anydoc's signature (Docling
-    # would paginate differently and does not accept .csv at all).
-    blocks = await parse_document(session, settings, data=b"a,b\n1,2\n", filename="t.csv")
-    assert blocks and all(b.page == 1 for b in blocks)
+async def test_parse_document_defaults_to_liteparse(
+    session, settings, monkeypatch
+) -> None:
+    async def _fake_parse(self, data, filename):
+        return [PageBlock(page=7, text="liteparse default", kind="text")]
+
+    monkeypatch.setattr(LiteParseParser, "parse", _fake_parse)
+    blocks = await parse_document(session, settings, data=b"pdf", filename="manual.pdf")
+    assert blocks == [PageBlock(page=7, text="liteparse default", kind="text")]
 
 
 async def test_parse_document_docling_when_selected(session, settings) -> None:
@@ -94,6 +99,45 @@ async def test_parse_document_docling_when_selected(session, settings) -> None:
         session, settings, data=b"line one\n\nline two", filename="a.txt"
     )
     assert [b.text for b in blocks] == ["line one", "line two"]
+
+
+async def test_docling_receives_existing_path_without_buffering(
+    session, settings, monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "manual.pdf"
+    source.write_bytes(b"%PDF-1.7\n%%EOF")
+    received = []
+
+    def _fake_parse_bytes(data, filename, **kwargs):  # type: ignore[no-untyped-def]
+        received.append(data)
+        return [PageBlock(page=1, text="path", kind="text")]
+
+    await set_app_setting(session, "document_parser", "docling")
+    monkeypatch.setattr("ragz.modules.documents.parsers.parse_bytes", _fake_parse_bytes)
+
+    blocks = await parse_document(session, settings, data=source, filename=source.name)
+
+    assert received == [source]
+    assert blocks == [PageBlock(page=1, text="path", kind="text")]
+
+
+async def test_default_non_pdf_uses_anydoc_with_existing_path(
+    session, settings, monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "briefing.pptx"
+    source.write_bytes(b"PK synthetic test")
+    received = []
+
+    async def _fake_anydoc(self, data, filename):  # type: ignore[no-untyped-def]
+        received.append(data)
+        return [PageBlock(page=1, text="slides", kind="text")]
+
+    monkeypatch.setattr(AnydocParser, "parse", _fake_anydoc)
+
+    blocks = await parse_document(session, settings, data=source, filename=source.name)
+
+    assert received == [source]
+    assert blocks == [PageBlock(page=1, text="slides", kind="text")]
 
 
 def test_markdown_to_blocks_stamps_given_page() -> None:
@@ -108,17 +152,22 @@ def test_markdown_to_blocks_stamps_given_page() -> None:
 async def test_liteparse_maps_per_page_markdown_with_real_pages(monkeypatch) -> None:
     class FakeLiteParse:
         def __init__(self, *a, **k) -> None:
-            pass
+            self.target_pages = k["target_pages"]
 
         def parse(self, data):
-            return types.SimpleNamespace(pages=[
-                types.SimpleNamespace(
-                    page_num=3, markdown="## HTTP Status Codes\n\ntext on page 3"
-                ),
-                types.SimpleNamespace(
-                    page_num=8, markdown="## Async\n\ntext on page 8"
-                ),
-            ])
+            if self.target_pages == "1":
+                pages = [types.SimpleNamespace(page_num=1, markdown="")]
+            else:
+                start, end = map(int, self.target_pages.split("-"))
+                pages = []
+                for page in range(start, min(end, 8) + 1):
+                    markdown = ""
+                    if page == 3:
+                        markdown = "## HTTP Status Codes\n\ntext on page 3"
+                    elif page == 8:
+                        markdown = "## Async\n\ntext on page 8"
+                    pages.append(types.SimpleNamespace(page_num=page, markdown=markdown))
+            return types.SimpleNamespace(total_pages=8, pages=pages)
 
     monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
     blocks = await LiteParseParser().parse(b"x", "d.pdf")
@@ -127,17 +176,119 @@ async def test_liteparse_maps_per_page_markdown_with_real_pages(monkeypatch) -> 
     assert headings == {"HTTP Status Codes", "Async"}
 
 
+async def test_liteparse_forwards_file_path_without_buffering(
+    monkeypatch, tmp_path
+) -> None:
+    source = tmp_path / "large.pdf"
+    source.write_bytes(b"%PDF-1.7 test")
+    received = []
+
+    class FakeLiteParse:
+        def __init__(self, *args, **kwargs) -> None:
+            self.target_pages = kwargs["target_pages"]
+
+        def parse(self, data):
+            received.append(data)
+            assert data == source
+            return types.SimpleNamespace(
+                total_pages=1,
+                pages=[types.SimpleNamespace(page_num=1, markdown="page one")],
+            )
+
+    monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
+    blocks = await LiteParseParser().parse(source, source.name)
+
+    assert received == [source]
+    assert [(block.page, block.text) for block in blocks] == [(1, "page one")]
+
+
 async def test_liteparse_empty_result_raises_ingest_failure(monkeypatch) -> None:
     class FakeLiteParse:
         def __init__(self, *a, **k) -> None:
             pass
 
         def parse(self, data):
-            return types.SimpleNamespace(pages=[])
+            return types.SimpleNamespace(total_pages=0, pages=[])
 
     monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
     with pytest.raises(IngestFailure):
         await LiteParseParser().parse(b"x", "d.pdf")
+
+
+async def test_liteparse_parses_large_pdf_in_bounded_page_batches(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeLiteParse:
+        def __init__(self, *a, **kwargs) -> None:
+            self.target_pages = str(kwargs["target_pages"])
+            calls.append(kwargs)
+
+        def parse(self, data):
+            if self.target_pages == "1":
+                start = end = 1
+            else:
+                start, end = map(int, self.target_pages.split("-"))
+            end = min(end, 1_201)
+            return types.SimpleNamespace(
+                total_pages=1_201,
+                pages=[
+                    types.SimpleNamespace(page_num=page, markdown=f"page {page}")
+                    for page in range(start, end + 1)
+                ],
+            )
+
+    monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
+    blocks = await LiteParseParser(batch_pages=500, max_pages=5_000).parse(
+        b"pdf", "large.pdf"
+    )
+
+    assert [call["target_pages"] for call in calls] == [
+        "1", "2-500", "501-1000", "1001-1201"
+    ]
+    assert all(call["max_pages"] == 5_000 for call in calls)
+    assert len(blocks) == 1_201
+    assert [blocks[0].page, blocks[-1].page] == [1, 1_201]
+
+
+async def test_liteparse_fails_explicitly_above_ragz_max_pages(monkeypatch) -> None:
+    calls = 0
+
+    class FakeLiteParse:
+        def __init__(self, *a, **kwargs) -> None:
+            self.target_pages = kwargs["target_pages"]
+
+        def parse(self, data):
+            nonlocal calls
+            calls += 1
+            return types.SimpleNamespace(
+                total_pages=1_201,
+                pages=[types.SimpleNamespace(page_num=1, markdown="page 1")],
+            )
+
+    monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
+    with pytest.raises(LiteParsePageLimitExceeded, match="1,201.*1,000"):
+        await LiteParseParser(batch_pages=500, max_pages=1_000).parse(
+            b"pdf", "too-large.pdf"
+        )
+    assert calls == 1
+
+
+async def test_liteparse_missing_page_in_batch_fails_closed(monkeypatch) -> None:
+    class FakeLiteParse:
+        def __init__(self, *a, **kwargs) -> None:
+            self.target_pages = kwargs["target_pages"]
+
+        def parse(self, data):
+            pages = (
+                [types.SimpleNamespace(page_num=1, markdown="one")]
+                if self.target_pages == "1"
+                else [types.SimpleNamespace(page_num=3, markdown="three")]
+            )
+            return types.SimpleNamespace(total_pages=3, pages=pages)
+
+    monkeypatch.setattr("liteparse.LiteParse", FakeLiteParse)
+    with pytest.raises(IngestFailure, match="incomplete page range.*2"):
+        await LiteParseParser(batch_pages=3, max_pages=100).parse(b"pdf", "broken.pdf")
 
 
 async def test_parse_document_liteparse_when_selected(session, settings, monkeypatch) -> None:
@@ -153,6 +304,51 @@ async def test_parse_document_liteparse_when_selected(session, settings, monkeyp
     blocks = await parse_document(session, settings, data=b"x", filename="a.pdf")
     assert called.get("hit") is True
     assert [(b.page, b.text) for b in blocks] == [(4, "lite")]
+
+
+async def test_liteparse_scanned_pdf_falls_back_to_docling_ocr(
+    session, settings, monkeypatch
+) -> None:
+    await set_app_setting(session, "document_parser", "liteparse")
+
+    async def _empty_scan(self, data, filename):
+        raise IngestFailure("liteparse produced no extractable text")
+
+    called = {}
+
+    def _fake_parse_bytes(data, filename, *, ocr_enabled, ocr_min_chars_per_page):
+        called["ocr_enabled"] = ocr_enabled
+        return [PageBlock(page=9, text="ocr fallback", kind="text")]
+
+    monkeypatch.setattr(LiteParseParser, "parse", _empty_scan)
+    monkeypatch.setattr("ragz.modules.documents.parsers.parse_bytes", _fake_parse_bytes)
+
+    blocks = await parse_document(
+        session, settings, data=b"%PDF-1.7 image-only", filename="scan.pdf"
+    )
+
+    assert called["ocr_enabled"] is True
+    assert blocks == [PageBlock(page=9, text="ocr fallback", kind="text")]
+
+
+async def test_liteparse_page_limit_does_not_trigger_docling_fallback(
+    session, settings, monkeypatch
+) -> None:
+    await set_app_setting(session, "document_parser", "liteparse")
+
+    async def _over_limit(self, data, filename):
+        raise LiteParsePageLimitExceeded("PDF has 1,001 pages; configured limit is 1,000")
+
+    def _must_not_fallback(*args, **kwargs):
+        raise AssertionError("page-limit failures must not rerun the PDF through Docling")
+
+    monkeypatch.setattr(LiteParseParser, "parse", _over_limit)
+    monkeypatch.setattr("ragz.modules.documents.parsers.parse_bytes", _must_not_fallback)
+
+    with pytest.raises(LiteParsePageLimitExceeded):
+        await parse_document(
+            session, settings, data=b"%PDF-1.7 too many pages", filename="large.pdf"
+        )
 
 
 async def test_parse_document_llamaparse_without_key_raises(session, settings) -> None:
@@ -207,8 +403,8 @@ async def test_anydoc_non_pdf_failure_raises_ingest_failure(session, settings, m
 
 
 async def test_anydoc_default_routes_txt_to_docling(session, settings):
-    # anydoc has no plain-text format; a .txt upload under the anydoc default
-    # must still ingest (via Docling's dedicated .txt path), not IngestFailure.
+    # Neither local fast parser accepts plain text; an unset parser must still
+    # ingest .txt through the dedicated local text path.
     blocks = await parse_document(
         session, settings, data=b"first para\n\nsecond para\n", filename="notes.txt"
     )

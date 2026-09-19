@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Document preview security harness</title>
+  </head>
+  <body>
+    <div id="preview-root"></div>
+    <script type="module">
+      import { mountDocumentPreview } from './support/document-preview-harness.tsx';
+      window.mountDocumentPreview = mountDocumentPreview;
+    </script>
+  </body>
+</html>

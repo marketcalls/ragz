@@ -29,11 +29,13 @@ EXPECTED_TABLES = {
     "chats",
     "messages",
     "citations",
+    "attachment_cleanup_jobs",
     "groups",
     "user_groups",
     "org_quotas",
     "user_quotas",
     "usage_records",
+    "resource_reservations",
     "model_catalog",
     "metadata_fields",
     "role_templates",
@@ -64,6 +66,27 @@ def test_migration_chain_upgrades_to_head() -> None:
                 # the table is queryable.
                 result = conn.execute(sa.text("select count(*) from audit_events"))
                 assert result.scalar() == 0
+
+                usage_columns = {
+                    column["name"] for column in inspector.get_columns("usage_records")
+                }
+                attachment_columns = {
+                    column["name"] for column in inspector.get_columns("chat_attachments")
+                }
+                assert "idempotency_key" in usage_columns
+                assert "size_bytes" in attachment_columns
+                usage_indexes = {
+                    index["name"]: index for index in inspector.get_indexes("usage_records")
+                }
+                assert usage_indexes["uq_usage_records_idempotency_key"]["unique"] is True
+                reservation_checks = {
+                    check["name"]
+                    for check in inspector.get_check_constraints("resource_reservations")
+                }
+                assert {
+                    "ck_resource_reservations_kind",
+                    "ck_resource_reservations_size",
+                } <= reservation_checks
         finally:
             sync_engine.dispose()
 

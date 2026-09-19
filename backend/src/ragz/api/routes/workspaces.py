@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
 from ragz.core.db import naive_utc
-from ragz.core.errors import ConflictError, NotFoundError
+from ragz.core.errors import AuthorizationError, ConflictError, NotFoundError
 from ragz.modules.models import service as models_service
 from ragz.modules.tenancy import service
 from ragz.modules.tenancy.context import TenantContext, require_action
@@ -97,7 +97,7 @@ async def remove_member_route(
 _SETTINGS_FIELDS = (
     "top_k", "min_score", "rerank_enabled", "system_prompt_override", "fallback_policy",
     "web_search_enabled", "strict_mode", "enrichment_enabled", "chunk_method",
-    "generative_ui_enabled",
+    "generative_ui_enabled", "multi_query_enabled",
 )
 
 
@@ -113,6 +113,13 @@ async def patch_embedding_model(
 async def patch_workspace(
     workspace_id: UUID, body: WorkspacePatch, session: SessionDep, ctx: ConfigureDep
 ) -> WorkspaceOut:
+    # Multi-query spends the platform utility model and changes retrieval for
+    # every member of the workspace. Keep other workspace tuning delegable to
+    # org admins/custom roles, but reserve this one platform-cost control for
+    # the superadmin. Check before any sibling field is mutated so a mixed
+    # PATCH cannot partially apply before failing.
+    if "multi_query_enabled" in body.model_fields_set and ctx.role != "superadmin":
+        raise AuthorizationError("multi-query retrieval requires superadmin")
     ws = None
     has_changes = False
     if "default_model_id" in body.model_fields_set:

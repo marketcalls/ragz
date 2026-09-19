@@ -21,7 +21,7 @@ import { WorkspaceSettingsDialog } from '@/features/workspaces/workspace-setting
 
 export function WorkspaceSwitcher() {
   const claims = useClaims();
-  const { data: workspaces } = useWorkspaces();
+  const { data: workspaces, isPending: workspacesPending } = useWorkspaces();
   const { workspaceId, setWorkspaceId } = useWorkspace();
   const create = useCreateWorkspace();
   const navigate = useNavigate();
@@ -68,10 +68,15 @@ export function WorkspaceSwitcher() {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
+            {workspacesPending ? (
+              <DropdownMenuItem disabled>Loading workspaces…</DropdownMenuItem>
+            ) : null}
             {(workspaces ?? []).map((w) => (
               <DropdownMenuItem key={w.id} onSelect={() => switchWorkspace(w.id)}>
                 <span className="flex-1 truncate">{w.name}</span>
-                {w.id === workspaceId ? <Check className="h-3.5 w-3.5 text-accent" aria-hidden /> : null}
+                {w.id === workspaceId ? (
+                  <Check className="h-3.5 w-3.5 text-accent" aria-hidden />
+                ) : null}
               </DropdownMenuItem>
             ))}
             {isAdmin ? (

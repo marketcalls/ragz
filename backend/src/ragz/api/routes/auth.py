@@ -5,6 +5,7 @@ from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
+from ragz.core.client_ip import client_ip
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import AuthenticationError
 from ragz.core.ratelimit import peek_rate_limit, rate_limit, record_failure
@@ -68,6 +69,7 @@ def _set_refresh(response: Response, raw: str, settings: Settings) -> None:
 async def login(
     body: LoginRequest, request: Request, response: Response,
     session: SessionDep, settings: SettingsDep,
+    refresh_token: RefreshCookie = None,
 ) -> AccessTokenResponse:
     redis = request.app.state.redis
     account_key = f"rl:login_account:{body.email.strip().lower()}"
@@ -75,7 +77,12 @@ async def login(
     await peek_rate_limit(redis, account_key, _LOGIN_ACCOUNT_MAX_FAILURES)
     try:
         pair = await service.login(
-            session, email=body.email, password=body.password, settings=settings
+            session,
+            email=body.email,
+            password=body.password,
+            settings=settings,
+            source_ip=client_ip(request, settings),
+            replace_refresh_token=refresh_token,
         )
     except AuthenticationError:
         # Record the failed attempt against the account, then surface the same

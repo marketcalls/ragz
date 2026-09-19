@@ -51,3 +51,16 @@ export function useDeleteGoldenQuery(workspaceId: string | null) {
       void queryClient.invalidateQueries({ queryKey: ['golden-queries', workspaceId] }),
   });
 }
+
+export function useCompareAnswers(workspaceId: string | null) {
+  return useMutation({
+    mutationFn: async (input: { question: string; model_id?: string }) => {
+      const { data, error } = await api.POST('/api/v1/workspaces/{workspace_id}/evals/compare', {
+        params: { path: { workspace_id: workspaceId as string } },
+        body: input,
+      });
+      if (error) throw new Error(problemDetail(error));
+      return data;
+    },
+  });
+}

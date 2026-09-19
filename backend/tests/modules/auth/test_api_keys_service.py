@@ -28,9 +28,39 @@ async def test_generate_returns_raw_once_and_stores_hash_not_plaintext(session, 
         user_id=seeded_user.id, workspace_id=ws.id, expires_at=None,
     )
     assert raw.startswith("ragz_sk_")
-    assert row.prefix == raw[:12] and len(row.prefix) == 12
+    assert row.prefix == raw[:24] and len(row.prefix) == 24
     assert row.key_hash != raw  # stored hashed, never plaintext
     assert raw not in row.key_hash
+
+
+async def test_legacy_prefix_collision_resolves_by_constant_time_full_hash(
+    session, seeded_user
+) -> None:  # type: ignore[no-untyped-def]
+    ws = await _member_ws(session, seeded_user)
+    raw_a = "ragz_sk_same-first-legacy-key"
+    raw_b = "ragz_sk_same-second-legacy-key"
+    assert raw_a[:12] == raw_b[:12]
+    expiry = (datetime.now(UTC) + timedelta(days=1)).replace(tzinfo=None)
+    rows = [
+        ApiKey(
+            prefix=raw[:12],
+            key_hash=svc._hash(raw, SETTINGS.api_key_pepper),
+            name=f"legacy-{index}",
+            org_id=seeded_user.org_id,
+            user_id=seeded_user.id,
+            workspace_id=ws.id,
+            created_by=seeded_user.id,
+            expires_at=expiry,
+        )
+        for index, raw in enumerate((raw_a, raw_b))
+    ]
+    session.add_all(rows)
+    await session.commit()
+
+    principal = await svc.resolve_api_key(session, SETTINGS, raw_key=raw_b)
+
+    assert principal is not None
+    assert principal.key_id == rows[1].id
 
 
 async def test_resolve_happy_path_and_updates_last_used(session, seeded_user):

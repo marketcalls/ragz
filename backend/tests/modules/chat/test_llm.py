@@ -52,11 +52,25 @@ async def test_streams_deltas_then_usage() -> None:
 
 
 async def test_non_200_maps_to_upstream_error() -> None:
+    marker = "provider-secret-response-body"
     transport = httpx.MockTransport(
-        lambda request: httpx.Response(401, json={"error": "bad key"})
+        lambda request: httpx.Response(401, json={"error": marker})
     )
-    with pytest.raises(UpstreamError):
+    with pytest.raises(UpstreamError) as exc_info:
         await collect(make(transport))
+    assert marker not in str(exc_info.value)
+
+
+async def test_complete_non_200_does_not_expose_provider_body() -> None:
+    marker = "provider-secret-response-body"
+    streamer = make(
+        httpx.MockTransport(lambda _request: httpx.Response(403, text=marker))
+    )
+
+    with pytest.raises(UpstreamError) as exc_info:
+        await streamer.complete(model="m", messages=[])
+
+    assert marker not in str(exc_info.value)
 
 
 async def test_connect_error_maps_to_upstream_error() -> None:
@@ -206,6 +220,25 @@ async def test_complete_omits_reasoning_effort_when_off() -> None:
         reasoning_effort="off",
     )
     assert "reasoning_effort" not in seen[0]
+
+
+async def test_gpt_5_6_tool_call_forces_none_reasoning() -> None:
+    seen: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _completion_handler({"choices": [{"message": {"content": "ok"}}]})
+
+    streamer = make(httpx.MockTransport(handler))
+    tools = [{"type": "function", "function": {"name": "search", "parameters": {}}}]
+    await streamer.complete(
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "find it"}],
+        tools=tools,
+        reasoning_effort="high",
+    )
+    assert seen[0]["reasoning_effort"] == "none"
+    assert seen[0]["tools"] == tools
 
 
 async def test_stream_passes_through_multipart_content_unchanged() -> None:
