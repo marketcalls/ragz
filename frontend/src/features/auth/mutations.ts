@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
-import { api } from '@/api/client';
+import { api, beginAuthIdentityTransition } from '@/api/client';
+import { clearAuthenticatedQueryState } from '@/lib/auth-query-state';
 import { setAccessToken } from '@/lib/auth-store';
 
 export function problemDetail(body: unknown): string {
@@ -12,8 +13,10 @@ export function problemDetail(body: unknown): string {
 }
 
 export function useLogin() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (creds: { email: string; password: string }) => {
+      await beginAuthIdentityTransition({ clearAccessToken: true });
       const { data, error } = await api.POST('/api/v1/auth/login', { body: creds });
       if (error) throw new Error(problemDetail(error));
       // A dead backend / proxy error can yield neither data nor a parsed
@@ -21,7 +24,8 @@ export function useLogin() {
       if (!data) throw new Error('Login failed: the server did not respond');
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      await clearAuthenticatedQueryState(queryClient);
       setAccessToken(data.access_token);
     },
   });
@@ -32,11 +36,12 @@ export function useLogout() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
+      await beginAuthIdentityTransition();
       await api.POST('/api/v1/auth/logout');
     },
-    onSettled: () => {
+    onSettled: async () => {
       setAccessToken(null);
-      queryClient.clear();
+      await clearAuthenticatedQueryState(queryClient);
       navigate('/login', { replace: true });
     },
   });
@@ -61,14 +66,17 @@ export function useBootstrapStatus() {
 // response carries an access token + sets the refresh cookie, exactly like
 // login). Returns 409 once a superadmin already exists.
 export function useRegister() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (creds: { email: string; password: string }) => {
+      await beginAuthIdentityTransition({ clearAccessToken: true });
       const { data, error } = await api.POST('/api/v1/auth/register', { body: creds });
       if (error) throw new Error(problemDetail(error));
       if (!data) throw new Error('Registration failed: the server did not respond');
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      await clearAuthenticatedQueryState(queryClient);
       setAccessToken(data.access_token);
     },
   });

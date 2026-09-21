@@ -8,16 +8,18 @@ UI can show the reset date. Reporting reads the indexed ledger directly — no
 rollup table until Plan G's load tests demand one.
 """
 
+import asyncio
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import NamedTuple
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from ragz.core.db import naive_utc
 from ragz.core.errors import NotFoundError, QuotaExceeded
@@ -31,6 +33,7 @@ from ragz.modules.tenancy.context import TenantContext
 
 _CACHE_TTL_SECONDS = 60
 _WARN_RATIO = 0.8
+_DURABLE_USAGE_WRITES: set[asyncio.Task[None]] = set()
 
 
 def _clamped(year: int, month: int, day: int) -> datetime:
@@ -59,6 +62,7 @@ async def record_usage(
     units: int = 0,
     workspace_id: UUID | None = None,
     commit: bool = True,
+    idempotency_key: str | None = None,
 ) -> None:
     """Append one usage-ledger row. `units` is for per-call features (rerank,
     web_search); token features leave it 0 and it is never summed as tokens.
@@ -69,16 +73,80 @@ async def record_usage(
     record incurred mid-request (embedding/rerank/web_search) rides the flow's
     next real commit -- the end-of-turn chat/ingestion record -- instead of
     adding its own blocking round-trip on the hot path (design Phase 1 §5)."""
-    session.add(
-        UsageRecord(
-            org_id=org_id, user_id=user_id, workspace_id=workspace_id,
-            model_id=model_id, feature=feature,
-            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-            units=units,
+    values = {
+        "id": uuid4(),
+        "created_at": naive_utc(),
+        "org_id": org_id,
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "model_id": model_id,
+        "feature": feature,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "units": units,
+        "idempotency_key": idempotency_key,
+    }
+    if idempotency_key is None:
+        session.add(UsageRecord(**values))
+    else:
+        await session.execute(
+            pg_insert(UsageRecord)
+            .values(**values)
+            .on_conflict_do_nothing(
+                index_elements=[UsageRecord.idempotency_key],
+                index_where=UsageRecord.idempotency_key.is_not(None),
+            )
         )
-    )
     if commit:
         await session.commit()
+
+
+async def record_usage_durable(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    user_id: UUID,
+    model_id: UUID | None,
+    feature: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    idempotency_key: str,
+    units: int = 0,
+    workspace_id: UUID | None = None,
+) -> None:
+    """Commit an incurred provider call independently and survive cancellation."""
+
+    bind = session.bind
+    if not isinstance(bind, AsyncEngine):
+        raise RuntimeError("durable usage recording requires an async engine")
+    factory = async_sessionmaker(bind, expire_on_commit=False)
+
+    async def _write() -> None:
+        async with factory() as usage_session:
+            await record_usage(
+                usage_session,
+                org_id=org_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                model_id=model_id,
+                feature=feature,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                units=units,
+                idempotency_key=idempotency_key,
+            )
+
+    task = asyncio.create_task(_write())
+    _DURABLE_USAGE_WRITES.add(task)
+    task.add_done_callback(_DURABLE_USAGE_WRITES.discard)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # The provider call already completed. Delay cancellation only long
+        # enough to make its idempotent accounting durable, then preserve the
+        # caller's cancellation semantics.
+        await asyncio.shield(task)
+        raise
 
 
 _TOKENS = UsageRecord.prompt_tokens + UsageRecord.completion_tokens

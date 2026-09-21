@@ -48,6 +48,11 @@ class PayloadTooLarge(RagzError):
     title = "Payload too large"
 
 
+class UnsupportedMediaType(RagzError):
+    status_code = 415
+    title = "Unsupported media type"
+
+
 class SecretsError(RagzError):
     status_code = 500
     title = "Secrets subsystem error"

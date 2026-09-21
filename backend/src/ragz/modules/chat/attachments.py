@@ -5,24 +5,39 @@ pipeline (InputFormat.IMAGE) already runs OCR (do_ocr=True by default),
 so a photo/screenshot attachment extracts text through the identical call
 as a text document; no branching on `kind` happens here."""
 
+import warnings
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import BinaryIO
 from uuid import UUID
+from zipfile import BadZipFile, ZipFile
 
-from sqlalchemy import select
+import structlog
+from PIL import Image
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragz.core.config import get_settings
-from ragz.core.errors import NotFoundError
+from ragz.core.config import Settings
+from ragz.core.db import committed_row_exists_after_error
+from ragz.core.errors import (
+    NotFoundError,
+    OrgResourceQuotaExceeded,
+    PayloadTooLarge,
+    UnsupportedMediaType,
+)
 from ragz.core.storage import build_storage
 from ragz.modules.chat.chats import get_chat
-from ragz.modules.chat.models import ChatAttachment
+from ragz.modules.chat.cleanup import schedule_cleanup
+from ragz.modules.chat.models import AttachmentCleanupJob, Chat, ChatAttachment
 from ragz.modules.chat.prompting import PromptSource, count_tokens
 from ragz.modules.documents.pipeline import PageBlock, chunk_blocks, embed_batch, parse_bytes
+from ragz.modules.documents.uploads import UploadedContent
 from ragz.modules.models import service as models_service
 from ragz.modules.models.models import LOCAL_EMBEDDING_MODEL_ID
+from ragz.modules.quotas import resource_admission
 from ragz.modules.retrieval.embeddings import get_dense_embedder
 from ragz.modules.retrieval.service import (
     ensure_ephemeral_collection,
@@ -30,8 +45,20 @@ from ragz.modules.retrieval.service import (
 )
 from ragz.modules.tenancy.context import TenantContext
 
+log = structlog.get_logger()
 
-def extract_text(data: bytes, filename: str) -> str:
+
+class AttachmentParserLimitExceeded(Exception):
+    pass
+
+
+def extract_text(
+    data: bytes,
+    filename: str,
+    *,
+    max_pages: int | None = None,
+    max_chars: int | None = None,
+) -> str:
     """Best-effort text extraction for a chat attachment (document or
     image). Returns "" on any parse failure rather than raising — a failed
     extraction degrades to "no inline/retrieval content available" for this
@@ -40,6 +67,11 @@ def extract_text(data: bytes, filename: str) -> str:
         blocks = parse_bytes(data, filename)
     except Exception:
         return ""
+    if max_pages is not None and len({block.page for block in blocks}) > max_pages:
+        raise AttachmentParserLimitExceeded("attachment exceeds parser page limit")
+    extracted_chars = sum(len(block.text) for block in blocks)
+    if max_chars is not None and extracted_chars > max_chars:
+        raise AttachmentParserLimitExceeded("attachment exceeds extracted text limit")
     return "\n\n".join(b.text for b in blocks)
 
 # --- attachment lifecycle -------------------------------------------------
@@ -49,8 +81,11 @@ def extract_text(data: bytes, filename: str) -> str:
 # chat.chats, which is why that had to be extracted first.
 
 _ATTACHMENT_KINDS = {
-    "text/plain", "application/pdf",
+    "text/plain", "text/markdown", "text/csv", "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff",
 }
 
 
@@ -58,22 +93,235 @@ def _attachment_kind(mime: str) -> str:
     return "image" if mime.startswith("image/") else "document"
 
 
+def validate_attachment_mime(mime: str) -> None:
+    if mime not in _ATTACHMENT_KINDS:
+        raise UnsupportedMediaType("unsupported chat attachment type")
+
+
+def validate_attachment_parser_resources(
+    stream: BinaryIO, filename: str, settings: Settings
+) -> None:
+    """Reject predictable archive/PDF work bombs before storage or enqueue."""
+
+    suffix = Path(filename).suffix.lower()
+    position = stream.tell()
+    try:
+        stream.seek(0)
+        if suffix in {".docx", ".xlsx", ".pptx"}:
+            try:
+                with ZipFile(stream) as archive:
+                    entries = archive.infolist()
+                    if len(entries) > settings.attachment_max_archive_entries:
+                        raise PayloadTooLarge("attachment archive has too many entries")
+                    if (
+                        sum(entry.file_size for entry in entries)
+                        > settings.attachment_max_uncompressed_bytes
+                    ):
+                        raise PayloadTooLarge("attachment expands beyond the parser byte limit")
+            except BadZipFile as exc:
+                raise UnsupportedMediaType("invalid Office Open XML attachment") from exc
+        elif suffix == ".pdf":
+            try:
+                from pypdfium2 import PdfDocument  # type: ignore[import-untyped]
+
+                pdf = PdfDocument(stream)
+                try:
+                    if len(pdf) > settings.attachment_max_pages:
+                        raise PayloadTooLarge("attachment exceeds parser page limit")
+                finally:
+                    pdf.close()
+            except PayloadTooLarge:
+                raise
+            except Exception as exc:
+                raise UnsupportedMediaType("invalid PDF attachment") from exc
+        elif suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
+                    with Image.open(stream) as image:
+                        if image.width * image.height > settings.attachment_max_image_pixels:
+                            raise PayloadTooLarge(
+                                "attachment image exceeds the decoded pixel limit"
+                            )
+                        image.verify()
+            except PayloadTooLarge:
+                raise
+            except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+                raise PayloadTooLarge(
+                    "attachment image exceeds the decoded pixel limit"
+                ) from exc
+            except Exception as exc:
+                raise UnsupportedMediaType("invalid image attachment") from exc
+    finally:
+        stream.seek(position)
+
+
+async def _attachment_usage(
+    session: AsyncSession, *, org_id: UUID, user_id: UUID | None
+) -> tuple[int, int, int]:
+    conditions = [Chat.org_id == org_id]
+    if user_id is not None:
+        conditions.append(Chat.user_id == user_id)
+    count, size_bytes, pending = (
+        await session.execute(
+            select(
+                func.count(ChatAttachment.id),
+                func.coalesce(func.sum(ChatAttachment.size_bytes), 0),
+                func.count(ChatAttachment.id).filter(
+                    ChatAttachment.status.in_(("queued", "processing"))
+                ),
+            )
+            .join(Chat, Chat.id == ChatAttachment.chat_id)
+            .where(*conditions)
+        )
+    ).one()
+    cleanup_conditions = [
+        AttachmentCleanupJob.org_id == org_id,
+        AttachmentCleanupJob.completed_at.is_(None),
+    ]
+    if user_id is not None:
+        cleanup_conditions.append(AttachmentCleanupJob.user_id == user_id)
+    cleanup_count, cleanup_bytes = (
+        await session.execute(
+            select(
+                func.count(AttachmentCleanupJob.id),
+                func.coalesce(func.sum(AttachmentCleanupJob.size_bytes), 0),
+            ).where(*cleanup_conditions)
+        )
+    ).one()
+    return (
+        int(count) + int(cleanup_count),
+        int(size_bytes) + int(cleanup_bytes),
+        int(pending),
+    )
+
+
+async def _reserve_attachment(
+    session: AsyncSession,
+    ctx: TenantContext,
+    *,
+    size_bytes: int,
+    settings: Settings,
+) -> UUID:
+    await resource_admission.lock_org(session, ctx.org_id)
+    await resource_admission.prune_expired(session)
+    org_count, org_bytes, org_pending = await _attachment_usage(
+        session, org_id=ctx.org_id, user_id=None
+    )
+    user_count, user_bytes, user_pending = await _attachment_usage(
+        session, org_id=ctx.org_id, user_id=ctx.user_id
+    )
+    org_reserved = await resource_admission.totals(
+        session, org_id=ctx.org_id, kind="attachment"
+    )
+    user_reserved = await resource_admission.totals(
+        session, org_id=ctx.org_id, user_id=ctx.user_id, kind="attachment"
+    )
+
+    checks = (
+        (
+            org_count + org_reserved.count >= settings.attachment_max_count_per_org,
+            "organization attachment count limit reached",
+        ),
+        (
+            user_count + user_reserved.count >= settings.attachment_max_count_per_user,
+            "user attachment count limit reached",
+        ),
+        (
+            org_bytes + org_reserved.size_bytes + size_bytes
+            > settings.attachment_max_bytes_per_org,
+            "organization attachment storage limit reached",
+        ),
+        (
+            user_bytes + user_reserved.size_bytes + size_bytes
+            > settings.attachment_max_bytes_per_user,
+            "user attachment storage limit reached",
+        ),
+        (
+            org_pending + org_reserved.count >= settings.attachment_max_pending_per_org,
+            "organization pending attachment limit reached",
+        ),
+        (
+            user_pending + user_reserved.count >= settings.attachment_max_pending_per_user,
+            "user pending attachment limit reached",
+        ),
+    )
+    for exceeded, detail in checks:
+        if exceeded:
+            raise OrgResourceQuotaExceeded(detail)
+
+    reservation = resource_admission.add(
+        session,
+        org_id=ctx.org_id,
+        user_id=ctx.user_id,
+        kind="attachment",
+        size_bytes=size_bytes,
+    )
+    await session.commit()
+    return reservation.id
+
+
 async def create_attachment(
     session: AsyncSession, ctx: TenantContext, chat_id: UUID,
-    *, filename: str, mime: str, data: bytes,
+    *, filename: str, mime: str, data: bytes | UploadedContent, settings: Settings,
 ) -> ChatAttachment:
     await get_chat(session, ctx, chat_id)  # NotFoundError if not the caller's chat
+    validate_attachment_mime(mime)
+    content = data if isinstance(data, UploadedContent) else UploadedContent.from_bytes(data)
+    reservation_id = await _reserve_attachment(
+        session, ctx, size_bytes=content.size_bytes, settings=settings
+    )
     kind = _attachment_kind(mime)
     attachment = ChatAttachment(
         chat_id=chat_id, kind=kind, filename=filename, mime=mime, storage_key="",
+        size_bytes=content.size_bytes,
     )
-    session.add(attachment)
-    await session.flush()  # assigns attachment.id for the storage key
-    attachment.storage_key = f"{ctx.org_id}/chats/{chat_id}/{attachment.id}/{filename}"
-    storage = build_storage(get_settings())
-    await storage.ensure_bucket()
-    await storage.put(attachment.storage_key, data, content_type=mime)
-    await session.commit()
+    storage = build_storage(settings)
+    try:
+        session.add(attachment)
+        await session.flush()
+        attachment.storage_key = f"{ctx.org_id}/chats/{chat_id}/{attachment.id}/{filename}"
+        await storage.ensure_bucket()
+        await storage.put_stream(attachment.storage_key, content.stream, content_type=mime)
+        await resource_admission.remove(session, reservation_id)
+    except BaseException:
+        await session.rollback()
+        # Delete unconditionally. A cancelled multipart helper can raise after
+        # the object store accepted its completion response, so a local
+        # `stored` flag is not authoritative. S3 deletion is idempotent.
+        try:
+            await storage.delete(attachment.storage_key)
+        except Exception:
+            log.exception(
+                "attachment_upload_compensation_failed",
+                attachment_id=str(attachment.id),
+                storage_key=attachment.storage_key,
+            )
+        await resource_admission.release(session, reservation_id)
+        raise
+    try:
+        await session.commit()
+    except BaseException:
+        persisted = await committed_row_exists_after_error(
+            session, select(ChatAttachment.id).where(ChatAttachment.id == attachment.id)
+        )
+        if persisted is False:
+            try:
+                await storage.delete(attachment.storage_key)
+            except Exception:
+                log.exception(
+                    "attachment_upload_compensation_failed",
+                    attachment_id=str(attachment.id),
+                    storage_key=attachment.storage_key,
+                )
+            await resource_admission.release(session, reservation_id)
+        elif persisted is None:
+            log.error(
+                "attachment_upload_commit_outcome_unknown",
+                attachment_id=str(attachment.id),
+                storage_key=attachment.storage_key,
+            )
+        raise
     return attachment
 
 
@@ -166,8 +414,16 @@ async def list_stale_attachments(
 
 
 async def delete_attachment(session: AsyncSession, attachment: ChatAttachment) -> None:
-    """Deletes the DB row only -- MinIO blob and Qdrant points are the
-    caller's responsibility (see list_stale_attachments)."""
+    """Schedule durable external cleanup before deleting the attachment row."""
+    chat = await session.get(Chat, attachment.chat_id)
+    if chat is not None:
+        await schedule_cleanup(
+            session,
+            attachment,
+            org_id=chat.org_id,
+            user_id=chat.user_id,
+        )
+        await session.flush()
     await session.delete(attachment)
     await session.commit()
 
@@ -238,4 +494,3 @@ async def route_attachment(
         chunks=chunks, dense=dense, sparse=sparse,
     )
     return None
-

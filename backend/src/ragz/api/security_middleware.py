@@ -107,7 +107,7 @@ class _BodyTooLarge(Exception):
 
 
 class BodySizeLimitMiddleware:
-    """Rejects any HTTP request whose body exceeds `max_bytes`.
+    """Reject requests above the global or attachment-specific body limit.
 
     Two enforcement paths:
     - Declared `Content-Length` over the ceiling -> immediate 413, before
@@ -118,15 +118,31 @@ class BodySizeLimitMiddleware:
       ceiling, without ever buffering the full oversized body in memory.
     """
 
-    def __init__(self, app: Any, *, max_bytes: int) -> None:
+    def __init__(
+        self, app: Any, *, max_bytes: int, attachment_max_bytes: int | None = None
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.attachment_max_bytes = attachment_max_bytes
+
+    def _request_max_bytes(self, scope: Scope) -> int:
+        path_parts = str(scope.get("path") or "").split("/")
+        is_attachment_upload = (
+            scope.get("method") == "POST"
+            and len(path_parts) == 6
+            and path_parts[1:4] == ["api", "v1", "chats"]
+            and path_parts[5] == "attachments"
+        )
+        if is_attachment_upload and self.attachment_max_bytes is not None:
+            return min(self.max_bytes, self.attachment_max_bytes)
+        return self.max_bytes
 
     async def __call__(self, scope: Scope, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        request_max_bytes = self._request_max_bytes(scope)
         headers = dict(scope.get("headers") or [])
         declared = headers.get(b"content-length")
         if declared is not None:
@@ -134,8 +150,8 @@ class BodySizeLimitMiddleware:
                 declared_len = int(declared)
             except ValueError:
                 declared_len = None
-            if declared_len is not None and declared_len > self.max_bytes:
-                await _send_413(send, self.max_bytes)
+            if declared_len is not None and declared_len > request_max_bytes:
+                await _send_413(send, request_max_bytes)
                 return
 
         seen = 0
@@ -145,7 +161,7 @@ class BodySizeLimitMiddleware:
             message: Message = await receive()
             if message["type"] == "http.request":
                 seen += len(message.get("body") or b"")
-                if seen > self.max_bytes:
+                if seen > request_max_bytes:
                     raise _BodyTooLarge
             return message
 
@@ -168,7 +184,7 @@ class BodySizeLimitMiddleware:
             # so re-raise and let the server-level error handling take it.
             if response_started:
                 raise
-            await _send_413(send, self.max_bytes)
+            await _send_413(send, request_max_bytes)
 
 
 class SecurityHeadersMiddleware:

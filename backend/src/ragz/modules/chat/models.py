@@ -1,7 +1,14 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -135,12 +142,37 @@ class ChatAttachment(UUIDPk, Base):
     filename: Mapped[str]
     mime: Mapped[str]
     storage_key: Mapped[str]
+    size_bytes: Mapped[int] = mapped_column(BigInteger(), default=0, server_default="0")
     # "queued" | "processing" | "ready" | "failed"
     status: Mapped[str] = mapped_column(default="queued")
     extracted_text: Mapped[str | None] = mapped_column(Text(), default=None)
     # Set at message-send time once a routing decision is made for this
     # attachment in a given send — "inline" | "retrieval" | None (not yet used).
     routed_to: Mapped[str | None] = mapped_column(default=None)
+
+
+class AttachmentCleanupJob(UUIDPk, Base):
+    """Durable external identifiers that survive attachment/chat cascades."""
+
+    __tablename__ = "attachment_cleanup_jobs"
+    __table_args__ = (
+        UniqueConstraint("attachment_id", name="uq_attachment_cleanup_attachment"),
+        CheckConstraint("size_bytes >= 0", name="ck_attachment_cleanup_jobs_size"),
+    )
+
+    # Intentionally no FKs: the referenced chat/attachment/org rows may be
+    # deleted before external storage and vector cleanup succeeds.
+    org_id: Mapped[UUID] = mapped_column(index=True)
+    user_id: Mapped[UUID] = mapped_column(index=True)
+    chat_id: Mapped[UUID]
+    attachment_id: Mapped[UUID]
+    storage_key: Mapped[str]
+    size_bytes: Mapped[int] = mapped_column(BigInteger())
+    attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+    next_attempt_at: Mapped[datetime] = mapped_column(default=naive_utc, index=True)
+    last_error: Mapped[str | None] = mapped_column(default=None)
+    completed_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=naive_utc, onupdate=naive_utc)
 
 
 class MessageFeedback(Base):

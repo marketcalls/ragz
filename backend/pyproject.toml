@@ -31,6 +31,8 @@ dependencies = [
     "firecrawl-anydoc>=0.1",
     "ddgs>=9.14.4",
     "liteparse>=2.12",
+    "pillow>=10.1",
+    "pypdfium2>=5.12.1",
     "trafilatura>=2.2.0",
     "prometheus-client>=0.26.0",
 ]
@@ -46,7 +48,7 @@ dev = [
     "mypy>=1.10",
     "import-linter>=2.0",
     "psycopg2-binary>=2.9",
-    "pillow>=10.1",
+    "hatchling==1.32.0",
 ]
 loadtest = ["locust>=2.29"]
 observability = ["sentry-sdk>=2.8"]
@@ -58,10 +60,11 @@ observability = ["sentry-sdk>=2.8"]
 constraint-dependencies = [
     "aiohttp>=3.14.3",
     "h2>=4.4.1",
+    "transformers>=5.10.1",
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

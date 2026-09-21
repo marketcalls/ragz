@@ -61,6 +61,42 @@ retrieval_stage_duration_seconds = Histogram(
     buckets=_LATENCY_BUCKETS,
 )
 
+query_embedding_cache_operations_total = Counter(
+    "ragz_query_embedding_cache_operations_total",
+    "Query-embedding cache operations by bounded outcome.",
+    ("outcome",),
+)
+
+query_expansion_cache_operations_total = Counter(
+    "ragz_query_expansion_cache_operations_total",
+    "Query-expansion cache operations by bounded outcome.",
+    ("outcome",),
+)
+
+query_expansion_outcomes_total = Counter(
+    "ragz_query_expansion_outcomes_total",
+    "Multi-query expansion outcomes by bounded result.",
+    ("outcome",),
+)
+
+rerank_provider_attempts_total = Counter(
+    "ragz_rerank_provider_attempts_total",
+    "Rerank provider attempts by bounded outcome.",
+    ("outcome",),
+)
+
+rerank_retry_wait_seconds = Histogram(
+    "ragz_rerank_retry_wait_seconds",
+    "Scheduled wait before retrying a transient rerank provider failure.",
+    buckets=_LATENCY_BUCKETS,
+)
+
+rerank_provider_duration_seconds = Histogram(
+    "ragz_rerank_provider_duration_seconds",
+    "Wall time spent inside rerank provider HTTP attempts, excluding retry waits.",
+    buckets=_LATENCY_BUCKETS,
+)
+
 @contextmanager
 def observe_stage(stage: str) -> Iterator[None]:
     """Time a retrieval stage, recording it even when the stage raises.

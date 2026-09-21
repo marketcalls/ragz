@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import Request
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.sql import Select
 
 
 class Base(DeclarativeBase):
@@ -42,10 +44,59 @@ def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+async def committed_row_exists_after_error(
+    session: AsyncSession, statement: Select[tuple[Any]]
+) -> bool | None:
+    """Resolve an ambiguous commit outcome without allowing cancellation to abort it.
+
+    ``False`` is the only result that permits destructive external compensation.
+    ``None`` means the database outcome could not be established and callers must
+    preserve the object for reconciliation rather than risk deleting committed data.
+    """
+
+    async def inspect() -> bool | None:
+        try:
+            await session.rollback()
+            return (await session.scalar(statement)) is not None
+        except BaseException:
+            return None
+
+    task = asyncio.create_task(inspect())
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
+
+
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     factory = request.app.state.session_factory
-    async with factory() as session:
+    session = factory()
+    unwinding = False
+    try:
         yield session
+    except BaseException:
+        unwinding = True
+        raise
+    finally:
+        # Starlette finalizes yield dependencies inside the request's cancel
+        # scope.  An SSE disconnect can therefore cancel AsyncSession.close()
+        # while it is rolling back an idle transaction, leaving the asyncpg
+        # connection checked out until garbage collection.  Keep the close in
+        # an independent task and wait through repeated cancel-scope delivery;
+        # then re-raise cancellation so request teardown semantics are intact.
+        close_task = asyncio.create_task(session.close())
+        interruption: asyncio.CancelledError | None = None
+        while not close_task.done():
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError as exc:
+                if interruption is None:
+                    interruption = exc
+        close_task.result()
+        if interruption is not None and not unwinding:
+            raise interruption
 
 
 # --- per-loop engine reuse (ADR-0006) ---------------------------------------

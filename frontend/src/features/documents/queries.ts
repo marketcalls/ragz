@@ -41,7 +41,10 @@ export function useDeleteDocument(workspaceId: string | null) {
       });
       if (error) throw new Error('failed to delete document');
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] }),
+    onSuccess: (_data, documentId) => {
+      queryClient.removeQueries({ queryKey: ['document-file', documentId], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['documents', workspaceId] });
+    },
   });
 }
 

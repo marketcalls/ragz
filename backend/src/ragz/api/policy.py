@@ -216,6 +216,7 @@ ROUTE_POLICY: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/workspaces/{workspace_id}/golden-queries"): "evals.manage",
     ("DELETE", "/api/v1/golden-queries/{query_id}"): "evals.manage",
     ("POST", "/api/v1/workspaces/{workspace_id}/evals/run"): "evals.run",
+    ("POST", "/api/v1/workspaces/{workspace_id}/evals/compare"): "evals.run",
     ("GET", "/api/v1/workspaces/{workspace_id}/evals/runs"): "evals.read",
     # chat
     ("POST", "/api/v1/chats"): "chat.generate",

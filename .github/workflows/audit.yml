@@ -49,6 +49,9 @@ jobs:
       - name: pnpm audit (prod deps, high+ severity)
         run: pnpm audit --prod --audit-level=high
 
+      - name: pnpm audit (build and development tree)
+        run: pnpm audit --audit-level=high
+
   backend-audit:
     runs-on: ubuntu-latest
     defaults:
@@ -66,8 +69,35 @@ jobs:
           # its own, independent of whatever the runner image ships.
           python-version: "3.12.11"
 
-      - name: Install dependencies
-        run: uv sync --locked
+      - name: Export frozen runtime inventory
+        run: |
+          uv export --frozen --no-dev --no-emit-project \
+            --format requirements.txt -o "$RUNNER_TEMP/backend-runtime.txt"
+          rg --quiet '^fastapi==' "$RUNNER_TEMP/backend-runtime.txt"
+          rg --quiet '^docling==' "$RUNNER_TEMP/backend-runtime.txt"
+          rg --quiet '^transformers==' "$RUNNER_TEMP/backend-runtime.txt"
 
-      - name: pip-audit
-        run: uvx pip-audit --strict --local
+      - name: pip-audit (runtime tree)
+        run: |
+          # Reviewed exact exception, review by 2026-10-15. Accelerate 1.14.0
+          # is the newest release and CVE-2026-69112 has no patched version.
+          # Ragz/installed Docling paths do not call the affected explicit
+          # checkpoint loaders or accept tenant checkpoints. Remove on release.
+          test "$(date -u +%s)" -lt "$(date -u -d 2026-10-15 +%s)"
+          uvx pip-audit --strict --require-hashes --disable-pip \
+            --ignore-vuln CVE-2026-69112 \
+            -r "$RUNNER_TEMP/backend-runtime.txt"
+
+      - name: Export frozen build and development inventory
+        run: |
+          uv export --frozen --all-groups --no-emit-project \
+            --format requirements.txt -o "$RUNNER_TEMP/backend-full.txt"
+          rg --quiet '^hatchling==' "$RUNNER_TEMP/backend-full.txt"
+          rg --quiet '^pytest==' "$RUNNER_TEMP/backend-full.txt"
+
+      - name: pip-audit (build and development tree)
+        run: |
+          test "$(date -u +%s)" -lt "$(date -u -d 2026-10-15 +%s)"
+          uvx pip-audit --strict --require-hashes --disable-pip \
+            --ignore-vuln CVE-2026-69112 \
+            -r "$RUNNER_TEMP/backend-full.txt"

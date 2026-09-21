@@ -32,6 +32,7 @@ export function AclDialog({
       if (error) throw new Error('failed to update document access');
     },
     onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ['document-file', document.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       onOpenChange(false);
     },

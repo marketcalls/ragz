@@ -4,8 +4,10 @@ Pure functions only — no I/O, no session. Heavy unit coverage lives in
 tests/modules/chat/test_prompting.py.
 """
 
+from __future__ import annotations
+
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Literal
@@ -16,7 +18,7 @@ import tiktoken
 from ragz.modules.documents.enrichment import _parse_json_lenient
 
 if TYPE_CHECKING:
-    from ragz.modules.chat.llm import LLMCompleter
+    from ragz.modules.chat.llm import LLMCompleter, LLMUsage
 
 SYSTEM_PROMPT = (
     "You are Ragz, an assistant that answers strictly from the provided source "
@@ -180,10 +182,11 @@ def _summary_user_message(current_summary: str | None, turns: Sequence[tuple[str
 
 
 async def fold_summary(
-    completer: "LLMCompleter",
+    completer: LLMCompleter,
     model: str,
     current_summary: str | None,
     turns: Sequence[tuple[str, str]],
+    record_usage: Callable[[LLMUsage], Awaitable[None]] | None = None,
 ) -> str:
     """One utility-model call folding `turns` into `current_summary` (spec
     §5). Never raises: any upstream/parse failure returns `current_summary`
@@ -196,10 +199,14 @@ async def fold_summary(
             {"role": "user", "content": _summary_user_message(current_summary, turns)},
         ],
     )
+    if record_usage is not None:
+        await record_usage(completion.usage)
     parsed = _parse_json_lenient(completion.text)
     new_summary = parsed.get("summary") if parsed else None
     if not isinstance(new_summary, str) or not new_summary.strip():
-        structlog.get_logger().warning("summary_fold_in_parse_failed", raw=completion.text[:200])
+        structlog.get_logger().warning(
+            "summary_fold_in_parse_failed", response_chars=len(completion.text)
+        )
         return current_summary or ""
     return new_summary
 
@@ -495,7 +502,7 @@ def _load_encoding(model_hint: str | None) -> tiktoken.Encoding:
 
 
 @lru_cache(maxsize=8)
-def _encoding(model_hint: str | None) -> "tiktoken.Encoding | None":
+def _encoding(model_hint: str | None) -> tiktoken.Encoding | None:
     """Encoder per model hint, or None once tiktoken's encoding data is known
     to be unreachable. The FIRST call for a given model hint downloads the
     encoding over the network if it isn't already cached on disk — normally

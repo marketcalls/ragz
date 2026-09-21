@@ -14,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.errors import NotFoundError
-from ragz.modules.chat.models import Chat
+from ragz.modules.chat.cleanup import schedule_cleanup
+from ragz.modules.chat.models import Chat, ChatAttachment
 from ragz.modules.tenancy import service as tenancy_service
 from ragz.modules.tenancy.context import TenantContext
 
@@ -91,5 +92,19 @@ async def rename_chat(
 
 async def delete_chat(session: AsyncSession, ctx: TenantContext, chat_id: UUID) -> None:
     chat = await get_chat(session, ctx, chat_id)
+    attachments = list(
+        (
+            await session.execute(
+                select(ChatAttachment).where(ChatAttachment.chat_id == chat.id)
+            )
+        ).scalars()
+    )
+    for attachment in attachments:
+        await schedule_cleanup(
+            session, attachment, org_id=ctx.org_id, user_id=chat.user_id
+        )
+    # Force durable identifier rows into the transaction before the cascade is
+    # issued. The commit below makes the jobs and relational deletion atomic.
+    await session.flush()
     await session.delete(chat)  # messages + citations cascade at the DB layer
     await session.commit()

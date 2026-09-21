@@ -35,6 +35,7 @@ class WorkspaceView:
     top_k: int
     min_score: float
     rerank_enabled: bool
+    multi_query_enabled: bool
     chunk_method: str
     enrichment_enabled: bool
     system_prompt_override: str | None
@@ -55,6 +56,7 @@ class WorkspaceView:
             top_k=workspace.top_k,
             min_score=workspace.min_score,
             rerank_enabled=workspace.rerank_enabled,
+            multi_query_enabled=workspace.multi_query_enabled,
             chunk_method=workspace.chunk_method,
             enrichment_enabled=workspace.enrichment_enabled,
             system_prompt_override=workspace.system_prompt_override,

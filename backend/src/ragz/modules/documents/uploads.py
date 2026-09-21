@@ -2,7 +2,7 @@
 
 Phase 3 item 4 of the 2026-08-17 architecture review. The upload route used to
 accumulate the request body into a bytearray and then copy it again with
-`bytes(buf)` -- two full copies resident at once, against a 100 MB
+`bytes(buf)` -- two full copies resident at once, against a 1 GiB
 max_upload_mb, so a handful of concurrent uploads was a gigabyte of RSS and a
 plausible way to OOM the API.
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragz.api.deps import get_session
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import ConflictError, NotFoundError, PayloadTooLarge
+from ragz.core.ratelimit import check_rate_limit
 from ragz.core.storage import build_storage
 from ragz.modules.chat import service
 from ragz.modules.chat.events import SSEEvent
@@ -29,6 +30,8 @@ from ragz.modules.chat.schemas import (
     RegenerateRequest,
 )
 from ragz.modules.chat.web import build_web_searcher
+from ragz.modules.documents.file_types import classify_upload
+from ragz.modules.documents.uploads import measure_upload
 from ragz.modules.models import keys
 from ragz.modules.models import service as models_service
 from ragz.modules.models.models import Model
@@ -410,6 +413,12 @@ async def upload_attachment(
     chat_id: UUID, session: SessionDep, settings: SettingsDep, ctx: CtxDep,
     request: Request, file: Annotated[UploadFile, File()],
 ) -> AttachmentOut:
+    await check_rate_limit(
+        request.app.state.redis,
+        f"rl:attachment_upload:user:{ctx.user_id}",
+        settings.attachment_uploads_per_minute,
+        60,
+    )
     max_bytes = settings.interactive_upload_mb * 1024 * 1024
     if content_length := request.headers.get("content-length"):
         try:
@@ -419,18 +428,22 @@ async def upload_attachment(
                 )
         except ValueError:
             pass
-    buf = bytearray()
-    while chunk := await file.read(1024 * 1024):
-        buf.extend(chunk)
-        if len(buf) > max_bytes:
-            raise PayloadTooLarge(
-                f"attachment exceeds {settings.interactive_upload_mb} MB limit"
-            )
+    content = await measure_upload(
+        file,
+        max_bytes=max_bytes,
+        limit_message=f"attachment exceeds {settings.interactive_upload_mb} MB limit",
+    )
+    file_type = classify_upload(file.filename or "attachment.bin", content.stream)
+    service.validate_attachment_mime(file_type.mime)
+    service.validate_attachment_parser_resources(
+        content.stream, file.filename or "attachment.bin", settings
+    )
     attachment = await service.create_attachment(
         session, ctx, chat_id,
         filename=file.filename or "attachment.bin",
-        mime=file.content_type or "application/octet-stream",
-        data=bytes(buf),
+        mime=file_type.mime,
+        data=content,
+        settings=settings,
     )
     enqueue_attachment_processing(attachment.id)
     return AttachmentOut.model_validate(attachment)

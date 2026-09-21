@@ -19,7 +19,11 @@ from ragz.modules.audit.service import record_audit
 from ragz.modules.auth.models import User
 from ragz.modules.auth.tokens import decode_access_token
 from ragz.modules.tenancy.models import RoleTemplate, UserGroup, WorkspaceMember
-from ragz.modules.tenancy.permissions import DEFAULT_USER_PERMISSIONS, PERMISSIONS
+from ragz.modules.tenancy.permissions import (
+    DEFAULT_USER_PERMISSIONS,
+    PERMISSIONS,
+    SENSITIVE_ROLE_PERMISSIONS,
+)
 
 
 @dataclass(frozen=True)
@@ -46,7 +50,7 @@ _log = structlog.get_logger("ragz.tenancy")
 # an explicit grant (the seeded "Audit Reader" template) independent of
 # admin/IAM duties -- an admin is no longer ambiently able to read the org's
 # audit trail just by being an admin.
-_AUTOMATIC_CARVE_OUTS = frozenset({"documents.acl.bypass", "audit.read", "audit.export"})
+_AUTOMATIC_CARVE_OUTS = SENSITIVE_ROLE_PERMISSIONS
 
 
 async def build_context_for_user(

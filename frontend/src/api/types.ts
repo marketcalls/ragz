@@ -74,6 +74,10 @@ export type RoleTemplateOut = components['schemas']['RoleTemplateOut'];
 // eval fixtures — a question plus the document ids retrieval should hit.
 export type GoldenQueryOut = components['schemas']['GoldenQueryOut'];
 export type GoldenQueryCreate = components['schemas']['GoldenQueryCreate'];
+// POST /workspaces/{workspace_id}/evals/compare: transient, non-persisting
+// single-query versus multi-query answer comparison.
+export type AnswerComparisonOut = components['schemas']['AnswerComparisonOut'];
+export type ComparisonVariantOut = components['schemas']['ComparisonVariantOut'];
 // GET/POST/PATCH /api/v1/admin/orgs (M1): superadmin-only org list/create/rename.
 // sso_domains is null|string[] (see PUT .../sso-domains in features/admin/sso).
 export type OrgOut = components['schemas']['OrgOut'];

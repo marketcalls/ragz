@@ -9,7 +9,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import timedelta
-from uuid import UUID
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from uuid import UUID, uuid4
 
 import structlog
 from qdrant_client import models as qdrant_models
@@ -112,11 +114,16 @@ async def run_parse(document_id: UUID) -> None:
         job = await _start_stage(session, document_id, "parse")
         storage = _storage()
         try:
-            data = await storage.get(doc.storage_key)
             settings = get_settings()
-            blocks = await parse_document(
-                session, settings, data=data, filename=doc.filename
-            )
+            with NamedTemporaryFile(suffix=Path(doc.filename).suffix) as source_file:
+                await storage.download_to_fileobj(doc.storage_key, source_file)
+                source_file.flush()
+                blocks = await parse_document(
+                    session,
+                    settings,
+                    data=Path(source_file.name),
+                    filename=doc.filename,
+                )
         except IngestFailure as exc:
             await _fail(session, doc, job, str(exc))
             raise
@@ -219,33 +226,76 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
             )
         any_batch_enriched = False
 
-        # Cost reporting (design 2026-08-15 §2): billed dense-embedding tokens
-        # per performed call are appended here (hosted providers only; TEI
-        # reports 0). Summed into ONE embedding usage record per document run
-        # below -- one row, not one per batch, to stay cheap.
-        embed_token_sink: list[int] = []
+        embedding_call_index = 0
+
+        async def _embed_accounted(
+            texts: list[str], *, sparse_texts: list[str] | None = None
+        ) -> tuple[list[list[float]], list[qdrant_models.SparseVector]]:
+            nonlocal embedding_call_index
+            embedding_call_index += 1
+            call_index = embedding_call_index
+
+            async def _record(tokens: int) -> None:
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=doc.org_id,
+                    user_id=doc.created_by,
+                    workspace_id=doc.workspace_id,
+                    model_id=embedding_model.id,
+                    feature="embedding",
+                    prompt_tokens=tokens,
+                    completion_tokens=0,
+                    idempotency_key=(
+                        f"ingest:{embed_job.id}:embedding:{call_index}"
+                    ),
+                )
+
+            return await embed_batch(
+                texts,
+                dense_embedder,
+                sparse_texts=sparse_texts,
+                record_usage=_record,
+            )
+
         done = 0
         for i in range(0, len(chunks), _BATCH_SIZE):
             batch = chunks[i : i + _BATCH_SIZE]
-            dense, sparse = await embed_batch(
-                [c.text for c in batch], dense_embedder, usage_sink=embed_token_sink
-            )
+            dense, sparse = await _embed_accounted([c.text for c in batch])
 
             summaries: list[str | None] = [None] * len(batch)
             if completer is not None and utility_model is not None:
                 try:
-                    enrichments = [
-                        await enrich_chunk(completer, utility_model.litellm_model_name, c.text)
-                        for c in batch
-                    ]
+                    enrichments = []
+                    for chunk in batch:
+                        enrichment = await enrich_chunk(
+                            completer,
+                            utility_model.litellm_model_name,
+                            chunk.text,
+                        )
+                        if enrichment.prompt_tokens or enrichment.completion_tokens:
+                            await quota_service.record_usage_durable(
+                                session,
+                                org_id=doc.org_id,
+                                user_id=doc.created_by,
+                                workspace_id=doc.workspace_id,
+                                model_id=utility_model.id,
+                                feature="ingestion",
+                                prompt_tokens=enrichment.prompt_tokens,
+                                completion_tokens=enrichment.completion_tokens,
+                                idempotency_key=(
+                                    f"ingest:{embed_job.id}:enrichment:"
+                                    f"{chunk.chunk_index}"
+                                ),
+                            )
+                        enrichments.append(enrichment)
                     summaries = [e.summary for e in enrichments]
                     sparse_texts = [
                         f"{c.text} {' '.join(e.keywords)}".strip()
                         for c, e in zip(batch, enrichments, strict=True)
                     ]
-                    dense, sparse = await embed_batch(
-                        [c.text for c in batch], dense_embedder,
-                        sparse_texts=sparse_texts, usage_sink=embed_token_sink,
+                    dense, sparse = await _embed_accounted(
+                        [c.text for c in batch],
+                        sparse_texts=sparse_texts,
                     )
                     hq_by_chunk = [e.hypothetical_questions for e in enrichments]
                     if any(hq_by_chunk):
@@ -256,9 +306,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                                 hq_dense.append([])
                                 hq_sparse.append([])
                                 continue
-                            d, s = await embed_batch(
-                                qs, dense_embedder, usage_sink=embed_token_sink
-                            )
+                            d, s = await _embed_accounted(qs)
                             hq_dense.append(d)
                             hq_sparse.append(s)
                         await upsert_hq_points(
@@ -269,6 +317,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                             parent_chunks=batch, parent_summaries=summaries,
                             hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
                             collection_name=collection_name,
+                            security_revision=doc.security_revision,
                         )
                     any_batch_enriched = True
                 except Exception:
@@ -279,9 +328,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                     # that enrichment did not actually happen (Task 7's
                     # backfill selector relies on this to retry later).
                     log.warning("chunk_enrichment_failed", exc_info=True)
-                    dense, sparse = await embed_batch(
-                        [c.text for c in batch], dense_embedder, usage_sink=embed_token_sink
-                    )
+                    dense, sparse = await _embed_accounted([c.text for c in batch])
 
             await upsert_points(
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
@@ -289,6 +336,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
                 acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
                 meta=doc.meta, summaries=summaries, collection_name=collection_name,
+                security_revision=doc.security_revision,
             )
             done += len(batch)
             embed_job.progress = upsert_job.progress = done / len(chunks)
@@ -323,7 +371,11 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
         # reflects the latest PG state before the document is marked indexed
         # and becomes retrievable.
         await update_document_acl(
-            org_id, document_id, still_exists.acl_group_ids, collection_name=collection_name
+            org_id,
+            document_id,
+            still_exists.acl_group_ids,
+            collection_name=collection_name,
+            security_revision=still_exists.security_revision,
         )
         # Same race, same cure for metadata: a Tags PUT mid-ingest restamps
         # only already-upserted points; later batches carry the stale meta
@@ -332,20 +384,6 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
             org_id, document_id, still_exists.meta or {}, collection_name=collection_name
         )
 
-        # Cost reporting (design 2026-08-15 §2): a hosted embedder's ACTUAL
-        # billed tokens for this doc run, attributed to the workspace embedding
-        # model so reporting can price it off model_catalog cost/token. TEI is
-        # self-hosted -> sink sums to 0 -> free, skip the row. commit=False
-        # rides the ingestion record's commit just below (one commit, not two).
-        embed_tokens = sum(embed_token_sink)
-        if embed_tokens > 0:
-            await quota_service.record_usage(
-                session, org_id=doc.org_id, user_id=doc.created_by,
-                workspace_id=doc.workspace_id,
-                model_id=embedding_model.id, feature="embedding",
-                prompt_tokens=embed_tokens, completion_tokens=0, commit=False,
-            )
-
         # QUOTA-5: ingestion embedding is attributed, not hidden. TEI reports no
         # token usage, so chars//4 is the documented estimate, flagged by feature.
         await quota_service.record_usage(
@@ -353,6 +391,7 @@ async def run_embed_upsert(document_id: UUID) -> UUID | None:
             workspace_id=doc.workspace_id, model_id=None,
             feature="ingestion",
             prompt_tokens=sum(len(c.text) for c in chunks) // 4, completion_tokens=0,
+            idempotency_key=f"ingestion:{doc.id}:base",
         )
 
         # Stamp on `still_exists`, the freshly-repopulated row (not the
@@ -431,21 +470,70 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
             embedding_model.id, provider_kind=embedding_model.provider_kind,
             litellm_model_name=embedding_model.litellm_model_name,
         )
-        total_prompt_tokens = total_completion_tokens = 0
+        usage_run_id = uuid4().hex
+        embedding_call_index = 0
+
+        async def _embed_accounted(
+            texts: list[str], *, sparse_texts: list[str] | None = None
+        ) -> tuple[list[list[float]], list[qdrant_models.SparseVector]]:
+            nonlocal embedding_call_index
+            embedding_call_index += 1
+            call_index = embedding_call_index
+
+            async def _record(tokens: int) -> None:
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=doc.org_id,
+                    user_id=doc.created_by,
+                    workspace_id=doc.workspace_id,
+                    model_id=embedding_model.id,
+                    feature="embedding",
+                    prompt_tokens=tokens,
+                    completion_tokens=0,
+                    idempotency_key=(
+                        f"enrichment:{usage_run_id}:embedding:{call_index}"
+                    ),
+                )
+
+            return await embed_batch(
+                texts,
+                dense_embedder,
+                sparse_texts=sparse_texts,
+                record_usage=_record,
+            )
 
         for i in range(0, len(chunks), _BATCH_SIZE):
             batch = chunks[i : i + _BATCH_SIZE]
-            enrichments = [
-                await enrich_chunk(completer, utility_model.litellm_model_name, c.text)
-                for c in batch
-            ]
+            enrichments = []
+            for chunk in batch:
+                enrichment = await enrich_chunk(
+                    completer,
+                    utility_model.litellm_model_name,
+                    chunk.text,
+                )
+                if enrichment.prompt_tokens or enrichment.completion_tokens:
+                    await quota_service.record_usage_durable(
+                        session,
+                        org_id=doc.org_id,
+                        user_id=doc.created_by,
+                        workspace_id=doc.workspace_id,
+                        model_id=utility_model.id,
+                        feature="ingestion",
+                        prompt_tokens=enrichment.prompt_tokens,
+                        completion_tokens=enrichment.completion_tokens,
+                        idempotency_key=(
+                            f"enrichment:{usage_run_id}:completion:"
+                            f"{chunk.chunk_index}"
+                        ),
+                    )
+                enrichments.append(enrichment)
             summaries = [e.summary for e in enrichments]
             sparse_texts = [
                 f"{c.text} {' '.join(e.keywords)}".strip()
                 for c, e in zip(batch, enrichments, strict=True)
             ]
-            dense, sparse = await embed_batch(
-                [c.text for c in batch], dense_embedder, sparse_texts=sparse_texts
+            dense, sparse = await _embed_accounted(
+                [c.text for c in batch], sparse_texts=sparse_texts
             )
             await upsert_points(
                 org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
@@ -454,6 +542,7 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                 chunks=batch, dense=dense, sparse=sparse, version=doc.version,
                 meta=doc.meta, is_current=doc.is_current, summaries=summaries,
                 collection_name=collection_name,
+                security_revision=doc.security_revision,
             )
             hq_by_chunk = [e.hypothetical_questions for e in enrichments]
             if any(hq_by_chunk):
@@ -464,7 +553,7 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                         hq_dense.append([])
                         hq_sparse.append([])
                         continue
-                    d, s = await embed_batch(qs, dense_embedder)
+                    d, s = await _embed_accounted(qs)
                     hq_dense.append(d)
                     hq_sparse.append(s)
                 await upsert_hq_points(
@@ -475,21 +564,9 @@ async def run_enrichment_backfill(document_id: UUID) -> None:
                     parent_chunks=batch, parent_summaries=summaries,
                     hq_texts=hq_by_chunk, hq_dense=hq_dense, hq_sparse=hq_sparse,
                     collection_name=collection_name,
+                    security_revision=doc.security_revision,
                 )
-            total_prompt_tokens += sum(len(c.text) for c in batch) // 4
-            total_completion_tokens += sum(len(s or "") for s in summaries) // 4
-
         doc.enriched = True
-        # QUOTA-5 / spec §4: attributed as `feature="ingestion"` usage to the
-        # toggling admin's org, same estimation convention as
-        # run_embed_upsert's own record_usage call (chars//4, no model token
-        # accounting from TEI/the utility model's embedding calls).
-        await quota_service.record_usage(
-            session, org_id=doc.org_id, user_id=doc.created_by,
-            workspace_id=doc.workspace_id, model_id=utility_model.id,
-            feature="ingestion",
-            prompt_tokens=total_prompt_tokens, completion_tokens=total_completion_tokens,
-        )
         await session.commit()
 
 
@@ -612,13 +689,38 @@ async def run_reembed_workspace(
                 chunks = [Chunk(**c) for c in json.loads(raw)]
                 for i in range(0, len(chunks), _BATCH_SIZE):
                     batch = chunks[i : i + _BATCH_SIZE]
-                    dense, sparse = await embed_batch([c.text for c in batch], new_embedder)
+
+                    async def _record_reembed(
+                        tokens: int,
+                        batch_start: int = i,
+                        current_doc: Document = doc,
+                    ) -> None:
+                        await quota_service.record_usage_durable(
+                            session,
+                            org_id=current_doc.org_id,
+                            user_id=current_doc.created_by,
+                            workspace_id=current_doc.workspace_id,
+                            model_id=new_model.id,
+                            feature="embedding",
+                            prompt_tokens=tokens,
+                            completion_tokens=0,
+                            idempotency_key=(
+                                f"reembed:{job.id}:{current_doc.id}:batch:{batch_start}"
+                            ),
+                        )
+
+                    dense, sparse = await embed_batch(
+                        [c.text for c in batch],
+                        new_embedder,
+                        record_usage=_record_reembed,
+                    )
                     await upsert_points(
                         org_id=doc.org_id, workspace_id=doc.workspace_id, document_id=doc.id,
                         mime=doc.mime, created_at=doc.created_at,
                         acl_group_ids=[str(g) for g in (doc.acl_group_ids or [])],
                         chunks=batch, dense=dense, sparse=sparse, version=doc.version,
                         meta=doc.meta, is_current=True, collection_name=new_collection,
+                        security_revision=doc.security_revision,
                     )
                 job.documents_done += 1
                 await session.commit()

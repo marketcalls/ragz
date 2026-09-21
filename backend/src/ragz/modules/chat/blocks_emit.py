@@ -20,7 +20,7 @@ never ran at all.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -30,7 +30,7 @@ from ragz.modules.chat.blocks import MAX_BLOCKS, Block, validate_blocks
 from ragz.modules.chat.prompting import wrap_untrusted_block
 
 if TYPE_CHECKING:
-    from ragz.modules.chat.llm import LLMCompleter
+    from ragz.modules.chat.llm import LLMCompleter, LLMUsage
     from ragz.modules.models.models import Model
 
 
@@ -202,6 +202,7 @@ async def generate_blocks(
     context: str,
     model: Model,
     sources: Sequence[SourceInput] | None = None,
+    record_usage: Callable[[LLMUsage], Awaitable[None]] | None = None,
 ) -> list[Block]:
     """One constrained, best-effort "visualize" model call (design doc §2).
     ALWAYS goes through `validate_blocks` (Iron Rule 5) before returning, and
@@ -218,6 +219,8 @@ async def generate_blocks(
                 question=question, answer=answer, context=context, sources=sources,
             ),
         )
+        if record_usage is not None:
+            await record_usage(completion.usage)
     except Exception:
         # Best-effort boundary (design doc §2 risk "prompt cost/latency" +
         # Iron Rule 5): the visualize step must never break an answer that

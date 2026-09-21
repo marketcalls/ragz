@@ -6,7 +6,8 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.api.deps import get_session
-from ragz.api.routes.auth import _set_refresh
+from ragz.api.routes.auth import RefreshCookie, _set_refresh
+from ragz.core.client_ip import client_ip
 from ragz.core.config import Settings, get_settings
 from ragz.core.errors import (
     AuthenticationError,
@@ -88,6 +89,7 @@ async def login(request: Request, session: SessionDep, settings: SettingsDep) ->
 async def callback(
     code: str, state: str, request: Request, session: SessionDep, settings: SettingsDep,
     oidc_preauth: Annotated[str | None, Cookie(alias=oidc.PREAUTH_COOKIE_NAME)] = None,
+    refresh_token: RefreshCookie = None,
 ) -> RedirectResponse:
     # This is a top-level browser navigation (redirect from the IdP), not an
     # API call -- a problem+json body would render as raw JSON to the user.
@@ -117,6 +119,8 @@ async def callback(
         pair = await auth_service.login_oidc(
             session, email=identity.email, issuer=identity.issuer,
             subject=identity.subject, settings=settings,
+            source_ip=client_ip(request, settings),
+            replace_refresh_token=refresh_token,
         )
     except (
         AuthenticationError, UpstreamError, NotFoundError, SecretsError,

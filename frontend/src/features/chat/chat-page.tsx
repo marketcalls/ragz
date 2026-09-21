@@ -29,6 +29,17 @@ import { usePendingAttachments } from './use-pending-attachments';
 import { useSendMessage } from './use-send-message';
 import { useTreeSelection } from './use-tree-selection';
 
+function safeCitationHostname(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.hostname
+      : 'Web source';
+  } catch {
+    return 'Web source';
+  }
+}
+
 export function ChatPage() {
   const { chatId = null } = useParams<{ chatId: string }>();
   const location = useLocation();
@@ -83,7 +94,7 @@ export function ChatPage() {
       // Task 11 (D7): a web citation has no document row -- its filename is
       // derived from the URL's hostname instead of the documents lookup.
       filename: c.url
-        ? new URL(c.url).hostname
+        ? safeCitationHostname(c.url)
         : (documentNameById.get(c.document_id ?? '') ?? 'Document'),
       page: c.page,
       section: c.section,

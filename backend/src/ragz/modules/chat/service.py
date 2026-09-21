@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from redis.asyncio import Redis
@@ -84,6 +84,12 @@ from ragz.modules.chat.attachments import (
 from ragz.modules.chat.attachments import (
     route_attachment as route_attachment,
 )
+from ragz.modules.chat.attachments import (
+    validate_attachment_mime as validate_attachment_mime,
+)
+from ragz.modules.chat.attachments import (
+    validate_attachment_parser_resources as validate_attachment_parser_resources,
+)
 from ragz.modules.chat.audit import (
     audit_message as audit_message,
 )
@@ -105,6 +111,12 @@ from ragz.modules.chat.chats import (
 )
 from ragz.modules.chat.chats import (
     rename_chat as rename_chat,
+)
+from ragz.modules.chat.cleanup import (
+    list_due_cleanup_jobs as list_due_cleanup_jobs,
+)
+from ragz.modules.chat.cleanup import (
+    process_cleanup_job as process_cleanup_job,
 )
 from ragz.modules.chat.events import (
     CitationRef,
@@ -233,6 +245,8 @@ class Retriever(Protocol):
         query: str,
         top_k: int | None = None,
         metadata_clauses: Sequence[MetadataClause] | None = None,
+        *,
+        multi_query_enabled_override: bool | None = None,
     ) -> RetrievalResult: ...
 
 
@@ -333,6 +347,7 @@ def _summary_is_valid(chat: Chat, ancestor_ids: set[UUID]) -> bool:
 async def _assemble_history(
     session: AsyncSession, ctx: TenantContext, chat: Chat,
     all_messages: list[Message], user_message: Message, completer: LLMCompleter | None,
+    *, usage_run_id: str,
 ) -> tuple[list[tuple[str, str]], str | None]:
     """Rolling-summary orchestration (spec §5). Returns (history_tuples,
     summary_or_none) for build_messages/build_conversational_messages.
@@ -375,23 +390,32 @@ async def _assemble_history(
     if not to_fold:
         return [(m.role, m.content) for m in ancestors], chat.summary if valid else None
 
+    summary_anchor = ancestors[fold_upto_index - 1].id
+
+    async def _record_summary_usage(summary_usage: LLMUsage) -> None:
+        await quota_service.record_usage_durable(
+            session,
+            org_id=ctx.org_id,
+            user_id=ctx.user_id,
+            workspace_id=chat.workspace_id,
+            model_id=utility_model.id,
+            feature="chat",
+            prompt_tokens=summary_usage.prompt_tokens,
+            completion_tokens=summary_usage.completion_tokens,
+            idempotency_key=(
+                f"chat:{user_message.id}:{usage_run_id}:summary:{summary_anchor}"
+            ),
+        )
+
     new_summary = await fold_summary(
         completer, utility_model.litellm_model_name,
         chat.summary if valid else None,
         [(m.role, m.content) for m in to_fold],
+        record_usage=_record_summary_usage,
     )
     chat.summary = new_summary
-    chat.summary_upto_message_id = ancestors[fold_upto_index - 1].id
+    chat.summary_upto_message_id = summary_anchor
     await session.commit()
-    # feature="chat", not "ingestion": this is a live, in-request chat cost,
-    # not background ingestion work.
-    util_model_name = utility_model.litellm_model_name
-    await quota_service.record_usage(
-        session, org_id=ctx.org_id, user_id=ctx.user_id, workspace_id=chat.workspace_id,
-        model_id=utility_model.id, feature="chat",
-        prompt_tokens=sum(count_tokens(m.content, util_model_name) for m in to_fold),
-        completion_tokens=count_tokens(new_summary, util_model_name),
-    )
     recent = ancestors[fold_upto_index:]
     return [(m.role, m.content) for m in recent], new_summary
 
@@ -554,6 +578,7 @@ def persist_stopped_detached(
     model_id: UUID | None,
     prompt_tokens: int,
     completion_tokens: int,
+    idempotency_key: str | None = None,
 ) -> asyncio.Task[None]:
     """Persist a partial answer AND meter its usage after client abort (G2 +
     Plan K carried fix).
@@ -585,8 +610,9 @@ def persist_stopped_detached(
                     workspace_id=chat.workspace_id, model_id=model_id,
                     feature="chat", prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    idempotency_key=idempotency_key,
                 )
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             structlog.get_logger().error("stop_persist_failed", exc_info=True)
 
     task = asyncio.get_running_loop().create_task(_persist())
@@ -680,6 +706,7 @@ async def stream_reply(
     (no persistent cap) so any caller that doesn't have a Redis client keeps
     prior behavior; both chats.py routes pass `request.app.state.redis`.
     """
+    provider_usage_run_id = uuid4().hex
     conversational = classify_query(user_message.content) == "conversational"
     if not conversational:
         yield retrieval_started_event()
@@ -703,11 +730,18 @@ async def stream_reply(
             image_data_uris.append(f"data:{attachment.mime};base64,{encoded}")
 
     streamed_parts: list[str] = []
+    generation_usage_idempotency_key: str | None = None
     try:
         if conversational:
             all_messages = await list_messages(session, chat.id)
             history, summary_text = await _assemble_history(
-                session, ctx, chat, all_messages, user_message, completer,
+                session,
+                ctx,
+                chat,
+                all_messages,
+                user_message,
+                completer,
+                usage_run_id=provider_usage_run_id,
             )
             prompt = build_conversational_messages(
                 history=history,
@@ -725,6 +759,9 @@ async def stream_reply(
                 )
 
             convo_usage: LLMUsage | None = None
+            generation_usage_idempotency_key = (
+                f"chat:{user_message.id}:{provider_usage_run_id}:conversational"
+            )
             # Close the read unit of work BEFORE the model stream. An
             # AsyncSession holds a pooled connection for as long as its
             # transaction is open, and the reads above opened one implicitly;
@@ -757,6 +794,18 @@ async def stream_reply(
                         convo_usage = item
 
             convo_answer = "".join(streamed_parts)
+            if convo_usage is not None:
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=ctx.org_id,
+                    user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id,
+                    model_id=model.id,
+                    feature="chat",
+                    prompt_tokens=convo_usage.prompt_tokens,
+                    completion_tokens=convo_usage.completion_tokens,
+                    idempotency_key=generation_usage_idempotency_key,
+                )
             msg = await _persist_assistant(
                 session, ctx, chat, parent=user_message, content=convo_answer,
                 model_id=model.id, usage=convo_usage, citations=[],
@@ -766,13 +815,6 @@ async def stream_reply(
             # so a late abort in that window can't re-persist the same
             # content as a second assistant row (review round 1, finding 1).
             streamed_parts.clear()
-            if convo_usage is not None:
-                await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id,
-                    workspace_id=chat.workspace_id, model_id=model.id,
-                    feature="chat", prompt_tokens=convo_usage.prompt_tokens,
-                    completion_tokens=convo_usage.completion_tokens,
-                )
             yield citations_event([])
             yield done_event(
                 message_id=str(msg.id),
@@ -850,6 +892,20 @@ async def stream_reply(
                 pre_escalate, tiebreak_usage = await classify_escalation(
                     completer, escalation_utility_model, user_message.content
                 )
+                if tiebreak_usage.prompt_tokens or tiebreak_usage.completion_tokens:
+                    await quota_service.record_usage_durable(
+                        session,
+                        org_id=ctx.org_id,
+                        user_id=ctx.user_id,
+                        workspace_id=chat.workspace_id,
+                        model_id=escalation_utility_model.id,
+                        feature="agent_planner",
+                        prompt_tokens=tiebreak_usage.prompt_tokens,
+                        completion_tokens=tiebreak_usage.completion_tokens,
+                        idempotency_key=(
+                            f"chat:{user_message.id}:{provider_usage_run_id}:escalation"
+                        ),
+                    )
                 agent_prompt_tokens += tiebreak_usage.prompt_tokens
                 agent_completion_tokens += tiebreak_usage.completion_tokens
         # A user who explicitly toggled "Web search" on for this turn
@@ -935,26 +991,19 @@ async def stream_reply(
                 agent_prompt_tokens += gathered.prompt_tokens
                 agent_completion_tokens += gathered.completion_tokens
                 web_hits = gathered.web_results
-                # Cost reporting (design 2026-08-15 §2): meter each performed
-                # web search as one unit, but ONLY for a paid provider (Tavily);
-                # the default keyless DuckDuckGo is free (billable=False) and
-                # records nothing. commit=False stages the row so it rides this
-                # turn's end-of-turn record_usage commit rather than adding a
-                # blocking write on the streaming path.
-                if gathered.billable_web_searches > 0:
-                    await quota_service.record_usage(
-                        session, org_id=ctx.org_id, user_id=ctx.user_id,
-                        workspace_id=chat.workspace_id,
-                        model_id=None, feature="web_search",
-                        prompt_tokens=0, completion_tokens=0,
-                        units=gathered.billable_web_searches, commit=False,
-                    )
                 result = RetrievalResult(
                     # Loop findings outrank the stale weak single shot for the
                     # budget fit; merge_chunks dedupes on chunk identity.
                     chunks=merge_chunks(gathered.chunks, result.chunks),
                     no_answer=not gathered.grounded,
                 )
+
+        # Every retrieval/agent search for this turn is now complete. Commit
+        # its staged expansion/embedding/rerank usage before backfill,
+        # attachment hydration, and source assembly: those downstream reads can
+        # fail or be cancelled, but already-incurred provider work must remain
+        # in the ledger.
+        await session.commit()
 
         backfilled: list[RetrievedChunk] = []
         if len(result.chunks) < workspace.top_k:
@@ -1046,7 +1095,13 @@ async def stream_reply(
             # Design §1: weak retrieval + permissive policy -> general-knowledge
             # answer. No <data>, no sources/citations frames, nothing to cite.
             history, summary_text = await _assemble_history(
-                session, ctx, chat, all_messages, user_message, completer,
+                session,
+                ctx,
+                chat,
+                all_messages,
+                user_message,
+                completer,
+                usage_run_id=provider_usage_run_id,
             )
             prompt = build_general_knowledge_messages(
                 history=history, user_query=user_message.content,
@@ -1065,6 +1120,9 @@ async def stream_reply(
                     user_message.content, image_data_uris
                 )
             gk_usage: LLMUsage | None = None
+            generation_usage_idempotency_key = (
+                f"chat:{user_message.id}:{provider_usage_run_id}:general"
+            )
             # Close the read unit of work BEFORE the model stream. An
             # AsyncSession holds a pooled connection for as long as its
             # transaction is open, and the reads above opened one implicitly;
@@ -1089,6 +1147,19 @@ async def stream_reply(
                         yield token_event(item.text)
                     else:
                         gk_usage = item
+            gk_provider_usage = gk_usage
+            if gk_provider_usage is not None:
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=ctx.org_id,
+                    user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id,
+                    model_id=model.id,
+                    feature="chat",
+                    prompt_tokens=gk_provider_usage.prompt_tokens,
+                    completion_tokens=gk_provider_usage.completion_tokens,
+                    idempotency_key=generation_usage_idempotency_key,
+                )
             if agent_prompt_tokens or agent_completion_tokens:
                 gk_usage = LLMUsage(
                     prompt_tokens=(gk_usage.prompt_tokens if gk_usage else 0)
@@ -1102,13 +1173,6 @@ async def stream_reply(
                 usage=gk_usage, citations=[], grounding="general",
             )
             streamed_parts.clear()  # same duplicate-row guard as the other branches
-            if gk_usage is not None:
-                await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id,
-                    workspace_id=chat.workspace_id, model_id=model.id,
-                    feature="chat", prompt_tokens=gk_usage.prompt_tokens,
-                    completion_tokens=gk_usage.completion_tokens,
-                )
             yield done_event(
                 message_id=str(msg.id),
                 prompt_tokens=gk_usage.prompt_tokens if gk_usage else 0,
@@ -1117,6 +1181,11 @@ async def stream_reply(
             )
             return
 
+        # Retrieval/agent providers have finished and all incurred usage is now
+        # staged. Commit before the first sources frame leaves the server: a
+        # client may disconnect at any yield, including before one answer token
+        # exists for the detached partial-answer path to persist.
+        await session.commit()
         yield sources_event(sources)
 
         if no_answer:  # decline policy: pre-Plan-I behavior, byte-identical
@@ -1128,13 +1197,6 @@ async def stream_reply(
                 session, ctx, chat, parent=user_message, content=NO_ANSWER_TEXT,
                 model_id=None, usage=None, citations=[], no_answer=True,
             )
-            if agent_prompt_tokens or agent_completion_tokens:
-                await quota_service.record_usage(
-                    session, org_id=ctx.org_id, user_id=ctx.user_id,
-                    workspace_id=chat.workspace_id, model_id=model.id,
-                    feature="chat", prompt_tokens=agent_prompt_tokens,
-                    completion_tokens=agent_completion_tokens,
-                )
             yield citations_event([])
             yield done_event(message_id=str(msg.id), prompt_tokens=agent_prompt_tokens,
                              completion_tokens=agent_completion_tokens, no_answer=True,
@@ -1142,7 +1204,13 @@ async def stream_reply(
             return
 
         history, summary_text = await _assemble_history(
-            session, ctx, chat, all_messages, user_message, completer,
+            session,
+            ctx,
+            chat,
+            all_messages,
+            user_message,
+            completer,
+            usage_run_id=provider_usage_run_id,
         )
         prompt = build_messages(
             sources=kept_sources,
@@ -1172,8 +1240,17 @@ async def stream_reply(
         use_gatekeeper = (
             workspace.strict_mode and completer is not None and utility_model is not None
         )
+        # Retrieval may have staged expansion, embedding, and rerank usage rows.
+        # Make incurred provider work durable before either the streaming model
+        # call or the non-streaming Gatekeeper path. This also releases the read
+        # transaction while waiting on the provider, matching the conversational
+        # and general-knowledge branches above.
+        await session.commit()
         validation_failed = False
         usage: LLMUsage | None = None
+        generation_usage_idempotency_key = (
+            f"chat:{user_message.id}:{provider_usage_run_id}:generation"
+        )
         if use_gatekeeper and completer is not None and utility_model is not None:
             # Gatekeeper answers are synthesized non-streaming (one synth +
             # one judge call, possibly one critique-guided retry), so the
@@ -1197,6 +1274,30 @@ async def stream_reply(
                     )
                 return rebuilt
 
+            async def _record_gatekeeper_usage(
+                stage: str, stage_usage: LLMUsage
+            ) -> None:
+                stage_model_id = utility_model.id if stage == "judge" else model.id
+                stage_key = (
+                    generation_usage_idempotency_key
+                    if stage == "attempt"
+                    else (
+                        f"chat:{user_message.id}:{provider_usage_run_id}:"
+                        f"gatekeeper:{stage}"
+                    )
+                )
+                await quota_service.record_usage_durable(
+                    session,
+                    org_id=ctx.org_id,
+                    user_id=ctx.user_id,
+                    workspace_id=chat.workspace_id,
+                    model_id=stage_model_id,
+                    feature="chat",
+                    prompt_tokens=stage_usage.prompt_tokens,
+                    completion_tokens=stage_usage.completion_tokens,
+                    idempotency_key=stage_key,
+                )
+
             gatekept = await synthesize_with_gatekeeper(
                 completer, chat_model_name=model.litellm_model_name,
                 utility_model_name=utility_model.litellm_model_name, prompt=prompt,
@@ -1204,6 +1305,7 @@ async def stream_reply(
                 system_prompt_override=workspace.system_prompt_override,
                 rebuild_prompt=_rebuild_prompt,
                 reasoning_effort=reasoning_effort,
+                record_usage=_record_gatekeeper_usage,
             )
             streamed_parts.append(gatekept.text)
             yield token_event(gatekept.text)
@@ -1226,6 +1328,19 @@ async def stream_reply(
                         yield token_event(item.text)
                     else:
                         usage = item
+
+        if not use_gatekeeper and usage is not None:
+            await quota_service.record_usage_durable(
+                session,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id,
+                workspace_id=chat.workspace_id,
+                model_id=model.id,
+                feature="chat",
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                idempotency_key=generation_usage_idempotency_key,
+            )
 
         if agent_prompt_tokens or agent_completion_tokens:
             usage = LLMUsage(
@@ -1262,13 +1377,6 @@ async def stream_reply(
         # Same rationale as the conversational branch above: clear before the
         # next await/yield point so a late abort can't duplicate this row.
         streamed_parts.clear()
-        if usage is not None:
-            await quota_service.record_usage(
-                session, org_id=ctx.org_id, user_id=ctx.user_id,
-                workspace_id=chat.workspace_id, model_id=model.id,
-                feature="chat", prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-            )
         yield citations_event(citation_refs)
         # In-chat generative UI (design 2026-08-15, §2): a GLOBAL superadmin
         # setting (default ON -- see settings_service._GENERATIVE_UI_KEY),
@@ -1307,10 +1415,28 @@ async def stream_reply(
                             image_ref=image_ref,
                         )
                     )
+
+                async def _record_blocks_usage(block_usage: LLMUsage) -> None:
+                    await quota_service.record_usage_durable(
+                        session,
+                        org_id=ctx.org_id,
+                        user_id=ctx.user_id,
+                        workspace_id=chat.workspace_id,
+                        model_id=model.id,
+                        feature="chat",
+                        prompt_tokens=block_usage.prompt_tokens,
+                        completion_tokens=block_usage.completion_tokens,
+                        idempotency_key=(
+                            f"chat:{user_message.id}:{provider_usage_run_id}:"
+                            "generative-ui"
+                        ),
+                    )
+
                 blocks = await generate_blocks(
                     completer, question=user_message.content, answer=answer,
                     context=render_data_blocks(kept_sources), model=model,
                     sources=source_inputs,
+                    record_usage=_record_blocks_usage,
                 )
                 if blocks:
                     msg.blocks_json = [b.model_dump(mode="json") for b in blocks]
@@ -1359,6 +1485,7 @@ async def stream_reply(
                     _content_token_estimate(m["content"], model_hint) for m in prompt
                 ),
                 completion_tokens=count_tokens(partial, model_hint),
+                idempotency_key=generation_usage_idempotency_key,
             )
         raise
 

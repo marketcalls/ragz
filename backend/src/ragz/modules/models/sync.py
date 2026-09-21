@@ -19,7 +19,8 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import Settings
-from ragz.core.errors import NotFoundError, UpstreamError
+from ragz.core.errors import NotFoundError, SsrfBlocked, UpstreamError
+from ragz.core.net import assert_public_url
 from ragz.modules.models.models import Model
 from ragz.modules.models.service import list_enabled_models, list_models
 from ragz.modules.secrets import service as secrets_service
@@ -74,6 +75,18 @@ async def sync_models_to_litellm(
         if m.provider_kind != "tei" and not m.litellm_model_name.startswith("chatgpt/")
     ]
     all_models = await list_models(session)
+    try:
+        for model in models:
+            if model.base_url:
+                # Revalidate persisted/legacy rows at the last boundary before
+                # forwarding their targets. Create/update validation alone
+                # cannot cover rows written by an older release or direct SQL.
+                await assert_public_url(model.base_url, settings)
+    except SsrfBlocked:
+        for model in all_models:
+            model.sync_status = "error"
+        await session.commit()
+        raise
     headers = {"Authorization": f"Bearer {settings.litellm_master_key}"}
     limits = httpx.Limits(
         max_connections=settings.httpx_max_connections,

@@ -6,11 +6,17 @@ import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 
 import { useDocumentFile } from './document-file';
+import { PdfPreview } from './pdf-preview';
 
-function isViewableMime(mime: string | null): boolean {
-  if (!mime) return false;
-  return mime === 'application/pdf' || mime.startsWith('image/') || mime.startsWith('text/');
-}
+const TEXT_MIMES = new Set(['text/plain', 'text/markdown', 'text/csv']);
+const IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/tiff',
+]);
 
 function downloadBlobUrl(objectUrl: string, filename: string): void {
   const a = document.createElement('a');
@@ -53,9 +59,12 @@ export function DocumentViewerDrawer({
   version?: number;
   onClose: () => void;
 }) {
-  const { objectUrl, mimeType, status } = useDocumentFile(documentId);
+  const { objectUrl, mimeType, textContent, status } = useDocumentFile(documentId);
   const pageSrc = objectUrl ? `${objectUrl}#page=${page}` : undefined;
-  const viewable = status === 'success' && objectUrl !== null && isViewableMime(mimeType);
+  const isPdf = mimeType === 'application/pdf';
+  const isImage = mimeType !== null && IMAGE_MIMES.has(mimeType);
+  const isText = mimeType !== null && TEXT_MIMES.has(mimeType) && textContent !== null;
+  const canOpenInNewTab = isPdf || isImage;
 
   return (
     <DialogPrimitive.Root
@@ -83,15 +92,17 @@ export function DocumentViewerDrawer({
               {objectUrl ? (
                 <>
                   <DownloadButton objectUrl={objectUrl} filename={filename} />
-                  <a
-                    href={pageSrc}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                    Open in new tab
-                  </a>
+                  {canOpenInNewTab ? (
+                    <a
+                      href={isPdf ? pageSrc : objectUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                      Open in new tab
+                    </a>
+                  ) : null}
                 </>
               ) : null}
               <DialogPrimitive.Close
@@ -127,8 +138,14 @@ export function DocumentViewerDrawer({
                   Something went wrong loading this document.
                 </p>
               </CenteredMessage>
-            ) : viewable && pageSrc ? (
-              <iframe title={filename} src={pageSrc} className="h-full w-full border-0" />
+            ) : isPdf && objectUrl ? (
+              <PdfPreview objectUrl={objectUrl} filename={filename} page={page} />
+            ) : isImage && objectUrl ? (
+              <img src={objectUrl} alt={filename} className="h-full w-full object-contain" />
+            ) : isText ? (
+              <pre className="min-h-full whitespace-pre-wrap break-words p-5 font-mono text-[13px] text-ink">
+                {textContent}
+              </pre>
             ) : (
               <CenteredMessage>
                 <p className="text-[13px] font-medium text-ink">{filename}</p>
@@ -136,15 +153,6 @@ export function DocumentViewerDrawer({
                 {objectUrl ? (
                   <div className="mt-1 flex items-center gap-2">
                     <DownloadButton objectUrl={objectUrl} filename={filename} />
-                    <a
-                      href={pageSrc}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] text-secondary transition-colors duration-150 ease-out hover:bg-subtle hover:text-ink"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                      Open in new tab
-                    </a>
                   </div>
                 ) : null}
               </CenteredMessage>

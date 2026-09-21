@@ -7,6 +7,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragz.core.config import get_settings
+from ragz.core.db import committed_row_exists_after_error
 from ragz.core.errors import (
     ConflictError,
     NotFoundError,
@@ -19,6 +20,7 @@ from ragz.modules.documents import folders as folders_service
 from ragz.modules.documents.models import Document
 from ragz.modules.documents.uploads import UploadedContent
 from ragz.modules.outbox import service as outbox_service
+from ragz.modules.quotas import resource_admission
 from ragz.modules.retrieval import service as retrieval_service
 from ragz.modules.tenancy.context import TenantContext
 from ragz.modules.tenancy.models import Group
@@ -28,9 +30,9 @@ from ragz.modules.tenancy.service import get_workspace_checked
 log = structlog.get_logger()
 
 
-async def _enforce_org_upload_quota(
-    session: AsyncSession, org_id: UUID, new_file_bytes: int
-) -> None:
+async def _reserve_org_upload_quota(
+    session: AsyncSession, org_id: UUID, user_id: UUID, new_file_bytes: int
+) -> UUID | None:
     """sec RAGZ-PUB-03 (bounded slice): per-org document-count + storage-byte
     caps, checked BEFORE the new document row is created or its bytes are
     stored (fail fast -- a rejected upload must never orphan a MinIO object or
@@ -50,7 +52,9 @@ async def _enforce_org_upload_quota(
     """
     settings = get_settings()
     if settings.org_max_documents <= 0 and settings.org_max_storage_bytes <= 0:
-        return
+        return None
+    await resource_admission.lock_org(session, org_id)
+    await resource_admission.prune_expired(session)
     count, total_bytes = (
         await session.execute(
             select(
@@ -59,17 +63,33 @@ async def _enforce_org_upload_quota(
             ).where(Document.org_id == org_id)
         )
     ).one()
-    if settings.org_max_documents > 0 and count >= settings.org_max_documents:
+    reserved = await resource_admission.totals(
+        session, org_id=org_id, kind="document"
+    )
+    if (
+        settings.org_max_documents > 0
+        and int(count) + reserved.count >= settings.org_max_documents
+    ):
         raise OrgResourceQuotaExceeded(
             f"organization document limit reached ({settings.org_max_documents} documents)"
         )
     if (
         settings.org_max_storage_bytes > 0
-        and total_bytes + new_file_bytes > settings.org_max_storage_bytes
+        and int(total_bytes) + reserved.size_bytes + new_file_bytes
+        > settings.org_max_storage_bytes
     ):
         raise OrgResourceQuotaExceeded(
             f"organization storage limit reached ({settings.org_max_storage_bytes} bytes)"
         )
+    reservation = resource_admission.add(
+        session,
+        org_id=org_id,
+        user_id=user_id,
+        kind="document",
+        size_bytes=new_file_bytes,
+    )
+    await session.commit()
+    return reservation.id
 
 
 async def create_from_upload(
@@ -84,18 +104,49 @@ async def create_from_upload(
 ) -> Document:
     # One internal path. Callers that already hold the bytes (tests, inline bot
     # attachments) keep passing them; the upload route passes an
-    # UploadedContent whose payload is still on disk, so a 100 MB upload is
+    # UploadedContent whose payload is still on disk, so a 1 GiB upload is
     # never resident. Everything below reads size and digest off the value
     # object rather than off a bytes blob.
     content = data if isinstance(data, UploadedContent) else UploadedContent.from_bytes(data)
     ws = await get_workspace_checked(session, ctx, workspace_id)
     if folder_id is not None:
         await folders_service.get_folder_checked(session, ctx, folder_id, workspace_id=ws.id)
-    await _enforce_org_upload_quota(session, ctx.org_id, content.size_bytes)
+    reservation_id = await _reserve_org_upload_quota(
+        session, ctx.org_id, ctx.user_id, content.size_bytes
+    )
+    try:
+        return await _create_reserved_upload(
+            session,
+            ctx,
+            ws.id,
+            filename=filename,
+            mime=mime,
+            content=content,
+            folder_id=folder_id,
+            reservation_id=reservation_id,
+        )
+    except BaseException:
+        await session.rollback()
+        if reservation_id is not None:
+            await resource_admission.release(session, reservation_id)
+        raise
+
+
+async def _create_reserved_upload(
+    session: AsyncSession,
+    ctx: TenantContext,
+    workspace_id: UUID,
+    *,
+    filename: str,
+    mime: str,
+    content: UploadedContent,
+    folder_id: UUID | None,
+    reservation_id: UUID | None,
+) -> Document:
     reembed_in_progress = (
         await session.execute(
             select(ReembedJob.id).where(
-                ReembedJob.workspace_id == ws.id,
+                ReembedJob.workspace_id == workspace_id,
                 ReembedJob.started_at.is_not(None),
                 ReembedJob.finished_at.is_(None),
             )
@@ -110,7 +161,7 @@ async def create_from_upload(
     dup = (
         await session.execute(
             select(Document).where(
-                Document.workspace_id == ws.id, Document.content_hash == content_hash
+                Document.workspace_id == workspace_id, Document.content_hash == content_hash
             )
         )
     ).scalar_one_or_none()
@@ -124,7 +175,7 @@ async def create_from_upload(
         await session.execute(
             select(Document)
             .where(
-                Document.workspace_id == ws.id,
+                Document.workspace_id == workspace_id,
                 Document.folder_id == folder_id,
                 Document.filename == filename,
             )
@@ -133,7 +184,7 @@ async def create_from_upload(
         )
     ).scalar_one_or_none()
     doc = Document(
-        org_id=ctx.org_id, workspace_id=ws.id, filename=filename, mime=mime,
+        org_id=ctx.org_id, workspace_id=workspace_id, filename=filename, mime=mime,
         size_bytes=content.size_bytes, content_hash=content_hash, storage_key="",
         created_by=ctx.user_id, folder_id=folder_id,
         version=(predecessor.version + 1) if predecessor else 1,
@@ -144,24 +195,58 @@ async def create_from_upload(
     await session.flush()  # assigns doc.id for the storage key
     if predecessor is None:
         doc.lineage_id = doc.id
-    doc.storage_key = f"{ctx.org_id}/{ws.id}/{doc.id}/{filename}"
+    doc.storage_key = f"{ctx.org_id}/{workspace_id}/{doc.id}/{filename}"
     storage = build_storage(get_settings())
-    await storage.ensure_bucket()
-    await storage.put_stream(doc.storage_key, content.stream, content_type=mime)
-    await record_audit(session, org_id=ctx.org_id, actor_id=ctx.user_id,
-                       action="document.uploaded", target_type="document",
-                       target_id=str(doc.id))
-    # Transactional outbox (review P1): the document row, its audit event and
-    # the intent to ingest it commit TOGETHER. The route used to commit here and
-    # then call enqueue_ingest -- a crash or broker outage in that gap left a
-    # document stuck at "queued" forever with nothing to retry from, because a
-    # status column is not a queue.
-    outbox_service.publish(
-        session,
-        topic="documents.ingest",
-        payload={"document_id": str(doc.id), "size_bytes": doc.size_bytes},
-    )
-    await session.commit()
+    try:
+        await storage.ensure_bucket()
+        await storage.put_stream(doc.storage_key, content.stream, content_type=mime)
+        await record_audit(
+            session,
+            org_id=ctx.org_id,
+            actor_id=ctx.user_id,
+            action="document.uploaded",
+            target_type="document",
+            target_id=str(doc.id),
+        )
+        outbox_service.publish(
+            session,
+            topic="documents.ingest",
+            payload={"document_id": str(doc.id), "size_bytes": doc.size_bytes},
+        )
+        if reservation_id is not None:
+            await resource_admission.remove(session, reservation_id)
+    except BaseException:
+        try:
+            await storage.delete(doc.storage_key)
+        except Exception:
+            log.exception(
+                "document_upload_compensation_failed",
+                document_id=str(doc.id),
+                storage_key=doc.storage_key,
+            )
+        raise
+    try:
+        await session.commit()
+    except BaseException:
+        persisted = await committed_row_exists_after_error(
+            session, select(Document.id).where(Document.id == doc.id)
+        )
+        if persisted is False:
+            try:
+                await storage.delete(doc.storage_key)
+            except Exception:
+                log.exception(
+                    "document_upload_compensation_failed",
+                    document_id=str(doc.id),
+                    storage_key=doc.storage_key,
+                )
+        elif persisted is None:
+            log.error(
+                "document_upload_commit_outcome_unknown",
+                document_id=str(doc.id),
+                storage_key=doc.storage_key,
+            )
+        raise
     return doc
 
 
@@ -217,6 +302,39 @@ async def get_document_checked(
         # indistinguishable from absence (RBAC-5).
         raise WorkspaceAccessDenied("workspace not found or not accessible")
     return doc
+
+
+async def authorized_security_revisions(
+    session: AsyncSession,
+    ctx: TenantContext,
+    workspace_id: UUID,
+    document_ids: set[UUID],
+) -> dict[UUID, int]:
+    """Current authorized revisions for post-query stale-response rejection."""
+
+    if not document_ids:
+        return {}
+    documents = list(
+        (
+            await session.execute(
+                select(Document)
+                .where(
+                    Document.id.in_(document_ids),
+                    Document.org_id == ctx.org_id,
+                    Document.workspace_id == workspace_id,
+                    Document.status == "indexed",
+                    Document.index_state == "active",
+                    Document.projected_security_revision == Document.security_revision,
+                )
+                .execution_options(populate_existing=True)
+            )
+        ).scalars()
+    )
+    return {
+        document.id: document.security_revision
+        for document in documents
+        if user_can_access_document(ctx, document)
+    }
 
 
 async def has_indexed_documents(
@@ -362,7 +480,11 @@ async def project_document_security(session: AsyncSession, doc: Document) -> Non
             session, doc.workspace_id
         )
         await retrieval_service.update_document_acl(
-            doc.org_id, doc.id, doc.acl_group_ids, collection_name=collection_name
+            doc.org_id,
+            doc.id,
+            doc.acl_group_ids,
+            collection_name=collection_name,
+            security_revision=target_revision,
         )
     except Exception:
         doc.index_state = "failed"
