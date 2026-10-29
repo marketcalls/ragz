@@ -138,12 +138,13 @@ def _clear_caches() -> None:
 # was withdrawn, and docker.io/minio/minio now refuses anonymous pulls
 # outright -- which broke EVERY container-backed CI job with "pull access
 # denied ... ImageNotFound": migrations, isolation and the unit+integration
-# tier alike, none of which had changed. quay.io is MinIO's other official
-# registry and still serves the SAME manifest digest deploy/compose.yaml pins,
-# so this swaps the registry without changing a byte of the image.
+# tier alike, none of which had changed. quay.io then withdrew the image too
+# (HEAD on the pinned digest returns 401 since 2026-10), so this is Chainguard's
+# build -- the SAME digest deploy/compose.yaml pins. Its entrypoint is the minio
+# binary, so MinioContainer's `server /data` command and HTTP health probe work.
 MINIO_IMAGE = (
-    "quay.io/minio/minio:latest@sha256:"
-    "14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+    "cgr.dev/chainguard/minio@sha256:"
+    "e234321fd3abff7fb968b0674056e883b702aa1ad93a0d4d795cb6c21fa46407"
 )
 
 

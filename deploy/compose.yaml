@@ -40,9 +40,11 @@ services:
       retries: 10
 
   minio:
-    # RAGZ-PUB-15: was floating minio/minio:latest; pinned to the digest that
-    # :latest resolved to on 2026-08-15. Bump deliberately (re-resolve digest), don't float.
-    image: quay.io/minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    # RAGZ-PUB-15: pinned by digest; bump deliberately (re-resolve digest), don't float.
+    # Official MinIO images were withdrawn from Docker Hub and then quay.io (the
+    # quay.io digest pinned here until 2026-10 now returns 401), so this is
+    # Chainguard's build, re-resolved 2026-10-29. Entrypoint is /usr/bin/minio.
+    image: cgr.dev/chainguard/minio@sha256:e234321fd3abff7fb968b0674056e883b702aa1ad93a0d4d795cb6c21fa46407
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ragz       # dev-only credentials — override in prod env
@@ -50,7 +52,7 @@ services:
     ports: ["127.0.0.1:59000:9000", "127.0.0.1:59001:9001"]
     volumes: [miniodata:/data]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]  # the Chainguard image ships mc, not curl
       interval: 5s
       timeout: 3s
       retries: 10
@@ -106,9 +108,10 @@ services:
 
   litellm:
     # rolling stable; bump policy per PRD MODEL-13 (monthly, behind a probe run)
-    # RAGZ-PUB-15: pinned to the digest that v1.100.1 resolved to on 2026-09-14;
+    # RAGZ-PUB-15: pinned to the digest that v1.106.6 resolved to on 2026-10-29;
     # bump deliberately (re-resolve digest per the monthly policy), don't float.
-    image: ghcr.io/berriai/litellm:v1.100.1@sha256:a3715fa7ad8387941ab697259bd2881d68931657247a41984f90fae6d11c62bf
+    # Keep in step with litellm== in backend/pyproject.toml and compose.prod.yaml.
+    image: ghcr.io/berriai/litellm:v1.106.6@sha256:37e2dafb088a7723beb998590682957386dfc83ffea1848486f8e0e5cfac0b06
     depends_on:
       postgres:
         condition: service_healthy

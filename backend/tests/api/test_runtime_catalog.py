@@ -17,7 +17,7 @@ async def test_runtime_catalog_has_latest_subscription_and_embedding_models(
     headers = await _headers(client, "root@platform.example")
     response = await client.get("/api/v1/admin/models/catalog/providers", headers=headers)
     assert response.status_code == 200
-    assert response.json()["litellm_version"] == "1.100.1"
+    assert response.json()["litellm_version"] == "1.106.6"
     assert len(response.json()["providers"]) > 90
     response = await client.get(
         "/api/v1/admin/models/catalog/models?provider=chatgpt&mode=chat",

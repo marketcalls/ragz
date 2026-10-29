@@ -69,5 +69,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      # NOT `uvx pip-audit --local`: uvx runs pip-audit in its own throwaway
+      # environment, so --local audited pip-audit's ~28 dependencies and never
+      # saw this project's ~240. Audit the locked set instead.
+      #
+      # Waivers (each needs a reason; drop it the moment the reason is gone):
+      # - filelock: every fix is 4.x and litellm 1.106.6 caps filelock<4.0.
+      #   ragz never uses filelock directly; it arrives via litellm, torch and
+      #   huggingface-hub for model-cache locking on the worker host.
+      # - accelerate GHSA-4j2p-28q2-5m79: no fixed release exists yet.
       - name: pip-audit
-        run: uvx pip-audit --strict --local
+        run: |
+          uv export --frozen --no-emit-project --no-hashes --all-groups -o requirements-audit.txt
+          uvx pip-audit --strict --no-deps --disable-pip -r requirements-audit.txt \
+            --ignore-vuln GHSA-v4x8-3wr5-3wq8 --ignore-vuln GHSA-9vhv-jxww-xfm5 \
+            --ignore-vuln GHSA-567q-5qvw-pf92 --ignore-vuln GHSA-m462-7rxw-wvpg \
+            --ignore-vuln GHSA-j8f7-rjxc-mr56 --ignore-vuln GHSA-8mx5-7m5m-r77g \
+            --ignore-vuln GHSA-69hj-f68j-2879 --ignore-vuln GHSA-9c4x-gm8v-wgc4 \
+            --ignore-vuln GHSA-rfpc-qcw5-3pc4 --ignore-vuln GHSA-cwqr-hh33-gh44 \
+            --ignore-vuln GHSA-fq56-3cx3-fjxp --ignore-vuln GHSA-6627-m3xw-93mp \
+            --ignore-vuln GHSA-4j2p-28q2-5m79

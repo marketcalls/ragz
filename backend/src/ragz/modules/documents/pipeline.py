@@ -65,11 +65,15 @@ def _convert_blocks(tmp_path: Path, suffix: str, *, ocr: bool) -> list["PageBloc
 
     if ocr:
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
+        from docling.datamodel.pipeline_options import (
+            EasyOcrOptions,
+            OcrMode,
+            PdfPipelineOptions,
+        )
         from docling.document_converter import PdfFormatOption
 
         opts = PdfPipelineOptions(do_ocr=True)
-        opts.ocr_options = EasyOcrOptions(force_full_page_ocr=True)
+        opts.ocr_options = EasyOcrOptions(mode=OcrMode.FULL_PAGE)
         converter = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
         )
