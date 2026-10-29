@@ -60,6 +60,7 @@ constraint-dependencies = [
     "aiohttp>=3.14.4",  # GHSA-5wr8-gcqf-gqf3, GHSA-9xw5-w5jj-pvcg and 6 others
     "h2>=4.4.1",
     "brotli>=1.2.1",  # GHSA-9v8h-qqgm-4m35 (critical, decoder OOB write)
+    "brotlicffi>=1.2.1.0",  # same advisory; the non-CPython (PyPy) Brotli binding
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2 (compromised emSign CAs)
     "dnspython>=2.9.0",  # GHSA-45c3-73f7-pv4m
     "docling-slim>=2.132.0",  # same advisories as docling
